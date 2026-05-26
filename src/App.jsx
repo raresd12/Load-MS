@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Info,
   BarChart3,
   BatteryMedium,
   BookOpen,
@@ -31,14 +32,17 @@ import {
   duplicateProgram,
   getActiveProgram,
   getActiveProgramId,
+  getProgramBaseline,
   getProgramDayViewModels,
   getProgramExercises,
   getProgramDays,
+  getProgramProgression,
   getProgramState,
   getPrograms,
   seedDefaultProgramIfNeeded,
   setActiveProgram,
   updateProgramState,
+  upsertProgramProgressionsFromPlan,
 } from "./lib/programStorage.js";
 import { STORAGE_KEYS, useLocalStorageState } from "./lib/storage.js";
 
@@ -54,7 +58,7 @@ const tabs = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
-const dayScopedTabs = new Set(["workouts", "workout-log", "progress"]);
+const dayScopedTabs = new Set(["workout-log", "progress"]);
 
 const wellnessIcons = {
   soreness: Flame,
@@ -77,6 +81,8 @@ const readinessStyles = {
   yellow: "border-amber-300/40 bg-amber-300/10 text-amber-100",
   green: "border-lime-300/40 bg-lime-300/10 text-lime-100",
 };
+
+const baseRecommendationNote = "Base program prescription.";
 
 const readinessCopy = {
   green: {
@@ -496,6 +502,97 @@ function getBeatLastCue(dayId, exercise, sessions, planExercise) {
   };
 }
 
+function isRealProgramProgression(progression) {
+  return Boolean(
+    progression?.recommendationNote &&
+      progression.recommendationNote !== baseRecommendationNote &&
+      progression.sourcePlanGeneratedAt,
+  );
+}
+
+function repsLabelFromRange(reps, fallbackLabel) {
+  if (reps?.label) {
+    return reps.label;
+  }
+
+  if (reps?.min !== null && reps?.min !== undefined && reps?.max !== null && reps?.max !== undefined) {
+    return reps.min === reps.max ? String(reps.min) : `${reps.min}-${reps.max}`;
+  }
+
+  return fallbackLabel ?? "custom";
+}
+
+function getWorkoutExerciseRecommendation(programId, exercise, planExercise, planStatus) {
+  const programExerciseId = exercise.programExerciseId ?? exercise.id;
+  const progression = programId
+    ? getProgramProgression(programId, programExerciseId)
+    : null;
+  const baseline = programId ? getProgramBaseline(programId, programExerciseId) : null;
+  const hasStoredProgression = isRealProgramProgression(progression);
+  const hasGeneratedPlan = planStatus === "generated" && planExercise?.reasons?.length;
+  const source = hasStoredProgression ? "progression" : hasGeneratedPlan ? "next-plan" : "baseline";
+  const storedReps = hasStoredProgression ? progression.lastRecommendedReps : null;
+  const baselineReps = baseline?.startingReps;
+
+  return {
+    source,
+    sets:
+      (hasStoredProgression ? progression.lastRecommendedSets : null) ??
+      planExercise?.sets ??
+      baseline?.startingSets ??
+      exercise.sets,
+    repsMin:
+      storedReps?.min ??
+      planExercise?.repsMin ??
+      baselineReps?.min ??
+      exercise.repsMin,
+    repsMax:
+      storedReps?.max ??
+      planExercise?.repsMax ??
+      baselineReps?.max ??
+      exercise.repsMax,
+    repsLabel:
+      repsLabelFromRange(storedReps, null) !== "custom"
+        ? repsLabelFromRange(storedReps, null)
+        : planExercise?.repsLabel ??
+          repsLabelFromRange(baselineReps, exercise.repsLabel),
+    recommendedWeight:
+      (hasStoredProgression ? progression.lastRecommendedWeight : null) ??
+      planExercise?.recommendedWeight ??
+      baseline?.startingWeight ??
+      exercise.recommendedWeight,
+    targetRPE:
+      (hasStoredProgression ? progression.lastTargetRPE : null) ??
+      planExercise?.targetRPE ??
+      baseline?.startingRPE ??
+      exercise.targetRPE,
+    restSeconds: planExercise?.restSeconds ?? baseline?.restTime ?? exercise.restSeconds,
+    recommendationNote: hasStoredProgression
+      ? progression.recommendationNote
+      : hasGeneratedPlan
+        ? planExercise.reasons[0]
+        : "Starting recommendation based on baseline.",
+    repFocus:
+      (hasStoredProgression ? progression.repFocus : null) ??
+      planExercise?.repFocus ??
+      null,
+    conservative:
+      Boolean(hasStoredProgression ? progression.conservative : planExercise?.conservative),
+  };
+}
+
+function formatTechnicalValue(value) {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).join(", ");
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
 export default function App() {
   const [sessions, setSessions] = useLocalStorageState(STORAGE_KEYS.sessions, []);
   const [nextPlans, setNextPlans] = useLocalStorageState(STORAGE_KEYS.nextPlans, {});
@@ -518,12 +615,23 @@ export default function App() {
     () => (activeProgram ? getProgramDayViewModels(activeProgram.id) : workoutProgram.days),
     [activeProgram, programRevision],
   );
+  const activeProgramState = useMemo(
+    () => (activeProgram ? getProgramState(activeProgram.id) : null),
+    [activeProgram, programRevision],
+  );
+  const nextRecommendedDay = useMemo(
+    () =>
+      activeProgramDays.find((day) => day.id === activeProgramState?.nextRecommendedDayId) ??
+      null,
+    [activeProgramDays, activeProgramState],
+  );
   const [selectedDayId, setSelectedDayId] = useState(
     () => activeProgramDays[0]?.id ?? workoutProgram.cycleOrder[0],
   );
   const [activeTab, setActiveTab] = useState("dashboard");
   const [lastGeneratedPlan, setLastGeneratedPlan] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
+  const [workoutLogTarget, setWorkoutLogTarget] = useState(null);
   const [todayDateKey] = useState(() => getLocalDateKey());
   const [readinessDraft, setReadinessDraft] = useState(() =>
     normalizeWellness(readinessByDate[getLocalDateKey()]?.wellness ?? createDefaultWellness()),
@@ -609,6 +717,22 @@ export default function App() {
     setSelectedDayId(dayId);
     setDraft(createDraft(nextDay, nextPlan, sessions));
     setValidationErrors([]);
+  }
+
+  function handleOpenWorkoutLog(dayId = selectedDayId, targetProgramExerciseId = null) {
+    if (dayId && dayId !== selectedDayId) {
+      handleSelectDay(dayId);
+    }
+
+    setWorkoutLogTarget(
+      targetProgramExerciseId
+        ? {
+            programExerciseId: targetProgramExerciseId,
+            requestedAt: Date.now(),
+          }
+        : null,
+    );
+    setActiveTab("workout-log");
   }
 
   function refreshProgramData() {
@@ -797,6 +921,8 @@ export default function App() {
 
     const generatedPlan = generateNextPlan(selectedDay, session, sessions);
     if (activeProgram?.id) {
+      upsertProgramProgressionsFromPlan(activeProgram.id, generatedPlan);
+
       const dayIndex = activeProgramDays.findIndex((day) => day.id === selectedDay.id);
       const nextRecommendedDay =
         dayIndex >= 0
@@ -855,7 +981,7 @@ export default function App() {
             sessions={sessions}
             onGoToReadiness={() => setActiveTab("readiness")}
             onGoToWorkouts={() => setActiveTab("workouts")}
-            onGoToWorkoutLog={() => setActiveTab("workout-log")}
+            onGoToWorkoutLog={() => handleOpenWorkoutLog()}
           />
         )}
 
@@ -874,15 +1000,19 @@ export default function App() {
         {activeTab === "workouts" && (
           <WorkoutsPage
             day={selectedDay}
+            days={activeProgramDays}
+            selectedDayId={selectedDayId}
             activeProgram={activeProgram}
+            programState={activeProgramState}
+            nextRecommendedDay={nextRecommendedDay}
             plan={activePlan}
             todayReadinessEntry={todayReadinessEntry}
             todayReadinessSummary={todayReadinessSummary}
             setupCues={setupCues}
             beatLastCues={beatLastCues}
-            onUpdatePlanWeight={updatePlanWeight}
+            onSelectDay={handleSelectDay}
             onGoToReadiness={() => setActiveTab("readiness")}
-            onOpenWorkoutLog={() => setActiveTab("workout-log")}
+            onOpenWorkoutLog={handleOpenWorkoutLog}
           />
         )}
 
@@ -896,6 +1026,7 @@ export default function App() {
             setupCues={setupCues}
             validationErrors={validationErrors}
             beatLastCues={beatLastCues}
+            scrollTarget={workoutLogTarget}
             onFillAllSets={fillAllSets}
             onUpdateExerciseNotes={updateExerciseNotes}
             onUpdateExerciseRPE={updateExerciseRPE}
@@ -904,6 +1035,7 @@ export default function App() {
             onUpdateSetupCue={updateSetupCue}
             onUpdateSet={updateSet}
             onGoToReadiness={() => setActiveTab("readiness")}
+            onScrollTargetHandled={() => setWorkoutLogTarget(null)}
             onSave={saveWorkout}
           />
         )}
@@ -1117,60 +1249,366 @@ function DashboardPage({
 
 function WorkoutsPage({
   day,
+  days,
+  selectedDayId,
   activeProgram,
+  programState,
+  nextRecommendedDay,
   plan,
   todayReadinessEntry,
   todayReadinessSummary,
   setupCues,
   beatLastCues,
-  onUpdatePlanWeight,
+  onSelectDay,
   onGoToReadiness,
   onOpenWorkoutLog,
 }) {
+  const readinessCopy = getReadinessCopy(todayReadinessSummary);
+  const sections =
+    day.sections?.length
+      ? day.sections
+      : [{ id: "main", name: day.type === "recovery" ? "Recovery" : "Main Work" }];
+
   return (
     <div className="space-y-5">
       <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
           Workouts
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
-        <p className="mt-2 text-sm font-semibold text-zinc-400">
-          {activeProgram?.name ?? workoutProgram.name} | {day.focus}
-        </p>
+        <h2 className="mt-1 text-2xl font-black text-white">
+          {activeProgram?.name ?? workoutProgram.name}
+        </h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+          <Metric label="Selected day" value={day.shortName ?? day.name} />
+          <Metric label="Focus" value={day.focus} />
+          <Metric label="Next recommended" value={nextRecommendedDay?.name ?? "Not set yet"} />
+          <Metric
+            label="Readiness"
+            value={
+              todayReadinessEntry
+                ? `${readinessCopy.label} (${todayReadinessSummary.averageScore.toFixed(1)}/5)`
+                : "Not saved"
+            }
+          />
+        </div>
+        {programState?.lastWorkoutDate && (
+          <p className="mt-3 text-xs font-semibold text-zinc-500">
+            Last program workout: {new Date(programState.lastWorkoutDate).toLocaleString()}
+          </p>
+        )}
+        {todayReadinessEntry && (
+          <p className="mt-3 text-sm font-semibold text-zinc-300">
+            {readinessCopy.summary}
+          </p>
+        )}
         <button
           type="button"
-          onClick={onOpenWorkoutLog}
+          onClick={() => onOpenWorkoutLog(day.id)}
           className="focus-ring mt-4 min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
         >
           Open in Workout Log
         </button>
       </section>
 
-      <TodayReadinessSummary
-        savedEntry={todayReadinessEntry}
-        readiness={todayReadinessSummary}
-        onGoToReadiness={onGoToReadiness}
+      {!todayReadinessEntry && (
+        <TodayReadinessSummary
+          savedEntry={todayReadinessEntry}
+          readiness={todayReadinessSummary}
+          onGoToReadiness={onGoToReadiness}
+        />
+      )}
+
+      <WorkoutDaySelector
+        days={days}
+        selectedDayId={selectedDayId}
+        nextRecommendedDayId={programState?.nextRecommendedDayId}
+        onSelectDay={onSelectDay}
       />
 
       {day.type === "recovery" ? (
-        <PlaceholderPage
-          eyebrow="Recovery day"
-          title={day.name}
-          body="Use this slot for light basketball, mobility, stretching, recovery work, or optional abs. Full recovery-day planning will come in a later phase."
-        />
+        <WorkoutRecoveryView day={day} onOpenWorkoutLog={() => onOpenWorkoutLog(day.id)} />
       ) : (
         <>
           <TrainingGuidance savedEntry={todayReadinessEntry} readiness={todayReadinessSummary} />
-          <WorkoutPlanTable
-            day={day}
-            plan={plan}
-            setupCues={setupCues}
-            beatLastCues={beatLastCues}
-            onUpdatePlanWeight={onUpdatePlanWeight}
-          />
+          <section className="space-y-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+                Selected workout
+              </p>
+              <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
+              <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
+            </div>
+
+            {sections.map((section) => {
+              const sectionExercises = day.exercises.filter((exercise) =>
+                exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
+              );
+
+              if (!sectionExercises.length) {
+                return null;
+              }
+
+              return (
+                <div key={section.id} className="space-y-3">
+                  <div className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-2">
+                    <h3 className="text-sm font-black uppercase tracking-[0.14em] text-lime-300">
+                      {section.name}
+                    </h3>
+                    <span className="text-xs font-bold text-zinc-500">
+                      {sectionExercises.length} exercises
+                    </span>
+                  </div>
+                  {sectionExercises.map((exercise) => (
+                    <WorkoutExerciseCard
+                      key={exercise.id}
+                      activeProgramId={activeProgram?.id}
+                      exercise={exercise}
+                      plan={plan}
+                      setupCues={setupCues}
+                      beatLastCue={beatLastCues[exercise.id]}
+                      onOpenWorkoutLog={() =>
+                        onOpenWorkoutLog(day.id, exercise.programExerciseId ?? exercise.id)
+                      }
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </section>
         </>
       )}
     </div>
+  );
+}
+
+function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelectDay }) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          Select day
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {days.map((day) => {
+          const isSelected = day.id === selectedDayId;
+          const isNextRecommended = day.id === nextRecommendedDayId;
+
+          return (
+            <button
+              key={day.id}
+              type="button"
+              onClick={() => onSelectDay(day.id)}
+              className={`focus-ring min-h-20 rounded-[8px] border p-3 text-left transition ${
+                isSelected
+                  ? "border-lime-300 bg-lime-300/10"
+                  : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-black text-white">{day.name}</p>
+                  <p className="mt-1 text-xs font-semibold text-zinc-400">{day.focus}</p>
+                </div>
+                {isSelected && (
+                  <span className="rounded-[8px] bg-lime-300 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">
+                    Selected
+                  </span>
+                )}
+              </div>
+              {isNextRecommended && (
+                <p className="mt-2 text-xs font-black uppercase tracking-[0.08em] text-amber-200">
+                  Next recommended
+                </p>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function WorkoutRecoveryView({ day, onOpenWorkoutLog }) {
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        Recovery day
+      </p>
+      <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
+      <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {(day.activities ?? []).map((activity) => (
+          <div
+            key={activity}
+            className="rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-3 text-sm font-bold text-zinc-200"
+          >
+            {activity}
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={onOpenWorkoutLog}
+        className="focus-ring mt-4 min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+      >
+        Open in Workout Log
+      </button>
+    </section>
+  );
+}
+
+function WorkoutExerciseCard({
+  activeProgramId,
+  exercise,
+  plan,
+  setupCues,
+  beatLastCue,
+  onOpenWorkoutLog,
+}) {
+  const planExercise = getPlanExercise(plan, exercise.id);
+  const displayPlan = getWorkoutExerciseRecommendation(
+    activeProgramId,
+    exercise,
+    planExercise,
+    plan.status,
+  );
+  const setupCue = getStoredSetupCue(setupCues, exercise);
+  const hasMainCue = Boolean(formatTechnicalValue(exercise.mainCue));
+  const hasNotes = Boolean(formatTechnicalValue(exercise.notes));
+
+  return (
+    <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+              {exercise.category}
+            </span>
+            <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+              {exercise.progressionType}
+            </span>
+            {displayPlan.conservative && (
+              <span className="rounded-[8px] bg-amber-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
+                Conservative
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 text-lg font-black text-white">{exercise.name}</h3>
+          <p className="mt-1 text-sm font-semibold text-zinc-400">
+            {exercise.muscleGroup || exercise.equipment}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenWorkoutLog}
+          className="focus-ring min-h-10 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+        >
+          Open in Workout Log
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <Metric label="Sets" value={displayPlan.sets} />
+        <Metric label="Reps" value={displayPlan.repsLabel} />
+        <Metric label="Kg" value={formatWeight(displayPlan.recommendedWeight, exercise)} />
+        <Metric label="Target RPE" value={displayPlan.targetRPE} />
+        <Metric label="Rest" value={formatRest(displayPlan.restSeconds)} />
+      </div>
+
+      <div className="mt-4 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-3">
+        <p className="text-xs font-black uppercase tracking-[0.12em] text-lime-300">
+          Recommendation
+        </p>
+        <p className="mt-1 text-sm font-semibold text-zinc-200">
+          {displayPlan.recommendationNote}
+        </p>
+        {displayPlan.repFocus && (
+          <p className="mt-2 text-sm font-bold text-lime-100">{displayPlan.repFocus}</p>
+        )}
+        <p className="mt-2 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
+          {displayPlan.source === "progression"
+            ? "Program recommendation"
+            : displayPlan.source === "next-plan"
+              ? "Next-session plan"
+              : "Baseline"}
+        </p>
+      </div>
+
+      {(hasMainCue || setupCue || hasNotes) && (
+        <div className="mt-3 space-y-2">
+          {hasMainCue && (
+            <p className="rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-100">
+              Main cue: {exercise.mainCue}
+            </p>
+          )}
+          {setupCue && (
+            <p className="rounded-[8px] bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-200">
+              Setup cue: {setupCue}
+            </p>
+          )}
+          {hasNotes && (
+            <p className="rounded-[8px] bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-200">
+              Notes: {exercise.notes}
+            </p>
+          )}
+        </div>
+      )}
+
+      {beatLastCue && (
+        <div className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-100">
+          <p>{beatLastCue.summary}</p>
+          <p className="mt-1">{beatLastCue.target}</p>
+        </div>
+      )}
+
+      <ExerciseMoreInfo exercise={exercise} setupCue={setupCue} />
+    </article>
+  );
+}
+
+function ExerciseMoreInfo({ exercise, setupCue }) {
+  const leftInfoFields = [
+    ["Main Cue", exercise.mainCue],
+    ["Setup", exercise.setup || setupCue],
+    ["How To Do It", exercise.howToDoIt],
+    ["What You Should Feel", exercise.whatYouShouldFeel],
+    ["Execution Tips", exercise.executionTips],
+  ];
+  const rightInfoFields = [
+    ["Common Mistakes", exercise.commonMistakes],
+    ["Why It's There", exercise.whyItsThere],
+    ["Progression / Regression", exercise.progressionRegression],
+    ["Safety Notes", exercise.safetyNotes],
+  ];
+
+  return (
+    <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-black text-zinc-100">
+        <Info aria-hidden="true" size={16} className="text-lime-300" />
+        More Info
+      </summary>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {[leftInfoFields, rightInfoFields].map((columnFields, columnIndex) => (
+          <div key={columnIndex} className="space-y-2">
+            {columnFields.map(([label, value]) => {
+              const text = formatTechnicalValue(value);
+
+              return (
+                <div key={label} className="rounded-[8px] bg-zinc-900 px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                    {label}
+                  </p>
+                  <p className="mt-1 text-sm font-semibold leading-6 text-zinc-200">
+                    {text || "Not added yet."}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -1183,6 +1621,7 @@ function WorkoutLogPage({
   setupCues,
   validationErrors,
   beatLastCues,
+  scrollTarget,
   onFillAllSets,
   onUpdateExerciseNotes,
   onUpdateExerciseRPE,
@@ -1191,8 +1630,51 @@ function WorkoutLogPage({
   onUpdateSetupCue,
   onUpdateSet,
   onGoToReadiness,
+  onScrollTargetHandled,
   onSave,
 }) {
+  const exerciseRefs = useRef({});
+  const [highlightedExerciseId, setHighlightedExerciseId] = useState(null);
+
+  useEffect(() => {
+    const targetExerciseId = scrollTarget?.programExerciseId;
+
+    if (!targetExerciseId || day.type === "recovery") {
+      return undefined;
+    }
+
+    let timeoutId;
+    const frameId = window.requestAnimationFrame(() => {
+      const targetElement = exerciseRefs.current[targetExerciseId];
+
+      if (!targetElement) {
+        return;
+      }
+
+      targetElement.scrollIntoView({ behavior: "auto", block: "center" });
+      setHighlightedExerciseId(targetExerciseId);
+      timeoutId = window.setTimeout(() => {
+        setHighlightedExerciseId((currentExerciseId) =>
+          currentExerciseId === targetExerciseId ? null : currentExerciseId,
+        );
+        onScrollTargetHandled?.();
+      }, 2600);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [
+    day.id,
+    day.type,
+    scrollTarget?.programExerciseId,
+    scrollTarget?.requestedAt,
+    onScrollTargetHandled,
+  ]);
+
   return (
     <form onSubmit={onSave} noValidate className="space-y-5">
       <TodayReadinessSummary
@@ -1218,6 +1700,8 @@ function WorkoutLogPage({
             draft={draft}
             setupCues={setupCues}
             beatLastCues={beatLastCues}
+            exerciseRefs={exerciseRefs}
+            highlightedExerciseId={highlightedExerciseId}
             onFillAllSets={onFillAllSets}
             onUpdateExerciseNotes={onUpdateExerciseNotes}
             onUpdateExerciseRPE={onUpdateExerciseRPE}
@@ -1613,6 +2097,8 @@ function CompletedWorkoutTable({
   draft,
   setupCues,
   beatLastCues,
+  exerciseRefs,
+  highlightedExerciseId,
   onFillAllSets,
   onUpdateExerciseNotes,
   onUpdateExerciseRPE,
@@ -1631,11 +2117,24 @@ function CompletedWorkoutTable({
           const planExercise = getPlanExercise(plan, exercise.id);
           const draftExercise = draft.exercises[exercise.id];
           const setupCue = getStoredSetupCue(setupCues, exercise);
+          const programExerciseId = exercise.programExerciseId ?? exercise.id;
+          const isHighlighted = highlightedExerciseId === programExerciseId;
 
           return (
             <article
               key={exercise.id}
-              className="rounded-[8px] border border-zinc-800 bg-[#171717] p-3"
+              ref={(node) => {
+                if (node) {
+                  exerciseRefs.current[programExerciseId] = node;
+                } else {
+                  delete exerciseRefs.current[programExerciseId];
+                }
+              }}
+              className={`scroll-mt-28 rounded-[8px] border p-3 transition duration-500 ${
+                isHighlighted
+                  ? "border-lime-300 bg-lime-300/10 shadow-lg shadow-lime-950/40"
+                  : "border-zinc-800 bg-[#171717]"
+              }`}
             >
               <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                 <div>

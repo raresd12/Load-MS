@@ -246,6 +246,14 @@ function writeProgramStates(states) {
   writeStorage(STORAGE_KEYS.programStates, asArray(states));
 }
 
+function getBaselines() {
+  return asArray(readStorage(STORAGE_KEYS.baselines, []));
+}
+
+function getProgramProgressions() {
+  return asArray(readStorage(STORAGE_KEYS.programProgressions, []));
+}
+
 export function seedDefaultProgramIfNeeded() {
   const seedTime = nowIso();
   const existingPrograms = getPrograms();
@@ -416,6 +424,80 @@ export function updateProgramState(programId, patch) {
   return updatedState;
 }
 
+export function getProgramBaseline(programId, programExerciseId) {
+  return (
+    getBaselines().find(
+      (baseline) =>
+        baseline.programId === programId && baseline.programExerciseId === programExerciseId,
+    ) ?? null
+  );
+}
+
+export function getProgramProgression(programId, programExerciseId) {
+  return (
+    getProgramProgressions().find(
+      (progression) =>
+        progression.programId === programId &&
+        progression.programExerciseId === programExerciseId,
+    ) ?? null
+  );
+}
+
+export function upsertProgramProgressionsFromPlan(programId, plan) {
+  if (!programId || !plan?.exercises?.length) {
+    return [];
+  }
+
+  const updatedAt = nowIso();
+  const progressions = getProgramProgressions();
+
+  plan.exercises.forEach((exercisePlan) => {
+    const programExerciseId = exercisePlan.exerciseId;
+    const existingIndex = progressions.findIndex(
+      (progression) =>
+        progression.programId === programId &&
+        progression.programExerciseId === programExerciseId,
+    );
+    const recommendationNote =
+      exercisePlan.reasons?.filter(Boolean).join(" ") ||
+      exercisePlan.repFocus ||
+      "Starting recommendation based on baseline.";
+    const progressionRecord = {
+      ...(existingIndex >= 0 ? progressions[existingIndex] : {}),
+      id: makeProgressionId(programExerciseId),
+      programId,
+      programExerciseId,
+      lastRecommendedWeight: exercisePlan.recommendedWeight,
+      lastRecommendedReps: {
+        min: exercisePlan.repsMin,
+        max: exercisePlan.repsMax,
+        label: exercisePlan.repsLabel,
+      },
+      lastRecommendedSets: exercisePlan.sets,
+      lastTargetRPE: exercisePlan.targetRPE,
+      recommendationNote,
+      repFocus: exercisePlan.repFocus ?? null,
+      previousWeight: exercisePlan.previousWeight ?? null,
+      totalReps: exercisePlan.totalReps ?? null,
+      previousTotalReps: exercisePlan.previousTotalReps ?? null,
+      exerciseRPE: exercisePlan.exerciseRPE ?? null,
+      conservative: Boolean(exercisePlan.conservative),
+      sourceSessionId: plan.sourceSessionId ?? null,
+      sourcePlanGeneratedAt: plan.generatedAt ?? null,
+      updatedAt,
+    };
+
+    if (existingIndex >= 0) {
+      progressions[existingIndex] = progressionRecord;
+    } else {
+      progressions.push(progressionRecord);
+    }
+  });
+
+  writeStorage(STORAGE_KEYS.programProgressions, progressions);
+  return progressions;
+}
+
 export function getProgramDayViewModels(programId) {
   return getProgramDays(programId).map((day) => {
     const sections = getProgramSections(day.id);
@@ -456,7 +538,19 @@ export function getProgramDayViewModels(programId) {
         weightMode: legacyExercise?.weightMode ?? "kg",
         incrementKg: legacyExercise?.incrementKg,
         roundToKg: legacyExercise?.roundToKg,
+        mainMuscles: libraryExercise?.mainMuscles ?? [],
+        secondaryMuscles: libraryExercise?.secondaryMuscles ?? [],
+        difficulty: libraryExercise?.difficulty ?? "",
+        goalTags: libraryExercise?.goalTags ?? [],
+        setup: libraryExercise?.setup ?? "",
         mainCue: libraryExercise?.mainCue ?? "",
+        howToDoIt: libraryExercise?.howToDoIt ?? "",
+        executionTips: libraryExercise?.executionTips ?? [],
+        commonMistakes: libraryExercise?.commonMistakes ?? [],
+        whatYouShouldFeel: libraryExercise?.whatYouShouldFeel ?? "",
+        whyItsThere: libraryExercise?.whyItsThere ?? "",
+        progressionRegression: libraryExercise?.progressionRegression ?? "",
+        safetyNotes: libraryExercise?.safetyNotes ?? "",
         notes: programExercise.notes ?? "",
         isOptional: Boolean(programExercise.isOptional),
       };
