@@ -137,7 +137,36 @@ function getExerciseLog(container, exerciseOrId) {
   const logs = container?.exercises ?? container ?? {};
   const matchedId = ids.find((id) => logs?.[id]);
 
-  return matchedId ? logs[matchedId] : null;
+  if (matchedId) {
+    return logs[matchedId];
+  }
+
+  const workoutSets = container?.workoutSets?.filter(
+    (set) => ids.includes(set.programExerciseId) || ids.includes(set.exerciseId),
+  );
+
+  if (!workoutSets?.length) {
+    return null;
+  }
+
+  const setRpes = workoutSets
+    .map((set) => Number(set.actualRPE))
+    .filter(Number.isFinite);
+  const exerciseRPE = setRpes.length
+    ? Number((setRpes.reduce((total, rpe) => total + rpe, 0) / setRpes.length).toFixed(1))
+    : null;
+
+  return {
+    exerciseRPE,
+    sets: workoutSets
+      .slice()
+      .sort((left, right) => left.setNumber - right.setNumber)
+      .map((set) => ({
+        reps: set.actualReps,
+        weight: set.actualWeight,
+        rpe: set.actualRPE,
+      })),
+  };
 }
 
 function getPreviousExerciseSession(dayId, exercise, sessions = []) {

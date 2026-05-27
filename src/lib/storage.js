@@ -5,6 +5,8 @@ export const STORAGE_KEYS = {
   nextPlans: "rpe-tracker.next-plans.v1",
   setupCues: "rpe-tracker.setup-cues.v1",
   readinessByDate: "rpe-tracker.readiness-by-date.v1",
+  workoutDrafts: "rpe-tracker.workout-drafts.v1",
+  appUiState: "rpe-tracker.app-ui-state.v1",
   programStorageMeta: "rpe-tracker.program-storage-meta.v1",
   programs: "rpe-tracker.programs.v1",
   activeProgramId: "rpe-tracker.active-program-id.v1",

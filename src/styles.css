@@ -12,6 +12,14 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;
@@ -47,4 +55,3 @@ input[type="number"]::-webkit-inner-spin-button {
 .focus-ring:focus-visible {
   outline-color: #bef264;
 }
-

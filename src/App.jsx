@@ -5,6 +5,7 @@ import {
   BarChart3,
   BatteryMedium,
   BookOpen,
+  ChevronDown,
   CheckSquare,
   ClipboardList,
   Dumbbell,
@@ -187,7 +188,37 @@ function getExerciseLog(session, exerciseOrId) {
   const ids = getExerciseStorageIds(exerciseOrId);
   const matchedId = ids.find((id) => session?.exercises?.[id]);
 
-  return matchedId ? session.exercises[matchedId] : null;
+  if (matchedId) {
+    return session.exercises[matchedId];
+  }
+
+  const workoutSets = session?.workoutSets?.filter(
+    (set) => ids.includes(set.programExerciseId) || ids.includes(set.exerciseId),
+  );
+
+  if (!workoutSets?.length) {
+    return null;
+  }
+
+  const setRpes = workoutSets
+    .map((set) => set.actualRPE)
+    .filter((rpe) => typeof rpe === "number");
+  const exerciseRPE = setRpes.length
+    ? Number((setRpes.reduce((total, rpe) => total + rpe, 0) / setRpes.length).toFixed(1))
+    : null;
+
+  return {
+    notes: "",
+    exerciseRPE,
+    sets: workoutSets
+      .slice()
+      .sort((left, right) => left.setNumber - right.setNumber)
+      .map((set) => ({
+        reps: set.actualReps,
+        weight: set.actualWeight,
+        rpe: set.actualRPE,
+      })),
+  };
 }
 
 function getStoredSetupCue(setupCues, exercise) {
@@ -196,42 +227,20 @@ function getStoredSetupCue(setupCues, exercise) {
   return matchedId ? setupCues[matchedId] : "";
 }
 
-function getDefaultWeight(exercise, planExercise, previousExerciseLog) {
-  if (exercise.loadType === "bodyweight") {
-    return "BW";
-  }
-
-  if (planExercise.recommendedWeight !== null && planExercise.recommendedWeight !== undefined) {
-    return planExercise.recommendedWeight;
-  }
-
-  const previousSets = previousExerciseLog?.sets ?? [];
-  const previousWeight = previousSets
-    .map((set) => set.weight)
-    .find((weight) => !isBlank(weight));
-
-  if (previousWeight !== undefined) {
-    return previousWeight;
-  }
-
-  return exercise.loadType === "optionalExternal" ? "BW" : "";
-}
-
 function createDraft(day, plan, sessions = []) {
   const exercises = Object.fromEntries(
     day.exercises.map((exercise) => {
       const planExercise = getPlanExercise(plan, exercise.id);
       const setCount = planExercise?.sets ?? exercise.sets;
-      const previousExerciseLog = getLastExerciseLog(day.id, exercise, sessions);
 
       return [
         exercise.id,
         {
           notes: "",
-          exerciseRPE: "",
           sets: Array.from({ length: setCount }, () => ({
             reps: "",
-            weight: getDefaultWeight(exercise, planExercise, previousExerciseLog),
+            weight: "",
+            rpe: "",
           })),
         },
       ];
@@ -252,6 +261,65 @@ function createDraft(day, plan, sessions = []) {
   };
 }
 
+function getWorkoutDraftKey(programId, dayId, dateKey) {
+  return [programId ?? "no-program", dayId ?? "no-day", dateKey].join("::");
+}
+
+function mergeSavedDraft(baseDraft, savedDraft) {
+  if (!savedDraft) {
+    return baseDraft;
+  }
+
+  return {
+    ...baseDraft,
+    recoveryActivities: {
+      ...baseDraft.recoveryActivities,
+      ...(savedDraft.recoveryActivities ?? {}),
+    },
+    recoveryNotes: savedDraft.recoveryNotes ?? baseDraft.recoveryNotes,
+    sessionRpe: savedDraft.sessionRpe ?? baseDraft.sessionRpe,
+    sessionNotes: savedDraft.sessionNotes ?? baseDraft.sessionNotes,
+    exercises: Object.fromEntries(
+      Object.entries(baseDraft.exercises).map(([exerciseId, baseExercise]) => {
+        const savedExercise = savedDraft.exercises?.[exerciseId] ?? {};
+
+        return [
+          exerciseId,
+          {
+            ...baseExercise,
+            notes: savedExercise.notes ?? baseExercise.notes,
+            sets: baseExercise.sets.map((baseSet, index) => ({
+              ...baseSet,
+              ...(savedExercise.sets?.[index] ?? {}),
+            })),
+          },
+        ];
+      }),
+    ),
+  };
+}
+
+function getStoredWorkoutDraft(workoutDrafts, draftKey) {
+  const draftEntry = workoutDrafts[draftKey];
+
+  if (!draftEntry || draftEntry.status === "completed") {
+    return null;
+  }
+
+  return draftEntry.draft ?? null;
+}
+
+function createDraftFromStorage(day, plan, sessions, workoutDrafts, draftKey) {
+  return mergeSavedDraft(
+    createDraft(day, plan, sessions),
+    getStoredWorkoutDraft(workoutDrafts, draftKey),
+  );
+}
+
+function isValidTab(tabId) {
+  return tabs.some((tab) => tab.id === tabId);
+}
+
 function normalizeWellness(wellness) {
   return Object.fromEntries(
     wellnessMetrics.map((metric) => [
@@ -268,7 +336,7 @@ function normalizeWeight(value) {
       return null;
     }
 
-    if (cleanValue.toLowerCase() === "bw") {
+    if (isBodyweightText(cleanValue)) {
       return "BW";
     }
   }
@@ -277,21 +345,41 @@ function normalizeWeight(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function getSetRpe(set) {
+  const rpe = numberValue(set?.rpe, NaN);
+  return isValidRpeValue(rpe) ? rpe : null;
+}
+
+function calculateAutoExerciseRpe(draftExercise) {
+  const setRpes = (draftExercise?.sets ?? [])
+    .map(getSetRpe)
+    .filter((rpe) => rpe !== null);
+
+  if (!setRpes.length) {
+    return null;
+  }
+
+  const averageRpe = setRpes.reduce((total, rpe) => total + rpe, 0) / setRpes.length;
+  return Number(averageRpe.toFixed(1));
+}
+
 function normalizeExerciseLogs(day, draftExercises) {
   return Object.fromEntries(
     day.exercises.map((exercise) => {
       const draftExercise = draftExercises[exercise.id];
+      const exerciseRPE = calculateAutoExerciseRpe(draftExercise);
+
       return [
         exercise.id,
         {
+          programExerciseId: exercise.programExerciseId ?? exercise.id,
+          exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id,
           notes: draftExercise.notes.trim(),
-          exerciseRPE:
-            draftExercise.exerciseRPE === ""
-              ? null
-              : numberValue(draftExercise.exerciseRPE, exercise.targetRPE),
+          exerciseRPE,
           sets: draftExercise.sets.map((set) => ({
             reps: set.reps === "" ? null : numberValue(set.reps, 0),
             weight: normalizeWeight(set.weight),
+            rpe: getSetRpe(set),
           })),
         },
       ];
@@ -312,13 +400,27 @@ function isBlank(value) {
   return value === "" || value === null || value === undefined;
 }
 
+function isBodyweightText(value) {
+  const cleanValue = String(value ?? "").trim().toLowerCase();
+  return cleanValue === "bw" || cleanValue === "bodyweight" || cleanValue === "body weight";
+}
+
+function isHalfStep(value) {
+  return Math.abs(value * 2 - Math.round(value * 2)) < 0.0001;
+}
+
+function isValidRpeValue(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 && parsed <= 10 && isHalfStep(parsed);
+}
+
 function isValidWeightEntry(value, exercise) {
   if (exercise.loadType === "bodyweight") {
-    return typeof value === "string" && value.trim().toLowerCase() === "bw";
+    return isBodyweightText(value);
   }
 
   if (exercise.loadType === "optionalExternal") {
-    if (typeof value === "string" && value.trim().toLowerCase() === "bw") {
+    if (isBodyweightText(value)) {
       return true;
     }
   }
@@ -347,21 +449,17 @@ function validateDraft(day, draft) {
 
   day.exercises.forEach((exercise) => {
     const draftExercise = draft.exercises[exercise.id];
-    const exerciseRPE = numberValue(draftExercise.exerciseRPE, NaN);
-    const hasLoggedReps = draftExercise.sets.some((set) => !isBlank(set.reps));
-
-    if (hasLoggedReps) {
-      hasLoggedExerciseData = true;
-
-      if (!Number.isFinite(exerciseRPE) || exerciseRPE < 1 || exerciseRPE > 10) {
-        errors.push(`${exercise.name}: enter one exercise RPE from 1-10.`);
-      }
-    } else if (!isBlank(draftExercise.exerciseRPE)) {
-      errors.push(`${exercise.name}: add reps if you enter an exercise RPE.`);
-    }
 
     draftExercise.sets.forEach((set, index) => {
-      if (!isBlank(set.reps)) {
+      const hasReps = !isBlank(set.reps);
+      const hasWeight = !isBlank(set.weight);
+      const hasRpe = !isBlank(set.rpe);
+
+      if (!hasReps && !hasWeight && !hasRpe) {
+        return;
+      }
+
+      if (hasReps) {
         const reps = numberValue(set.reps, NaN);
         if (!Number.isFinite(reps) || reps < 0) {
           errors.push(`${exercise.name} set ${index + 1}: reps must be 0 or higher.`);
@@ -370,14 +468,35 @@ function validateDraft(day, draft) {
         if (!isValidWeightEntry(set.weight, exercise)) {
           errors.push(`${exercise.name} set ${index + 1}: enter kg or BW.`);
         }
-      } else if (!isBlank(set.weight) && !isValidWeightEntry(set.weight, exercise)) {
-        errors.push(`${exercise.name} set ${index + 1}: enter kg or BW.`);
+
+        if (!hasRpe) {
+          errors.push(`${exercise.name} set ${index + 1}: enter set RPE.`);
+        }
+      } else if (hasWeight) {
+        errors.push(`${exercise.name} set ${index + 1}: kg/BW was entered without reps.`);
+      } else if (hasRpe) {
+        errors.push(`${exercise.name} set ${index + 1}: set RPE was entered without reps.`);
+      }
+
+      if (hasWeight && !isValidWeightEntry(set.weight, exercise)) {
+        errors.push(`${exercise.name} set ${index + 1}: enter a valid kg value or BW.`);
+      }
+
+      if (hasRpe) {
+        const setRpe = numberValue(set.rpe, NaN);
+        if (!isValidRpeValue(setRpe)) {
+          errors.push(`${exercise.name} set ${index + 1}: set RPE must be 1-10 in .5 steps.`);
+        }
+      }
+
+      if (hasReps && hasWeight && hasRpe) {
+        hasLoggedExerciseData = true;
       }
     });
   });
 
   if (!hasLoggedExerciseData) {
-    errors.push("Log reps for at least one exercise before generating recommendations.");
+    errors.push("Log at least one complete set before generating recommendations.");
   }
 
   return errors;
@@ -386,6 +505,9 @@ function validateDraft(day, draft) {
 function getSessionAnalytics(day, draft) {
   const exerciseSummaries = day.exercises.map((exercise) => {
     const draftExercise = draft.exercises[exercise.id];
+    const completedSets = draftExercise.sets.filter(
+      (set) => !isBlank(set.reps) && !isBlank(set.weight) && !isBlank(set.rpe),
+    );
     const reps = draftExercise.sets
       .map((set) => numberValue(set.reps, NaN))
       .filter(Number.isFinite);
@@ -401,7 +523,8 @@ function getSessionAnalytics(day, draft) {
       exerciseId: exercise.id,
       totalReps,
       averageWeight,
-      setCount: draftExercise.sets.length,
+      setCount: completedSets.length,
+      exerciseRPE: calculateAutoExerciseRpe(draftExercise),
     };
   });
 
@@ -411,6 +534,36 @@ function getSessionAnalytics(day, draft) {
     totalReps: exerciseSummaries.reduce((total, exercise) => total + exercise.totalReps, 0),
     exerciseSummaries,
   };
+}
+
+function createWorkoutSetLogs({ sessionId, programId, day, plan, draft }) {
+  return day.exercises.flatMap((exercise) => {
+    const planExercise = getPlanExercise(plan, exercise.id);
+    const draftExercise = draft.exercises[exercise.id];
+    const programExerciseId = exercise.programExerciseId ?? exercise.id;
+    const exerciseId = exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id;
+
+    return draftExercise.sets.map((set, index) => {
+      const actualReps = isBlank(set.reps) ? null : numberValue(set.reps, null);
+      const actualWeight = normalizeWeight(set.weight);
+      const actualRPE = getSetRpe(set);
+
+      return {
+        sessionId,
+        programId,
+        dayId: day.id,
+        programExerciseId,
+        exerciseId,
+        setNumber: index + 1,
+        plannedWeight: planExercise?.recommendedWeight ?? exercise.recommendedWeight ?? null,
+        plannedReps: planExercise?.repsLabel ?? exercise.repsLabel ?? null,
+        actualWeight,
+        actualReps,
+        actualRPE,
+        completed: actualReps !== null && actualWeight !== null && actualRPE !== null,
+      };
+    });
+  });
 }
 
 function getLastExerciseSession(dayId, exerciseOrId, sessions) {
@@ -530,7 +683,8 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
   const baseline = programId ? getProgramBaseline(programId, programExerciseId) : null;
   const hasStoredProgression = isRealProgramProgression(progression);
   const hasGeneratedPlan = planStatus === "generated" && planExercise?.reasons?.length;
-  const source = hasStoredProgression ? "progression" : hasGeneratedPlan ? "next-plan" : "baseline";
+  const hasBaseline = Boolean(baseline);
+  const source = hasStoredProgression ? "progression" : hasBaseline ? "baseline" : hasGeneratedPlan ? "next-plan" : "program";
   const storedReps = hasStoredProgression ? progression.lastRecommendedReps : null;
   const baselineReps = baseline?.startingReps;
 
@@ -538,35 +692,36 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
     source,
     sets:
       (hasStoredProgression ? progression.lastRecommendedSets : null) ??
-      planExercise?.sets ??
       baseline?.startingSets ??
+      planExercise?.sets ??
       exercise.sets,
     repsMin:
       storedReps?.min ??
-      planExercise?.repsMin ??
       baselineReps?.min ??
+      planExercise?.repsMin ??
       exercise.repsMin,
     repsMax:
       storedReps?.max ??
-      planExercise?.repsMax ??
       baselineReps?.max ??
+      planExercise?.repsMax ??
       exercise.repsMax,
     repsLabel:
       repsLabelFromRange(storedReps, null) !== "custom"
         ? repsLabelFromRange(storedReps, null)
-        : planExercise?.repsLabel ??
-          repsLabelFromRange(baselineReps, exercise.repsLabel),
+        : repsLabelFromRange(baselineReps, null) !== "custom"
+          ? repsLabelFromRange(baselineReps, null)
+          : planExercise?.repsLabel ?? exercise.repsLabel,
     recommendedWeight:
       (hasStoredProgression ? progression.lastRecommendedWeight : null) ??
-      planExercise?.recommendedWeight ??
       baseline?.startingWeight ??
+      planExercise?.recommendedWeight ??
       exercise.recommendedWeight,
     targetRPE:
       (hasStoredProgression ? progression.lastTargetRPE : null) ??
-      planExercise?.targetRPE ??
       baseline?.startingRPE ??
+      planExercise?.targetRPE ??
       exercise.targetRPE,
-    restSeconds: planExercise?.restSeconds ?? baseline?.restTime ?? exercise.restSeconds,
+    restSeconds: baseline?.restTime ?? planExercise?.restSeconds ?? exercise.restSeconds,
     recommendationNote: hasStoredProgression
       ? progression.recommendationNote
       : hasGeneratedPlan
@@ -579,6 +734,22 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
     conservative:
       Boolean(hasStoredProgression ? progression.conservative : planExercise?.conservative),
   };
+}
+
+function getProgramNickname(program) {
+  if (!program) {
+    return "Athletic Program";
+  }
+
+  if (program.isDefault || program.name === workoutProgram.name || program.name.includes("Athletic Bodybuilding")) {
+    return "Athletic Program";
+  }
+
+  return program.name;
+}
+
+function formatPrescriptionStrip(displayPlan, exercise) {
+  return `${displayPlan.sets}x ${displayPlan.repsLabel} | ${formatWeight(displayPlan.recommendedWeight, exercise)} | RPE ${displayPlan.targetRPE} | Rest ${formatRest(displayPlan.restSeconds)}`;
 }
 
 function formatTechnicalValue(value) {
@@ -601,6 +772,8 @@ export default function App() {
     STORAGE_KEYS.readinessByDate,
     {},
   );
+  const [workoutDrafts, setWorkoutDrafts] = useLocalStorageState(STORAGE_KEYS.workoutDrafts, {});
+  const [appUiState, setAppUiState] = useLocalStorageState(STORAGE_KEYS.appUiState, {});
   const [programRevision, setProgramRevision] = useState(() => {
     seedDefaultProgramIfNeeded();
     return 0;
@@ -626,9 +799,11 @@ export default function App() {
     [activeProgramDays, activeProgramState],
   );
   const [selectedDayId, setSelectedDayId] = useState(
-    () => activeProgramDays[0]?.id ?? workoutProgram.cycleOrder[0],
+    () => appUiState.selectedDayId ?? activeProgramDays[0]?.id ?? workoutProgram.cycleOrder[0],
   );
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeTab, setActiveTab] = useState(
+    () => (isValidTab(appUiState.activeTab) ? appUiState.activeTab : "dashboard"),
+  );
   const [lastGeneratedPlan, setLastGeneratedPlan] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
   const [workoutLogTarget, setWorkoutLogTarget] = useState(null);
@@ -649,7 +824,13 @@ export default function App() {
     () => getPlanForDay(selectedDay, nextPlans[selectedDayId]),
     [selectedDay, nextPlans, selectedDayId],
   );
-  const [draft, setDraft] = useState(() => createDraft(selectedDay, activePlan, sessions));
+  const draftKey = useMemo(
+    () => getWorkoutDraftKey(activeProgramId, selectedDayId, todayDateKey),
+    [activeProgramId, selectedDayId, todayDateKey],
+  );
+  const [draft, setDraft] = useState(() =>
+    createDraftFromStorage(selectedDay, activePlan, sessions, workoutDrafts, draftKey),
+  );
   const readinessDraftSummary = useMemo(
     () => interpretWellness(readinessDraft),
     [readinessDraft],
@@ -670,9 +851,29 @@ export default function App() {
   );
 
   useEffect(() => {
-    setDraft(createDraft(selectedDay, activePlan, sessions));
+    setDraft(createDraftFromStorage(selectedDay, activePlan, sessions, workoutDrafts, draftKey));
     setValidationErrors([]);
-  }, [selectedDayId, activePlan.generatedAt]);
+  }, [selectedDayId, activePlan.generatedAt, draftKey]);
+
+  useEffect(() => {
+    setAppUiState((currentState) => {
+      if (
+        currentState.activeTab === activeTab &&
+        currentState.selectedDayId === selectedDayId &&
+        currentState.activeProgramId === activeProgramId
+      ) {
+        return currentState;
+      }
+
+      return {
+        ...currentState,
+        activeTab,
+        selectedDayId,
+        activeProgramId,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [activeTab, activeProgramId, selectedDayId, setAppUiState]);
 
   useEffect(() => {
     if (activeProgramDays.length && !activeProgramDays.some((day) => day.id === selectedDayId)) {
@@ -713,10 +914,40 @@ export default function App() {
       activeProgramDays[0] ??
       getProgramDay(dayId);
     const nextPlan = getPlanForDay(nextDay, nextPlans[dayId]);
+    const nextDraftKey = getWorkoutDraftKey(activeProgramId, dayId, todayDateKey);
 
     setSelectedDayId(dayId);
-    setDraft(createDraft(nextDay, nextPlan, sessions));
+    setDraft(createDraftFromStorage(nextDay, nextPlan, sessions, workoutDrafts, nextDraftKey));
     setValidationErrors([]);
+  }
+
+  function persistWorkoutDraft(nextDraft, status = "in_progress") {
+    setWorkoutDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [draftKey]: {
+        schemaVersion: 1,
+        key: draftKey,
+        status,
+        programId: activeProgramId,
+        dayId: selectedDayId,
+        date: todayDateKey,
+        updatedAt: new Date().toISOString(),
+        draft: nextDraft,
+      },
+    }));
+  }
+
+  function clearWorkoutDraft() {
+    setWorkoutDrafts((currentDrafts) => {
+      const nextDrafts = { ...currentDrafts };
+      delete nextDrafts[draftKey];
+      return nextDrafts;
+    });
+  }
+
+  function commitDraft(nextDraft) {
+    setDraft(nextDraft);
+    persistWorkoutDraft(nextDraft);
   }
 
   function handleOpenWorkoutLog(dayId = selectedDayId, targetProgramExerciseId = null) {
@@ -758,74 +989,45 @@ export default function App() {
   }
 
   function updateSessionField(field, value) {
-    setDraft((currentDraft) => ({ ...currentDraft, [field]: value }));
+    commitDraft({ ...draft, [field]: value });
   }
 
   function updateRecoveryActivity(activity, checked) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
+    commitDraft({
+      ...draft,
       recoveryActivities: {
-        ...currentDraft.recoveryActivities,
+        ...draft.recoveryActivities,
         [activity]: checked,
       },
-    }));
+    });
   }
 
-  function updateSet(exerciseId, setIndex, field, value) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
+  function updateSetEntry(exerciseId, setIndex, values) {
+    commitDraft({
+      ...draft,
       exercises: {
-        ...currentDraft.exercises,
+        ...draft.exercises,
         [exerciseId]: {
-          ...currentDraft.exercises[exerciseId],
-          sets: currentDraft.exercises[exerciseId].sets.map((set, index) =>
-            index === setIndex ? { ...set, [field]: value } : set,
+          ...draft.exercises[exerciseId],
+          sets: draft.exercises[exerciseId].sets.map((set, index) =>
+            index === setIndex ? { ...set, ...values } : set,
           ),
         },
       },
-    }));
-  }
-
-  function fillAllSets(exerciseId, field, value) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
-      exercises: {
-        ...currentDraft.exercises,
-        [exerciseId]: {
-          ...currentDraft.exercises[exerciseId],
-          sets: currentDraft.exercises[exerciseId].sets.map((set) => ({
-            ...set,
-            [field]: value,
-          })),
-        },
-      },
-    }));
-  }
-
-  function updateExerciseRPE(exerciseId, value) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
-      exercises: {
-        ...currentDraft.exercises,
-        [exerciseId]: {
-          ...currentDraft.exercises[exerciseId],
-          exerciseRPE: value,
-        },
-      },
-    }));
+    });
   }
 
   function updateExerciseNotes(exerciseId, notes) {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
+    commitDraft({
+      ...draft,
       exercises: {
-        ...currentDraft.exercises,
+        ...draft.exercises,
         [exerciseId]: {
-          ...currentDraft.exercises[exerciseId],
+          ...draft.exercises[exerciseId],
           notes,
         },
       },
-    }));
+    });
   }
 
   function updateSetupCue(exerciseId, cue) {
@@ -857,7 +1059,7 @@ export default function App() {
   }
 
   function saveWorkout(event) {
-    event.preventDefault();
+    event?.preventDefault?.();
     const errors = validateDraft(selectedDay, draft);
 
     if (errors.length) {
@@ -894,9 +1096,19 @@ export default function App() {
       }),
     );
 
+    const sessionId = createId();
+    const normalizedExerciseLogs = normalizeExerciseLogs(selectedDay, draft.exercises);
+    const workoutSets = createWorkoutSetLogs({
+      sessionId,
+      programId: activeProgram?.id ?? null,
+      day: selectedDay,
+      plan: activePlan,
+      draft,
+    });
+
     const session = {
-      id: createId(),
-      schemaVersion: 5,
+      id: sessionId,
+      schemaVersion: 6,
       appVersion: workoutProgram.version,
       date: new Date().toISOString(),
       programId: activeProgram?.id ?? null,
@@ -908,12 +1120,13 @@ export default function App() {
       dayName: selectedDay.name,
       dayType: selectedDay.type,
       plannedExercises,
-      exercises: normalizeExerciseLogs(selectedDay, draft.exercises),
+      exercises: normalizedExerciseLogs,
+      workoutSets,
       wellness: normalizedWellness,
       readiness: readinessSummary,
       recoveryActivities: draft.recoveryActivities,
       recoveryNotes: draft.recoveryNotes.trim(),
-      sessionRpe: numberValue(draft.sessionRpe, 7),
+      sessionRpe: numberValue(draft.sessionRpe, null),
       sessionNotes: draft.sessionNotes.trim(),
       setupCuesSnapshot: setupCues,
       analytics: getSessionAnalytics(selectedDay, draft),
@@ -942,22 +1155,24 @@ export default function App() {
       [selectedDay.id]: generatedPlan,
     }));
     setLastGeneratedPlan(generatedPlan);
+    clearWorkoutDraft();
+    setDraft(createDraft(selectedDay, generatedPlan, [session, ...sessions]));
     setActiveTab("progress");
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 pb-5 pt-5 sm:px-6 lg:px-8">
-        <div className="flex items-start justify-between gap-4">
+    <div className="min-h-screen overflow-x-hidden">
+      <header className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 pb-4 pt-4 min-[390px]:px-4 sm:gap-5 sm:px-6 sm:pb-5 sm:pt-5 lg:px-8">
+        <div className="flex min-w-0 items-start justify-between gap-3 sm:gap-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-lime-300">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-lime-300 min-[430px]:text-sm min-[430px]:tracking-[0.18em]">
               Athletic Bodybuilding Coach
             </p>
-            <h1 className="mt-2 text-3xl font-black text-white sm:text-4xl">
+            <h1 className="mt-2 text-2xl font-black text-white min-[430px]:text-3xl sm:text-4xl">
               Train, log, progress
             </h1>
           </div>
-          <div className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-zinc-700 bg-zinc-900 text-lime-300">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border border-zinc-700 bg-zinc-900 text-lime-300 sm:h-11 sm:w-11">
             <Dumbbell aria-hidden="true" size={23} />
           </div>
         </div>
@@ -971,7 +1186,7 @@ export default function App() {
         )}
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 pb-28 sm:px-6 lg:px-8">
+      <main className="mx-auto w-full max-w-6xl overflow-x-hidden px-3 pb-44 min-[390px]:px-4 sm:px-6 sm:pb-36 lg:px-8">
         {activeTab === "dashboard" && (
           <DashboardPage
             selectedDay={selectedDay}
@@ -994,6 +1209,12 @@ export default function App() {
             saveMessage={readinessSaveMessage}
             onSave={saveTodayReadiness}
             onUpdateWellness={updateWellness}
+            onBeginEdit={() => {
+              if (todayReadinessEntry) {
+                setReadinessDraft(normalizeWellness(todayReadinessEntry.wellness));
+                setReadinessSaveMessage("");
+              }
+            }}
           />
         )}
 
@@ -1019,6 +1240,7 @@ export default function App() {
         {activeTab === "workout-log" && (
           <WorkoutLogPage
             day={selectedDay}
+            activeProgram={activeProgram}
             plan={activePlan}
             draft={draft}
             todayReadinessEntry={todayReadinessEntry}
@@ -1027,13 +1249,11 @@ export default function App() {
             validationErrors={validationErrors}
             beatLastCues={beatLastCues}
             scrollTarget={workoutLogTarget}
-            onFillAllSets={fillAllSets}
             onUpdateExerciseNotes={updateExerciseNotes}
-            onUpdateExerciseRPE={updateExerciseRPE}
             onUpdateRecoveryActivity={updateRecoveryActivity}
             onUpdateSessionField={updateSessionField}
             onUpdateSetupCue={updateSetupCue}
-            onUpdateSet={updateSet}
+            onSaveSet={updateSetEntry}
             onGoToReadiness={() => setActiveTab("readiness")}
             onScrollTargetHandled={() => setWorkoutLogTarget(null)}
             onSave={saveWorkout}
@@ -1077,8 +1297,8 @@ export default function App() {
         )}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 border-t border-zinc-800 bg-[#121212]/95 px-3 py-3 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl gap-2 overflow-x-auto pb-1">
+      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-[#121212]/95 px-2 py-2 backdrop-blur sm:px-3 sm:py-3">
+        <div className="mx-auto flex max-w-4xl gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1088,7 +1308,7 @@ export default function App() {
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`focus-ring flex min-h-12 min-w-20 flex-col items-center justify-center rounded-[8px] px-2 text-xs font-bold transition ${
+                className={`focus-ring flex min-h-12 min-w-[76px] flex-col items-center justify-center rounded-[8px] px-2 text-[11px] font-bold transition min-[430px]:min-w-20 min-[430px]:text-xs ${
                   isActive
                     ? "bg-lime-300 text-zinc-950"
                     : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
@@ -1134,7 +1354,20 @@ function ReadinessPage({
   saveMessage,
   onSave,
   onUpdateWellness,
+  onBeginEdit,
 }) {
+  const [isEditing, setIsEditing] = useState(() => !savedEntry);
+  const copy = getReadinessCopy(savedEntry?.readiness ?? readiness);
+  const savedReadiness = savedEntry?.readiness ?? readiness;
+
+  useEffect(() => {
+    setIsEditing(!savedEntry);
+  }, [savedEntry?.updatedAt, savedEntry?.date]);
+
+  function handleSave() {
+    onSave();
+  }
+
   return (
     <div className="space-y-5">
       <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
@@ -1150,25 +1383,72 @@ function ReadinessPage({
         >
           {saveMessage ||
             (savedEntry
-              ? "Today's readiness is saved. You can update it if the day changes."
+              ? "Readiness loaded for today."
               : "No readiness check-in saved for today yet.")}
         </p>
       </section>
 
-      <WellnessCheckIn
-        wellness={wellness}
-        readiness={readiness}
-        onUpdateWellness={onUpdateWellness}
-      />
+      {savedEntry && !isEditing ? (
+        <section
+          className={`rounded-[8px] border p-4 ${
+            readinessStyles[savedReadiness.status] ?? readinessStyles.yellow
+          }`}
+        >
+          <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">
+            Readiness loaded for today
+          </p>
+          <h2 className="mt-2 text-xl font-black">{copy.label}</h2>
+          <p className="mt-1 text-sm font-semibold opacity-90">
+            Score: {savedReadiness.averageScore.toFixed(1)} / 5
+          </p>
+          <p className="mt-2 text-sm font-semibold opacity-90">{copy.guidance}</p>
+          <ReadinessValuesSummary wellness={savedEntry.wellness} />
+          <button
+            type="button"
+            onClick={() => {
+              onBeginEdit?.();
+              setIsEditing(true);
+            }}
+            className="focus-ring mt-4 min-h-11 rounded-[8px] border border-current px-4 text-sm font-black"
+          >
+            Edit Readiness
+          </button>
+        </section>
+      ) : (
+        <>
+          <WellnessCheckIn
+            wellness={wellness}
+            readiness={readiness}
+            onUpdateWellness={onUpdateWellness}
+          />
 
-      <button
-        type="button"
-        onClick={onSave}
-        className="focus-ring flex min-h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-5 text-base font-black text-zinc-950 shadow-lg shadow-lime-950/30 transition hover:bg-lime-200"
-      >
-        <Save aria-hidden="true" size={20} />
-        Save today's readiness
-      </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="focus-ring flex min-h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-5 text-base font-black text-zinc-950 shadow-lg shadow-lime-950/30 transition hover:bg-lime-200"
+          >
+            <Save aria-hidden="true" size={20} />
+            Save today's readiness
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReadinessValuesSummary({ wellness }) {
+  const normalizedWellness = normalizeWellness(wellness);
+
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2 min-[430px]:grid-cols-5">
+      {wellnessMetrics.map((metric) => (
+        <div key={metric.id} className="rounded-[8px] bg-black/15 px-2 py-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] opacity-70">
+            {metric.label}
+          </p>
+          <p className="mt-1 text-sm font-black">{normalizedWellness[metric.id]}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1271,14 +1551,22 @@ function WorkoutsPage({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
           Workouts
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">
+        <h2 className="mt-1 text-xl font-black text-white sm:hidden">
+          {getProgramNickname(activeProgram)}
+        </h2>
+        <h2 className="mt-1 hidden text-2xl font-black text-white sm:block">
           {activeProgram?.name ?? workoutProgram.name}
         </h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <div className="mt-3 space-y-1 text-sm font-bold text-zinc-300 sm:hidden">
+          <p>Selected: <span className="text-white">{day.name}</span></p>
+          <p>Readiness: <span className="text-white">{todayReadinessEntry ? readinessCopy.label : "Not saved"}</span></p>
+          <p>Next: <span className="text-white">{nextRecommendedDay?.name ?? "Not set yet"}</span></p>
+        </div>
+        <div className="mt-4 hidden gap-3 sm:grid sm:grid-cols-4">
           <Metric label="Selected day" value={day.shortName ?? day.name} />
           <Metric label="Focus" value={day.focus} />
           <Metric label="Next recommended" value={nextRecommendedDay?.name ?? "Not set yet"} />
@@ -1292,30 +1580,32 @@ function WorkoutsPage({
           />
         </div>
         {programState?.lastWorkoutDate && (
-          <p className="mt-3 text-xs font-semibold text-zinc-500">
+          <p className="mt-3 hidden text-xs font-semibold text-zinc-500 sm:block">
             Last program workout: {new Date(programState.lastWorkoutDate).toLocaleString()}
           </p>
         )}
         {todayReadinessEntry && (
-          <p className="mt-3 text-sm font-semibold text-zinc-300">
+          <p className="mt-3 hidden text-sm font-semibold text-zinc-300 sm:block">
             {readinessCopy.summary}
           </p>
         )}
         <button
           type="button"
           onClick={() => onOpenWorkoutLog(day.id)}
-          className="focus-ring mt-4 min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+          className="focus-ring mt-4 min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
         >
           Open in Workout Log
         </button>
       </section>
 
       {!todayReadinessEntry && (
+        <div className="hidden sm:block">
         <TodayReadinessSummary
           savedEntry={todayReadinessEntry}
           readiness={todayReadinessSummary}
           onGoToReadiness={onGoToReadiness}
         />
+        </div>
       )}
 
       <WorkoutDaySelector
@@ -1329,9 +1619,11 @@ function WorkoutsPage({
         <WorkoutRecoveryView day={day} onOpenWorkoutLog={() => onOpenWorkoutLog(day.id)} />
       ) : (
         <>
-          <TrainingGuidance savedEntry={todayReadinessEntry} readiness={todayReadinessSummary} />
+          <div className="hidden sm:block">
+            <TrainingGuidance savedEntry={todayReadinessEntry} readiness={todayReadinessSummary} />
+          </div>
           <section className="space-y-4">
-            <div>
+            <div className="hidden sm:block">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
                 Selected workout
               </p>
@@ -1466,6 +1758,7 @@ function WorkoutExerciseCard({
   beatLastCue,
   onOpenWorkoutLog,
 }) {
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
   const planExercise = getPlanExercise(plan, exercise.id);
   const displayPlan = getWorkoutExerciseRecommendation(
     activeProgramId,
@@ -1474,41 +1767,36 @@ function WorkoutExerciseCard({
     plan.status,
   );
   const setupCue = getStoredSetupCue(setupCues, exercise);
-  const hasMainCue = Boolean(formatTechnicalValue(exercise.mainCue));
-  const hasNotes = Boolean(formatTechnicalValue(exercise.notes));
+  const primaryCue = formatTechnicalValue(exercise.mainCue || setupCue || exercise.notes);
+  const prescriptionText = formatPrescriptionStrip(displayPlan, exercise);
 
   return (
-    <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex flex-wrap gap-2">
-            <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
-              {exercise.category}
+    <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <div className="min-w-0">
+        <div className="hidden flex-wrap gap-2 sm:flex">
+          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+            {exercise.category}
+          </span>
+          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+            {exercise.progressionType}
+          </span>
+          {displayPlan.conservative && (
+            <span className="rounded-[8px] bg-amber-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
+              Conservative
             </span>
-            <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
-              {exercise.progressionType}
-            </span>
-            {displayPlan.conservative && (
-              <span className="rounded-[8px] bg-amber-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
-                Conservative
-              </span>
-            )}
-          </div>
-          <h3 className="mt-2 text-lg font-black text-white">{exercise.name}</h3>
-          <p className="mt-1 text-sm font-semibold text-zinc-400">
-            {exercise.muscleGroup || exercise.equipment}
-          </p>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={onOpenWorkoutLog}
-          className="focus-ring min-h-10 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
-        >
-          Open in Workout Log
-        </button>
+        <h3 className="text-base font-black text-white sm:mt-2 sm:text-lg">{exercise.name}</h3>
+        <p className="mt-1 hidden text-sm font-semibold text-zinc-400 sm:block">
+          {exercise.muscleGroup || exercise.equipment}
+        </p>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <p className="mt-3 rounded-[8px] border border-lime-300 bg-lime-950/70 px-3 py-2 text-sm font-black text-white shadow-sm shadow-lime-950/40">
+        {prescriptionText}
+      </p>
+
+      <div className="mt-3 hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-5">
         <Metric label="Sets" value={displayPlan.sets} />
         <Metric label="Reps" value={displayPlan.repsLabel} />
         <Metric label="Kg" value={formatWeight(displayPlan.recommendedWeight, exercise)} />
@@ -1516,58 +1804,77 @@ function WorkoutExerciseCard({
         <Metric label="Rest" value={formatRest(displayPlan.restSeconds)} />
       </div>
 
-      <div className="mt-4 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-3">
-        <p className="text-xs font-black uppercase tracking-[0.12em] text-lime-300">
-          Recommendation
-        </p>
-        <p className="mt-1 text-sm font-semibold text-zinc-200">
+      <div className="mt-3 rounded-[8px] bg-[#171717] px-3 py-2">
+        <p className="text-xs font-semibold leading-5 text-zinc-300">
+          <span className="font-black text-zinc-100">Reason:</span>{" "}
           {displayPlan.recommendationNote}
         </p>
         {displayPlan.repFocus && (
-          <p className="mt-2 text-sm font-bold text-lime-100">{displayPlan.repFocus}</p>
+          <p className="mt-1 text-xs font-bold text-lime-100">{displayPlan.repFocus}</p>
         )}
-        <p className="mt-2 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
+        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
           {displayPlan.source === "progression"
             ? "Program recommendation"
             : displayPlan.source === "next-plan"
               ? "Next-session plan"
-              : "Baseline"}
+              : displayPlan.source === "baseline"
+                ? "Baseline"
+                : "Program target"}
         </p>
       </div>
 
-      {(hasMainCue || setupCue || hasNotes) && (
-        <div className="mt-3 space-y-2">
-          {hasMainCue && (
-            <p className="rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-100">
-              Main cue: {exercise.mainCue}
-            </p>
-          )}
-          {setupCue && (
-            <p className="rounded-[8px] bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-200">
-              Setup cue: {setupCue}
-            </p>
-          )}
-          {hasNotes && (
-            <p className="rounded-[8px] bg-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-200">
-              Notes: {exercise.notes}
-            </p>
-          )}
-        </div>
+      {primaryCue && (
+        <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-100">
+          Main cue: {primaryCue}
+        </p>
       )}
 
       {beatLastCue && (
-        <div className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-100">
+        <div className="mt-3 hidden rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-100 sm:block">
           <p>{beatLastCue.summary}</p>
           <p className="mt-1">{beatLastCue.target}</p>
         </div>
       )}
 
-      <ExerciseMoreInfo exercise={exercise} setupCue={setupCue} />
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setIsInfoOpen((current) => !current)}
+          className="focus-ring flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+        >
+          <Info aria-hidden="true" size={16} className="text-lime-300" />
+          More Info
+        </button>
+        <button
+          type="button"
+          onClick={onOpenWorkoutLog}
+          className="focus-ring min-h-11 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+        >
+          <span className="sm:hidden">Log</span>
+          <span className="hidden sm:inline">Open Log</span>
+        </button>
+      </div>
+
+      {isInfoOpen && (
+        <ExerciseInfoPanel exercise={exercise} setupCue={setupCue} className="mt-3" />
+      )}
     </article>
   );
 }
 
 function ExerciseMoreInfo({ exercise, setupCue }) {
+  return (
+    <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-black text-zinc-100">
+        <Info aria-hidden="true" size={16} className="text-lime-300" />
+        More Info
+      </summary>
+      <ExerciseInfoPanel exercise={exercise} setupCue={setupCue} className="mt-3" />
+    </details>
+  );
+}
+
+function ExerciseInfoPanel({ exercise, setupCue, className = "" }) {
   const leftInfoFields = [
     ["Main Cue", exercise.mainCue],
     ["Setup", exercise.setup || setupCue],
@@ -1583,12 +1890,7 @@ function ExerciseMoreInfo({ exercise, setupCue }) {
   ];
 
   return (
-    <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-black text-zinc-100">
-        <Info aria-hidden="true" size={16} className="text-lime-300" />
-        More Info
-      </summary>
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div className={`${className} grid gap-2 sm:grid-cols-2`}>
         {[leftInfoFields, rightInfoFields].map((columnFields, columnIndex) => (
           <div key={columnIndex} className="space-y-2">
             {columnFields.map(([label, value]) => {
@@ -1608,12 +1910,69 @@ function ExerciseMoreInfo({ exercise, setupCue }) {
           </div>
         ))}
       </div>
-    </details>
+  );
+}
+
+function WorkoutLogSummary({
+  day,
+  activeProgram,
+  plan,
+  savedReadinessEntry,
+  readiness,
+  onGoToReadiness,
+}) {
+  const readinessCopy = getReadinessCopy(readiness);
+  const plannedSetCount = plan.exercises.reduce(
+    (total, exercisePlan) => total + numberValue(exercisePlan.sets, 0),
+    0,
+  );
+
+  return (
+    <section className="hidden rounded-[8px] border border-zinc-800 bg-zinc-900 p-4 sm:block">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        Workout Log
+      </p>
+      <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
+      <p className="mt-2 text-sm font-semibold text-zinc-400">
+        {activeProgram?.name ?? workoutProgram.name} | {day.focus}
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <Metric label="Exercises" value={day.exercises.length} />
+        <Metric label="Planned sets" value={plannedSetCount} />
+        <Metric label="Focus" value={day.focus} />
+        <Metric
+          label="Readiness"
+          value={
+            savedReadinessEntry
+              ? `${readinessCopy.label} (${readiness.averageScore.toFixed(1)}/5)`
+              : "Not saved"
+          }
+        />
+      </div>
+      {savedReadinessEntry && (
+        <p className="mt-3 text-sm font-semibold text-zinc-300">
+          {readinessCopy.summary}
+        </p>
+      )}
+      <p className="mt-3 text-xs font-semibold text-zinc-500">
+        Change the day from the Training day selector above. Log only what you actually completed.
+      </p>
+      {!savedReadinessEntry && (
+        <button
+          type="button"
+          onClick={onGoToReadiness}
+          className="focus-ring mt-3 min-h-10 rounded-[8px] border border-amber-300/60 px-3 text-sm font-black text-amber-100 hover:bg-amber-300/10"
+        >
+          Go to Readiness
+        </button>
+      )}
+    </section>
   );
 }
 
 function WorkoutLogPage({
   day,
+  activeProgram,
   plan,
   draft,
   todayReadinessEntry,
@@ -1622,13 +1981,11 @@ function WorkoutLogPage({
   validationErrors,
   beatLastCues,
   scrollTarget,
-  onFillAllSets,
   onUpdateExerciseNotes,
-  onUpdateExerciseRPE,
   onUpdateRecoveryActivity,
   onUpdateSessionField,
   onUpdateSetupCue,
-  onUpdateSet,
+  onSaveSet,
   onGoToReadiness,
   onScrollTargetHandled,
   onSave,
@@ -1676,12 +2033,25 @@ function WorkoutLogPage({
   ]);
 
   return (
-    <form onSubmit={onSave} noValidate className="space-y-5">
-      <TodayReadinessSummary
-        savedEntry={todayReadinessEntry}
+    <form onSubmit={(event) => event.preventDefault()} noValidate className="space-y-5">
+      <WorkoutLogSummary
+        day={day}
+        activeProgram={activeProgram}
+        plan={plan}
+        savedReadinessEntry={todayReadinessEntry}
         readiness={todayReadinessSummary}
         onGoToReadiness={onGoToReadiness}
       />
+
+      {!todayReadinessEntry && (
+        <div className="hidden sm:block">
+        <TodayReadinessSummary
+          savedEntry={todayReadinessEntry}
+          readiness={todayReadinessSummary}
+          onGoToReadiness={onGoToReadiness}
+        />
+        </div>
+      )}
 
       <ValidationSummary errors={validationErrors} />
 
@@ -1702,11 +2072,9 @@ function WorkoutLogPage({
             beatLastCues={beatLastCues}
             exerciseRefs={exerciseRefs}
             highlightedExerciseId={highlightedExerciseId}
-            onFillAllSets={onFillAllSets}
             onUpdateExerciseNotes={onUpdateExerciseNotes}
-            onUpdateExerciseRPE={onUpdateExerciseRPE}
             onUpdateSetupCue={onUpdateSetupCue}
-            onUpdateSet={onUpdateSet}
+            onSaveSet={onSaveSet}
           />
         </>
       )}
@@ -1714,7 +2082,8 @@ function WorkoutLogPage({
       <SessionFeedback draft={draft} onUpdateSessionField={onUpdateSessionField} />
 
       <button
-        type="submit"
+        type="button"
+        onClick={onSave}
         className="focus-ring flex min-h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-5 text-base font-black text-zinc-950 shadow-lg shadow-lime-950/30 transition hover:bg-lime-200"
       >
         <Save aria-hidden="true" size={20} />
@@ -1809,7 +2178,7 @@ function TrainingGuidance({ savedEntry, readiness }) {
 
 function SectionShell({ eyebrow, title, children }) {
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
       {eyebrow && (
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
           {eyebrow}
@@ -1969,13 +2338,13 @@ function RecoveryDay({ day, draft, onUpdateRecoveryActivity, onUpdateSessionFiel
         <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">
           Recovery notes
         </span>
-        <textarea
-          value={draft.recoveryNotes}
-          onChange={(event) => onUpdateSessionField("recoveryNotes", event.target.value)}
-          rows={3}
-          className="focus-ring min-h-24 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600"
-          placeholder="Light hoops, mobility quality, aches, what helped"
-        />
+          <textarea
+            value={draft.recoveryNotes}
+            onChange={(event) => onUpdateSessionField("recoveryNotes", event.target.value)}
+            rows={3}
+            className="focus-ring min-h-16 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600 sm:min-h-24"
+            placeholder="Light hoops, mobility quality, aches, what helped"
+          />
       </label>
     </SectionShell>
   );
@@ -2099,19 +2468,35 @@ function CompletedWorkoutTable({
   beatLastCues,
   exerciseRefs,
   highlightedExerciseId,
-  onFillAllSets,
   onUpdateExerciseNotes,
-  onUpdateExerciseRPE,
   onUpdateSetupCue,
-  onUpdateSet,
+  onSaveSet,
 }) {
+  const [expandedInfoIds, setExpandedInfoIds] = useState(() => new Set());
+
+  function toggleExerciseInfo(exerciseId) {
+    setExpandedInfoIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+
+      if (nextIds.has(exerciseId)) {
+        nextIds.delete(exerciseId);
+      } else {
+        nextIds.add(exerciseId);
+      }
+
+      return nextIds;
+    });
+  }
+
   return (
     <SectionShell title="Log Completed Workout">
-      <RpeHelper
-        showAthleticNote={day.exercises.some(
-          (exercise) => exercise.progressionType === "athletic",
-        )}
-      />
+      <div className="hidden sm:block">
+        <RpeHelper
+          showAthleticNote={day.exercises.some(
+            (exercise) => exercise.progressionType === "athletic",
+          )}
+        />
+      </div>
       <div className="space-y-3">
         {day.exercises.map((exercise) => {
           const planExercise = getPlanExercise(plan, exercise.id);
@@ -2119,6 +2504,10 @@ function CompletedWorkoutTable({
           const setupCue = getStoredSetupCue(setupCues, exercise);
           const programExerciseId = exercise.programExerciseId ?? exercise.id;
           const isHighlighted = highlightedExerciseId === programExerciseId;
+          const isInfoExpanded = expandedInfoIds.has(programExerciseId);
+          const autoExerciseRpe = calculateAutoExerciseRpe(draftExercise);
+          const cueText = exercise.mainCue || setupCue || exercise.notes;
+          const hasTechnicalInfo = hasExerciseTechnicalInfo(exercise, setupCue);
 
           return (
             <article
@@ -2139,75 +2528,96 @@ function CompletedWorkoutTable({
               <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h3 className="font-black text-white">{exercise.name}</h3>
-                  <p className="text-xs font-semibold text-zinc-500">
-                    {formatSetsReps(planExercise)} | {formatRest(planExercise.restSeconds)}
+                  <p className="mt-1 text-xs font-semibold text-zinc-500 sm:hidden">
+                    {formatMobilePlanSummary(planExercise)}
                   </p>
-                  <p className="mt-2 rounded-[8px] bg-zinc-900 px-2 py-1 text-xs font-bold text-lime-100">
-                    {beatLastCues[exercise.id].target}
+                  <p className="hidden text-xs font-semibold text-zinc-500 sm:block">
+                    {formatSetsReps(planExercise)} | {formatWeight(planExercise.recommendedWeight, exercise)} | Target RPE {planExercise.targetRPE} | {formatRest(planExercise.restSeconds)}
                   </p>
                 </div>
-                <span className="text-sm font-black text-lime-100">
-                  {formatWeight(planExercise.recommendedWeight, exercise)}
-                </span>
               </div>
 
-              <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_150px]">
-                <SetEntry
-                  title="Reps Completed"
-                  shortcutLabel="All sets same reps"
-                  type="number"
-                  inputMode="numeric"
-                  values={draftExercise.sets.map((set) => set.reps)}
-                  onFill={(value) => onFillAllSets(exercise.id, "reps", value)}
-                  onChange={(index, value) => onUpdateSet(exercise.id, index, "reps", value)}
-                />
-                <SetEntry
-                  title="Kg Used"
-                  shortcutLabel="All sets same weight"
-                  type={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "number"}
-                  inputMode={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "decimal"}
-                  values={draftExercise.sets.map((set) => set.weight)}
-                  placeholder={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "BW" : "kg"}
-                  onFill={(value) => onFillAllSets(exercise.id, "weight", value)}
-                  onChange={(index, value) => onUpdateSet(exercise.id, index, "weight", value)}
-                />
-                <label>
-                  <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-                    Exercise RPE
-                  </span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="10"
-                    step="0.5"
-                    value={draftExercise.exerciseRPE}
-                    onChange={(event) => onUpdateExerciseRPE(exercise.id, event.target.value)}
-                    className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-center text-base font-black text-white"
+              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
+                <div className="space-y-3">
+                  <SavedSetsSummary exercise={exercise} sets={draftExercise.sets} />
+                  <UnifiedSetEntry
+                    exercise={exercise}
+                    planExercise={planExercise}
+                    sets={draftExercise.sets}
+                    onSave={(index, values) => onSaveSet(exercise.id, index, values)}
                   />
-                </label>
+                  <button
+                    type="button"
+                    onClick={() => toggleExerciseInfo(programExerciseId)}
+                    className="focus-ring flex min-h-10 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 bg-zinc-900 px-3 text-xs font-black text-zinc-200 lg:hidden"
+                  >
+                    <Info aria-hidden="true" size={15} className="text-lime-300" />
+                    Setup / Notes / Info
+                    <ChevronDown
+                      aria-hidden="true"
+                      size={14}
+                      className={`transition ${isInfoExpanded ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                </div>
+
+                <aside className={`${isInfoExpanded ? "block" : "hidden"} space-y-3 lg:block`}>
+                  <div className="rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2">
+                    <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-lime-200/80">
+                      Auto Exercise RPE
+                    </span>
+                    <span className="text-xl font-black text-lime-100">
+                      {autoExerciseRpe === null ? "--" : autoExerciseRpe.toFixed(1)}
+                    </span>
+                  </div>
+
+                  <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+                    <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                      Planned target
+                    </span>
+                    <p className="text-sm font-black text-white">{formatSetsReps(planExercise)}</p>
+                    <p className="mt-1 text-xs font-bold text-zinc-400">
+                      {formatWeight(planExercise.recommendedWeight, exercise)} | RPE {planExercise.targetRPE} | {formatRest(planExercise.restSeconds)}
+                    </p>
+                  </div>
+
+                  <p className="rounded-[8px] bg-zinc-900 px-3 py-2 text-xs font-bold text-lime-100">
+                    {beatLastCues[exercise.id].target}
+                  </p>
+
+                  {cueText && (
+                    <p className="rounded-[8px] bg-zinc-900 px-3 py-2 text-xs font-bold text-zinc-300">
+                      Cue: {cueText}
+                    </p>
+                  )}
+
+                  <label className="block">
+                    <span className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+                      <CheckSquare aria-hidden="true" size={14} />
+                      Setup cue
+                    </span>
+                    <input
+                      type="text"
+                      value={setupCue}
+                      onChange={(event) => onUpdateSetupCue(exercise.id, event.target.value)}
+                      className="focus-ring min-h-10 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600"
+                      placeholder="Bench grip, seat height, machine pin, stance"
+                    />
+                  </label>
+
+                  <textarea
+                    value={draftExercise.notes}
+                    onChange={(event) => onUpdateExerciseNotes(exercise.id, event.target.value)}
+                    rows={3}
+                    className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm text-white placeholder:text-zinc-600"
+                    placeholder="Quick note: form, pain, setup, machine pin"
+                  />
+
+                  {hasTechnicalInfo && (
+                    <ExerciseMoreInfo exercise={exercise} setupCue={setupCue} />
+                  )}
+                </aside>
               </div>
-
-              <label className="mt-3 block">
-                <span className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-                  <CheckSquare aria-hidden="true" size={14} />
-                  Setup cue
-                </span>
-                <input
-                  type="text"
-                  value={setupCue}
-                  onChange={(event) => onUpdateSetupCue(exercise.id, event.target.value)}
-                  className="focus-ring min-h-10 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600"
-                  placeholder="Bench grip, seat height, machine pin, stance"
-                />
-              </label>
-
-              <textarea
-                value={draftExercise.notes}
-                onChange={(event) => onUpdateExerciseNotes(exercise.id, event.target.value)}
-                rows={2}
-                className="focus-ring mt-3 min-h-16 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm text-white placeholder:text-zinc-600"
-                placeholder="Quick note: form, pain, setup, machine pin"
-              />
             </article>
           );
         })}
@@ -2216,59 +2626,389 @@ function CompletedWorkoutTable({
   );
 }
 
-function SetEntry({
-  title,
-  shortcutLabel,
-  type,
-  inputMode,
-  values,
-  placeholder,
-  onFill,
-  onChange,
-}) {
-  const [shortcutValue, setShortcutValue] = useState("");
+function SavedSetsSummary({ exercise, sets }) {
+  return (
+    <div>
+      <p className="rounded-[8px] bg-zinc-900 px-2 py-1 text-[11px] font-bold leading-relaxed text-zinc-400 sm:hidden">
+        {sets.map((set, index) => formatMobileSetSummary(set, index, exercise)).join(" | ")}
+      </p>
+      <div className="hidden gap-1.5 sm:grid sm:grid-cols-2">
+        {sets.map((set, index) => {
+          const isEmpty = isBlank(set.reps) && isBlank(set.weight) && isBlank(set.rpe);
 
-  function applyShortcut(value) {
-    setShortcutValue(value);
-    onFill(value);
+          return (
+            <p
+              key={index}
+              className={`rounded-[8px] px-2 py-1 text-xs font-bold ${
+                isEmpty ? "bg-zinc-900 text-zinc-500" : "bg-lime-300/10 text-lime-100"
+              }`}
+            >
+              Set {index + 1}:{" "}
+              {isEmpty
+                ? "empty"
+                : `${formatSetWeightSummary(set.weight, exercise)} x ${isBlank(set.reps) ? "reps?" : set.reps} @ RPE ${isBlank(set.rpe) ? "?" : set.rpe}`}
+            </p>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function formatMobilePlanSummary(planExercise) {
+  return `${formatSetsReps(planExercise).replace("x ", "x")} | RPE ${planExercise.targetRPE} | Rest ${formatRest(planExercise.restSeconds)}`;
+}
+
+function formatMobileSetSummary(set, index, exercise) {
+  const prefix = `S${index + 1}`;
+  const isEmpty = isBlank(set.reps) && isBlank(set.weight) && isBlank(set.rpe);
+
+  if (isEmpty) {
+    return `${prefix} empty`;
+  }
+
+  return `${prefix} ${formatSetWeightSummary(set.weight, exercise)} x ${isBlank(set.reps) ? "?" : set.reps} @${isBlank(set.rpe) ? "?" : set.rpe}`;
+}
+
+function hasExerciseTechnicalInfo(exercise, setupCue) {
+  return [
+    exercise.mainCue,
+    exercise.setup || setupCue,
+    exercise.howToDoIt,
+    exercise.whatYouShouldFeel,
+    exercise.executionTips,
+    exercise.commonMistakes,
+    exercise.whyItsThere,
+    exercise.progressionRegression,
+    exercise.safetyNotes,
+  ].some((value) => Boolean(formatTechnicalValue(value)));
+}
+
+function formatSetWeightSummary(weight, exercise) {
+  if (isBlank(weight)) {
+    return exercise.loadType === "bodyweight" ? "BW?" : "kg?";
+  }
+
+  if (isBodyweightText(weight)) {
+    return "BW";
+  }
+
+  const numericWeight = Number(weight);
+  if (!Number.isFinite(numericWeight)) {
+    return String(weight);
+  }
+
+  const formattedWeight = Number.isInteger(numericWeight)
+    ? numericWeight.toString()
+    : numericWeight.toFixed(1);
+
+  return `${formattedWeight}kg`;
+}
+
+function getRecommendedSetEntryDefaults(exercise, planExercise) {
+  const defaultReps =
+    Number.isFinite(Number(planExercise?.repsMin)) && planExercise.repsMin !== null
+      ? String(planExercise.repsMin)
+      : Number.isFinite(Number(exercise.repsMin)) && exercise.repsMin !== null
+        ? String(exercise.repsMin)
+        : "";
+  const recommendedWeight =
+    planExercise?.recommendedWeight ?? exercise.recommendedWeight ?? null;
+  const defaultWeight =
+    recommendedWeight !== null && recommendedWeight !== undefined
+      ? String(recommendedWeight)
+      : exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal"
+        ? "BW"
+        : "";
+  const defaultRpe = planExercise?.targetRPE ?? exercise.targetRPE ?? "";
+
+  return {
+    reps: defaultReps,
+    weight: defaultWeight,
+    rpe: defaultRpe === "" ? "" : String(defaultRpe),
+  };
+}
+
+function getSetEntryValues(set, defaults) {
+  const hasDraftData = !isBlank(set.reps) || !isBlank(set.weight) || !isBlank(set.rpe);
+
+  if (!hasDraftData) {
+    return defaults;
+  }
+
+  return {
+    reps: isBlank(set.reps) ? "" : String(set.reps),
+    weight: isBlank(set.weight) ? "" : String(set.weight),
+    rpe: isBlank(set.rpe) ? "" : String(set.rpe),
+  };
+}
+
+function adjustInputValue(value, delta, { min = 0, max = Infinity } = {}) {
+  if (!isBlank(value) && !Number.isFinite(Number(value))) {
+    return value;
+  }
+
+  const currentValue = isBlank(value) ? 0 : Number(value);
+  const adjustedValue = Math.min(max, Math.max(min, currentValue + delta));
+  return Number.isInteger(adjustedValue)
+    ? String(adjustedValue)
+    : adjustedValue.toFixed(1);
+}
+
+function validateSetEntry({ reps, weight, rpe }, exercise) {
+  const errors = [];
+
+  if (!isBlank(reps)) {
+    const parsedReps = Number(reps);
+    if (!Number.isFinite(parsedReps) || parsedReps < 0) {
+      errors.push("Reps must be 0 or higher.");
+    }
+  }
+
+  if (!isBlank(weight) && !isValidWeightEntry(weight, exercise)) {
+    errors.push("Kg must be a valid number or BW.");
+  }
+
+  if (!isBlank(rpe) && !isValidRpeValue(rpe)) {
+    errors.push("Set RPE must be 1-10 in .5 steps.");
+  }
+
+  return errors;
+}
+
+function UnifiedSetEntry({
+  exercise,
+  planExercise,
+  sets,
+  onSave,
+}) {
+  const [selectedSetIndex, setSelectedSetIndex] = useState(0);
+  const [isSelectorOpen, setIsSelectorOpen] = useState(false);
+  const [values, setValues] = useState(() =>
+    getSetEntryValues(sets[0] ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)),
+  );
+  const [errors, setErrors] = useState([]);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  useEffect(() => {
+    setValues(
+      getSetEntryValues(
+        sets[selectedSetIndex] ?? {},
+        getRecommendedSetEntryDefaults(exercise, planExercise),
+      ),
+    );
+    setErrors([]);
+    setSaveMessage("");
+  }, [exercise, planExercise, selectedSetIndex, sets]);
+
+  function updateValue(field, value) {
+    setValues((currentValues) => ({ ...currentValues, [field]: value }));
+    setErrors([]);
+    setSaveMessage("");
+  }
+
+  function saveSelectedSet() {
+    const nextErrors = validateSetEntry(values, exercise);
+
+    if (nextErrors.length) {
+      setErrors(nextErrors);
+      setSaveMessage("");
+      return;
+    }
+
+    onSave(selectedSetIndex, values);
+    setErrors([]);
+    setSaveMessage(`Set ${selectedSetIndex + 1} saved.`);
+  }
+
+  function handleInputKeyDown(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveSelectedSet();
+    }
   }
 
   return (
-    <div>
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-        {title}
-      </span>
-      <label className="mb-2 grid grid-cols-[1fr_auto] gap-2">
-        <input
-          type={type}
-          inputMode={inputMode}
-          value={shortcutValue}
-          onChange={(event) => applyShortcut(event.target.value)}
-          className="focus-ring min-h-10 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-black text-white"
-          placeholder={shortcutLabel}
-        />
-        <span className="flex min-h-10 items-center rounded-[8px] bg-zinc-900 px-2 text-xs font-black text-zinc-500">
-          All
+    <div className="max-w-[360px] rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <span className="block text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
+          Set Entry
         </span>
-      </label>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {values.map((value, index) => (
-          <label key={index}>
-            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.1em] text-zinc-600">
-              Set {index + 1}
-            </span>
-            <input
-              type={type}
-              inputMode={inputMode}
-              value={value}
-              onChange={(event) => onChange(index, event.target.value)}
-              className="focus-ring min-h-10 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-2 text-center text-sm font-black text-white"
-              placeholder={placeholder}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsSelectorOpen((current) => !current)}
+            aria-expanded={isSelectorOpen}
+            aria-label={`Selected Set: Set ${selectedSetIndex + 1}`}
+            className="focus-ring flex min-h-11 items-center gap-2 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-xs font-black text-white sm:min-h-9"
+          >
+            <span className="hidden text-zinc-500 sm:inline">Selected Set:</span>
+            <span>Set {selectedSetIndex + 1}</span>
+            <ChevronDown
+              aria-hidden="true"
+              size={14}
+              className={`transition ${isSelectorOpen ? "rotate-180" : ""}`}
             />
-          </label>
-        ))}
+          </button>
+          {isSelectorOpen && (
+            <div className="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-[8px] border border-zinc-700 bg-[#111111] p-1 shadow-xl shadow-black/40">
+              {sets.map((set, index) => {
+                const isSelected = selectedSetIndex === index;
+                const hasValue = !isBlank(set.reps) || !isBlank(set.weight) || !isBlank(set.rpe);
+
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    onClick={() => {
+                      setSelectedSetIndex(index);
+                      setIsSelectorOpen(false);
+                    }}
+                    className={`focus-ring flex min-h-9 w-full items-center justify-between rounded-[6px] px-3 text-left text-xs font-black ${
+                      isSelected
+                        ? "bg-lime-300 text-zinc-950"
+                        : hasValue
+                          ? "text-lime-100 hover:bg-lime-300/10"
+                          : "text-zinc-400 hover:bg-zinc-900"
+                    }`}
+                  >
+                    Set {index + 1}
+                    {hasValue && !isSelected && (
+                      <span className="text-[10px] uppercase tracking-[0.12em]">saved</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
+      <div className="grid gap-2">
+        <StepperInput
+          label="Reps"
+          value={values.reps}
+          onChange={(value) => updateValue("reps", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) => updateValue("reps", adjustInputValue(values.reps, delta, { min: 0 }))}
+          stepAmount={1}
+          type="number"
+          inputMode="numeric"
+          placeholder="reps"
+        />
+        <StepperInput
+          label="Kg"
+          value={values.weight}
+          onChange={(value) => updateValue("weight", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) =>
+            updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
+          }
+          stepAmount={1}
+          type={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "number"}
+          inputMode={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "decimal"}
+          placeholder={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "BW" : "kg"}
+        />
+        <StepperInput
+          label="RPE"
+          value={values.rpe}
+          onChange={(value) => updateValue("rpe", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) => updateValue("rpe", adjustInputValue(values.rpe, delta, { min: 1, max: 10 }))}
+          stepAmount={0.5}
+          type="number"
+          inputMode="decimal"
+          min="1"
+          max="10"
+          step="0.5"
+          placeholder="8"
+        />
+      </div>
+      {errors.length > 0 && (
+        <div className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
+          {errors.map((error) => (
+            <p key={error}>{error}</p>
+          ))}
+        </div>
+      )}
+      {saveMessage && (
+        <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
+          {saveMessage}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={saveSelectedSet}
+        className="focus-ring mt-3 min-h-11 w-full rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+      >
+        Save Set
+      </button>
     </div>
+  );
+}
+
+function StepperInput({
+  label,
+  value,
+  onChange,
+  onKeyDown,
+  onStep,
+  stepAmount,
+  type,
+  inputMode,
+  min,
+  max,
+  step,
+  placeholder,
+}) {
+  return (
+    <label className="grid grid-cols-[44px_36px_minmax(72px,1fr)_36px] items-center gap-1.5 sm:grid-cols-[44px_minmax(80px,130px)_32px] sm:gap-2">
+      <span className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={() => onStep(-stepAmount)}
+        className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 bg-[#111111] text-sm font-black text-zinc-200 sm:hidden"
+      >
+        -
+      </button>
+      <input
+        aria-label={label}
+        type={type}
+        inputMode={inputMode}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={onKeyDown}
+        className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 bg-[#111111] px-2 text-center text-sm font-black text-white sm:min-h-10"
+        placeholder={placeholder}
+      />
+      <button
+        type="button"
+        onClick={() => onStep(stepAmount)}
+        className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 bg-[#111111] text-sm font-black text-zinc-200 sm:hidden"
+      >
+        +
+      </button>
+      <div className="hidden gap-1 sm:grid">
+        <button
+          type="button"
+          onClick={() => onStep(stepAmount)}
+          className="focus-ring min-h-5 rounded-[6px] border border-zinc-700 bg-[#111111] text-xs font-black leading-none text-zinc-200"
+        >
+          +
+        </button>
+        <button
+          type="button"
+          onClick={() => onStep(-stepAmount)}
+          className="focus-ring min-h-5 rounded-[6px] border border-zinc-700 bg-[#111111] text-xs font-black leading-none text-zinc-200"
+        >
+          -
+        </button>
+      </div>
+    </label>
   );
 }
 
@@ -2300,7 +3040,7 @@ function SessionFeedback({ draft, onUpdateSessionField }) {
             value={draft.sessionNotes}
             onChange={(event) => onUpdateSessionField("sessionNotes", event.target.value)}
             rows={3}
-            className="focus-ring min-h-24 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600"
+            className="focus-ring min-h-16 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600 sm:min-h-24"
             placeholder="Anything that affected the session"
           />
         </label>
@@ -2513,12 +3253,12 @@ function ProgramPage({ programs, activeProgramId, onDuplicateProgram, onSetActiv
                       </p>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="grid gap-2 sm:flex sm:flex-wrap">
                     <button
                       type="button"
                       disabled={isActive}
                       onClick={() => onSetActiveProgram(program.id)}
-                      className={`focus-ring min-h-10 rounded-[8px] px-3 text-sm font-black ${
+                      className={`focus-ring min-h-11 w-full rounded-[8px] px-3 text-sm font-black sm:w-auto ${
                         isActive
                           ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
                           : "bg-lime-300 text-zinc-950 hover:bg-lime-200"
@@ -2529,7 +3269,7 @@ function ProgramPage({ programs, activeProgramId, onDuplicateProgram, onSetActiv
                     <button
                       type="button"
                       onClick={() => onDuplicateProgram(program.id)}
-                      className="focus-ring min-h-10 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+                      className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800 sm:w-auto"
                     >
                       Duplicate Program
                     </button>
