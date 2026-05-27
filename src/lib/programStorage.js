@@ -386,6 +386,12 @@ export function getExerciseById(exerciseId) {
   );
 }
 
+export function getExerciseLibrary() {
+  return asArray(readStorage(STORAGE_KEYS.exerciseLibrary, [])).sort((left, right) =>
+    String(left.name ?? "").localeCompare(String(right.name ?? "")),
+  );
+}
+
 export function getProgramState(programId) {
   const state = getProgramStates().find((programState) => programState.programId === programId);
 
