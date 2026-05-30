@@ -39,13 +39,12 @@ import {
   getExerciseLibrary,
   getProgramBaseline,
   getProgramDayViewModels,
-  getProgramExercises,
-  getProgramDays,
   getProgramProgression,
   getProgramState,
   getPrograms,
   seedDefaultProgramIfNeeded,
   setActiveProgram,
+  updateProgramMetadata,
   updateProgramState,
   upsertProgramProgressionsFromPlan,
 } from "./lib/programStorage.js";
@@ -753,6 +752,10 @@ function getProgramNickname(program) {
     return "Athletic Program";
   }
 
+  if (program.nickname) {
+    return program.nickname;
+  }
+
   if (program.isDefault || program.name === workoutProgram.name || program.name.includes("Athletic Bodybuilding")) {
     return "Athletic Program";
   }
@@ -998,6 +1001,11 @@ export default function App() {
 
   function handleDuplicateProgram(programId) {
     duplicateProgram(programId);
+    refreshProgramData();
+  }
+
+  function handleUpdateProgramMetadata(programId, patch) {
+    updateProgramMetadata(programId, patch);
     refreshProgramData();
   }
 
@@ -1288,6 +1296,7 @@ export default function App() {
             activeProgramId={activeProgramId}
             onDuplicateProgram={handleDuplicateProgram}
             onSetActiveProgram={handleSetActiveProgram}
+            onUpdateProgramMetadata={handleUpdateProgramMetadata}
           />
         )}
 
@@ -3735,98 +3744,341 @@ function filterLibraryExercises(exercises, searchQuery, filters) {
   });
 }
 
-function ProgramPage({ programs, activeProgramId, onDuplicateProgram, onSetActiveProgram }) {
+function ProgramPage({
+  programs,
+  activeProgramId,
+  onDuplicateProgram,
+  onSetActiveProgram,
+  onUpdateProgramMetadata,
+}) {
   const visiblePrograms = programs.filter((program) => !program.isArchived);
+  const activeProgram = visiblePrograms.find((program) => program.id === activeProgramId);
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
           Program administration
         </p>
         <h2 className="mt-1 text-2xl font-black text-white">Local programs</h2>
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
-          Program editing, archiving, sections, and full exercise editing come later. This phase
-          only wires active program selection and safe duplication.
+        <div className="mt-4 rounded-[8px] border border-lime-300/30 bg-lime-300/10 px-3 py-3">
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-200/80">
+            Active Program
+          </p>
+          <p className="mt-1 text-lg font-black text-white">
+            {activeProgram?.name ?? "No active program"}
+          </p>
+          {activeProgram?.nickname && (
+            <p className="mt-1 text-sm font-bold text-lime-100">
+              Nickname: {activeProgram.nickname}
+            </p>
+          )}
+        </div>
+        <p className="mt-3 text-sm leading-6 text-zinc-400">
+          Manage local guest-mode programs. Full exercise editing and drag-and-drop ordering come later.
         </p>
         <div className="mt-4 space-y-3">
           {visiblePrograms.map((program) => {
             const isActive = program.id === activeProgramId;
-            const days = getProgramDays(program.id);
-            const exerciseCount = days.reduce(
-              (total, day) => total + getProgramExercises(day.id).length,
-              0,
-            );
-            const programState = getProgramState(program.id);
-
             return (
-              <article
+              <ProgramCard
                 key={program.id}
-                className={`rounded-[8px] border p-4 ${
-                  isActive
-                    ? "border-lime-300/60 bg-lime-300/10"
-                    : "border-zinc-800 bg-[#171717]"
-                }`}
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <div className="flex flex-wrap gap-2">
-                      {isActive && (
-                        <span className="rounded-[8px] bg-lime-300 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-950">
-                          Active
-                        </span>
-                      )}
-                      {program.isDefault && (
-                        <span className="rounded-[8px] bg-amber-300/20 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
-                          Default
-                        </span>
-                      )}
-                    </div>
-                    <h3 className="mt-3 text-lg font-black text-white">{program.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-zinc-400">
-                      {program.goal || "Local guest-mode program"}
-                    </p>
-                    {program.description && (
-                      <p className="mt-2 text-sm leading-6 text-zinc-400">
-                        {program.description}
-                      </p>
-                    )}
-                  </div>
-                  <div className="grid gap-2 sm:flex sm:flex-wrap">
-                    <button
-                      type="button"
-                      disabled={isActive}
-                      onClick={() => onSetActiveProgram(program.id)}
-                      className={`focus-ring min-h-11 w-full rounded-[8px] px-3 text-sm font-black sm:w-auto ${
-                        isActive
-                          ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
-                          : "bg-lime-300 text-zinc-950 hover:bg-lime-200"
-                      }`}
-                    >
-                      {isActive ? "Active Program" : "Set Active"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDuplicateProgram(program.id)}
-                      className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800 sm:w-auto"
-                    >
-                      Duplicate Program
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-4">
-                  <Metric label="Days" value={days.length} />
-                  <Metric label="Exercises" value={exerciseCount} />
-                  <Metric label="Week" value={programState.currentWeek} />
-                  <Metric label="Cycle" value={programState.currentCycle} />
-                </div>
-              </article>
+                program={program}
+                isActive={isActive}
+                onDuplicateProgram={onDuplicateProgram}
+                onSetActiveProgram={onSetActiveProgram}
+                onUpdateProgramMetadata={onUpdateProgramMetadata}
+              />
             );
           })}
         </div>
       </section>
     </div>
   );
+}
+
+function ProgramCard({
+  program,
+  isActive,
+  onDuplicateProgram,
+  onSetActiveProgram,
+  onUpdateProgramMetadata,
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [form, setForm] = useState(() => createProgramMetadataForm(program));
+  const days = getProgramDayViewModels(program.id);
+  const exerciseCount = days.reduce((total, day) => total + day.exercises.length, 0);
+  const programState = getProgramState(program.id);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setForm(createProgramMetadataForm(program));
+    }
+  }, [program, isEditing]);
+
+  function updateField(field, value) {
+    setForm((currentForm) => ({ ...currentForm, [field]: value }));
+  }
+
+  function saveMetadata() {
+    onUpdateProgramMetadata(program.id, form);
+    setIsEditing(false);
+  }
+
+  return (
+    <article
+      className={`rounded-[8px] border p-3 min-[430px]:p-4 ${
+        isActive
+          ? "border-lime-300/60 bg-lime-300/10"
+          : "border-zinc-800 bg-[#171717]"
+      }`}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap gap-2">
+            {isActive && <ProgramBadge tone="active">Active</ProgramBadge>}
+            {program.isDefault && <ProgramBadge tone="default">Default</ProgramBadge>}
+          </div>
+          <h3 className="mt-3 text-lg font-black text-white">{program.name}</h3>
+          {program.nickname && (
+            <p className="mt-1 text-sm font-bold text-lime-100">{program.nickname}</p>
+          )}
+          <p className="mt-1 text-sm font-semibold text-zinc-400">
+            {program.goal || "Local guest-mode program"}
+          </p>
+          {program.description && (
+            <p className="mt-2 text-sm leading-6 text-zinc-400">{program.description}</p>
+          )}
+          <p className="mt-2 text-xs font-semibold text-zinc-500">
+            Created {formatProgramDate(program.createdAt)} | Updated {formatProgramDate(program.updatedAt)}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:min-w-44">
+          <button
+            type="button"
+            disabled={isActive}
+            onClick={() => onSetActiveProgram(program.id)}
+            className={`focus-ring min-h-11 w-full rounded-[8px] px-3 text-sm font-black ${
+              isActive
+                ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
+                : "bg-lime-300 text-zinc-950 hover:bg-lime-200"
+            }`}
+          >
+            {isActive ? "Active Program" : "Set Active"}
+          </button>
+          <button
+            type="button"
+            onClick={() => onDuplicateProgram(program.id)}
+            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          >
+            Duplicate Program
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsEditing((current) => !current)}
+            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          >
+            {isEditing ? "Close Edit" : "Edit Details"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <Metric label="Days" value={days.length} />
+        <Metric label="Exercises" value={exerciseCount} />
+        <Metric label="Week" value={programState.currentWeek} />
+        <Metric label="Cycle" value={programState.currentCycle} />
+      </div>
+
+      {isEditing && (
+        <ProgramMetadataForm
+          isDefaultProgram={Boolean(program.isDefault)}
+          form={form}
+          onChange={updateField}
+          onCancel={() => {
+            setForm(createProgramMetadataForm(program));
+            setIsEditing(false);
+          }}
+          onSave={saveMetadata}
+        />
+      )}
+
+      <details
+        open={isPreviewOpen}
+        onToggle={(event) => setIsPreviewOpen(event.currentTarget.open)}
+        className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+      >
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+          Read-only program preview
+          <ChevronDown
+            aria-hidden="true"
+            size={16}
+            className={`transition ${isPreviewOpen ? "rotate-180" : ""}`}
+          />
+        </summary>
+        <ProgramPreview days={days} />
+      </details>
+    </article>
+  );
+}
+
+function ProgramBadge({ tone, children }) {
+  const className =
+    tone === "active"
+      ? "bg-lime-300 text-zinc-950"
+      : "bg-amber-300/20 text-amber-100";
+
+  return (
+    <span className={`rounded-[8px] px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+function createProgramMetadataForm(program) {
+  return {
+    name: program.name ?? "",
+    nickname: program.nickname ?? "",
+    description: program.description ?? "",
+    goal: program.goal ?? "",
+  };
+}
+
+function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSave }) {
+  return (
+    <div className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {isDefaultProgram ? (
+          <div className="rounded-[8px] border border-amber-300/30 bg-amber-300/10 px-3 py-3">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-100/80">
+              Program name locked
+            </p>
+            <p className="mt-1 text-sm font-black text-white">{form.name}</p>
+            <p className="mt-2 text-xs font-semibold leading-5 text-amber-100/80">
+              The default program's core name is protected. Edit the nickname for mobile display.
+            </p>
+          </div>
+        ) : (
+          <ProgramTextField label="Program name" value={form.name} onChange={(value) => onChange("name", value)} />
+        )}
+        <ProgramTextField label="Nickname" value={form.nickname} onChange={(value) => onChange("nickname", value)} />
+        <ProgramTextArea label="Description" value={form.description} onChange={(value) => onChange("description", value)} />
+        <ProgramTextArea label="Goal" value={form.goal} onChange={(value) => onChange("goal", value)} />
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onSave}
+          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950"
+        >
+          Save Program Details
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProgramTextField({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+        {label}
+      </span>
+      <input
+        type="text"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600"
+      />
+    </label>
+  );
+}
+
+function ProgramTextArea({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+        {label}
+      </span>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        rows={3}
+        className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-bold text-white placeholder:text-zinc-600"
+      />
+    </label>
+  );
+}
+
+function ProgramPreview({ days }) {
+  return (
+    <div className="mt-3 space-y-3">
+      {days.map((day) => {
+        const sections = day.sections?.length
+          ? day.sections
+          : [{ id: "main", name: "Main Work" }];
+
+        return (
+          <div key={day.id} className="rounded-[8px] bg-[#111111] p-3">
+            <h4 className="font-black text-white">{day.name}</h4>
+            <p className="mt-1 text-xs font-semibold text-zinc-500">{day.focus}</p>
+            {sections.map((section) => {
+              const exercises = day.exercises.filter((exercise) =>
+                exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
+              );
+
+              if (!exercises.length) {
+                return null;
+              }
+
+              return (
+                <div key={section.id} className="mt-3">
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+                    {section.name}
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {exercises.map((exercise) => (
+                      <div
+                        key={exercise.id}
+                        className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+                      >
+                        <p className="font-black text-white">{exercise.name}</p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+                          {exercise.sets}x {exercise.repsLabel} | {formatWeight(exercise.recommendedWeight, exercise)} | RPE {exercise.targetRPE} | {formatRest(exercise.restSeconds)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatProgramDate(value) {
+  if (!value) {
+    return "unknown";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "unknown";
+  }
+
+  return date.toLocaleDateString();
 }
 
 function HistoryPage({ sessions }) {

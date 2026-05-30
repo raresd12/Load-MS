@@ -117,6 +117,7 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
   const program = {
     id: DEFAULT_PROGRAM_ID,
     name: workoutProgram.name,
+    nickname: "Athletic Program",
     description: "Default preloaded athletic bodybuilding program.",
     goal: "Athletic bodybuilding with RPE-based progression",
     isDefault: true,
@@ -254,6 +255,23 @@ function getProgramProgressions() {
   return asArray(readStorage(STORAGE_KEYS.programProgressions, []));
 }
 
+function getProgramDisplayNickname(program) {
+  if (program?.nickname) {
+    return program.nickname;
+  }
+
+  if (
+    program?.id === DEFAULT_PROGRAM_ID ||
+    program?.isDefault ||
+    program?.name === workoutProgram.name ||
+    String(program?.name ?? "").includes("Athletic Bodybuilding")
+  ) {
+    return "Athletic Program";
+  }
+
+  return program?.name ?? "Program";
+}
+
 export function seedDefaultProgramIfNeeded() {
   const seedTime = nowIso();
   const existingPrograms = getPrograms();
@@ -307,6 +325,21 @@ export function seedDefaultProgramIfNeeded() {
     }
   }
 
+  let didBackfillDefaultNickname = false;
+  const currentPrograms = getPrograms();
+  const nextPrograms = currentPrograms.map((program) => {
+    if (program.id === DEFAULT_PROGRAM_ID && !program.nickname) {
+      didBackfillDefaultNickname = true;
+      return { ...program, nickname: "Athletic Program", updatedAt: program.updatedAt ?? seedTime };
+    }
+
+    return program;
+  });
+
+  if (didBackfillDefaultNickname) {
+    writeStorage(STORAGE_KEYS.programs, nextPrograms);
+  }
+
   return {
     seeded: false,
     activeProgramId: getActiveProgramId(),
@@ -358,6 +391,39 @@ export function setActiveProgram(programId) {
 
   writeStorage(STORAGE_KEYS.activeProgramId, program.id);
   return program.id;
+}
+
+export function updateProgramMetadata(programId, patch) {
+  const programs = getPrograms();
+  const existingIndex = programs.findIndex((program) => program.id === programId);
+
+  if (existingIndex < 0) {
+    return null;
+  }
+
+  const existingProgram = programs[existingIndex];
+  const allowedFields =
+    existingProgram.isDefault || existingProgram.id === DEFAULT_PROGRAM_ID
+      ? ["nickname", "description", "goal"]
+      : ["name", "nickname", "description", "goal"];
+  const updatedProgram = {
+    ...existingProgram,
+    ...Object.fromEntries(
+      allowedFields
+        .filter((field) => Object.prototype.hasOwnProperty.call(patch, field))
+        .map((field) => [field, String(patch[field] ?? "").trim()]),
+    ),
+    updatedAt: nowIso(),
+  };
+
+  if (!updatedProgram.name) {
+    updatedProgram.name = existingProgram.name;
+  }
+
+  programs[existingIndex] = updatedProgram;
+  writeStorage(STORAGE_KEYS.programs, programs);
+
+  return updatedProgram;
 }
 
 export function getProgramDays(programId) {
@@ -621,7 +687,8 @@ export function duplicateProgram(programId) {
   const duplicate = {
     ...sourceProgram,
     id: newProgramId,
-    name: `${sourceProgram.name} Copy`,
+    name: `Copy of ${getProgramDisplayNickname(sourceProgram)}`,
+    nickname: `Copy of ${getProgramDisplayNickname(sourceProgram)}`,
     isDefault: false,
     isArchived: false,
     createdAt,
