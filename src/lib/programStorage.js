@@ -426,6 +426,69 @@ export function updateProgramMetadata(programId, patch) {
   return updatedProgram;
 }
 
+function cleanNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function cleanWeight(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "string" && value.trim().toLowerCase() === "bw") {
+    return "BW";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function updateProgramExerciseTarget(programId, programExerciseId, patch) {
+  const program = getPrograms().find(
+    (candidate) => candidate.id === programId && !candidate.isArchived,
+  );
+
+  if (!program || program.isDefault || program.id === DEFAULT_PROGRAM_ID) {
+    return null;
+  }
+
+  const programExercises = asArray(readStorage(STORAGE_KEYS.programExercises, []));
+  const existingIndex = programExercises.findIndex(
+    (programExercise) =>
+      programExercise.id === programExerciseId && programExercise.programId === programId,
+  );
+
+  if (existingIndex < 0) {
+    return null;
+  }
+
+  const existingExercise = programExercises[existingIndex];
+  const nextReps = patch.targetReps ?? {};
+  const updatedExercise = {
+    ...existingExercise,
+    targetSets: cleanNumber(patch.targetSets, existingExercise.targetSets),
+    targetReps: {
+      min: cleanNumber(nextReps.min, null),
+      max: cleanNumber(nextReps.max, null),
+      label: String(nextReps.label ?? "").trim() || null,
+    },
+    targetWeight: cleanWeight(patch.targetWeight),
+    targetRPE: cleanNumber(patch.targetRPE, existingExercise.targetRPE),
+    restTime: cleanNumber(patch.restTime, existingExercise.restTime),
+    notes: String(patch.notes ?? "").trim(),
+  };
+
+  programExercises[existingIndex] = updatedExercise;
+  writeStorage(STORAGE_KEYS.programExercises, programExercises);
+
+  return updatedExercise;
+}
+
 export function getProgramDays(programId) {
   return asArray(readStorage(STORAGE_KEYS.programDays, []))
     .filter((day) => day.programId === programId)

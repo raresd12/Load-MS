@@ -347,7 +347,7 @@ function createDraftFromStorage(day, plan, sessions, workoutDrafts, draftKey) {
 }
 
 function isValidTab(tabId) {
-  return tabs.some((tab) => tab.id === tabId);
+  return tabId === "more" || tabs.some((tab) => tab.id === tabId);
 }
 
 function normalizeWellness(wellness) {
@@ -1340,10 +1340,40 @@ export default function App() {
         {activeTab === "settings" && (
           <SettingsPage />
         )}
+
+        {activeTab === "more" && (
+          <MorePage tabs={moreTabs} onSelectTab={setActiveTab} />
+        )}
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-[#121212]/95 px-2 py-2 backdrop-blur sm:px-3 sm:py-3">
-        <div className="mx-auto flex max-w-4xl gap-2 overflow-x-auto pb-2 [scrollbar-width:none]">
+        <div className="mx-auto grid max-w-md grid-cols-5 gap-1.5 sm:hidden">
+          {mobilePrimaryTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive =
+              activeTab === tab.id ||
+              (tab.id === "more" && secondaryTabIds.has(activeTab));
+
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => setActiveTab(tab.id)}
+                className={`focus-ring flex min-h-14 min-w-0 flex-col items-center justify-center rounded-[8px] px-1 text-[10px] font-bold transition min-[390px]:text-[11px] ${
+                  isActive
+                    ? "bg-lime-300 text-zinc-950"
+                    : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                }`}
+              >
+                <Icon aria-hidden="true" size={18} />
+                <span className="mt-1 max-w-full truncate">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mx-auto hidden max-w-6xl grid-cols-9 gap-2 sm:grid">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -1352,21 +1382,60 @@ export default function App() {
               <button
                 key={tab.id}
                 type="button"
+                aria-current={isActive ? "page" : undefined}
                 onClick={() => setActiveTab(tab.id)}
-                className={`focus-ring flex min-h-12 min-w-[76px] flex-col items-center justify-center rounded-[8px] px-2 text-[11px] font-bold transition min-[430px]:min-w-20 min-[430px]:text-xs ${
+                className={`focus-ring flex min-h-12 min-w-0 flex-col items-center justify-center rounded-[8px] px-1 text-[10px] font-bold transition lg:px-2 lg:text-xs ${
                   isActive
                     ? "bg-lime-300 text-zinc-950"
                     : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
                 }`}
               >
                 <Icon aria-hidden="true" size={18} />
-                <span className="mt-1">{tab.label}</span>
+                <span className="mt-1 max-w-full truncate">{tab.label}</span>
               </button>
             );
           })}
         </div>
       </nav>
     </div>
+  );
+}
+
+function MorePage({ tabs: morePageTabs, onSelectTab }) {
+  return (
+    <section className="space-y-4">
+      <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          More
+        </p>
+        <h2 className="mt-1 text-2xl font-black text-white">Navigation</h2>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {morePageTabs.map((tab) => {
+          const Icon = tab.icon;
+
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => onSelectTab(tab.id)}
+              className="focus-ring flex min-h-16 items-center gap-3 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 text-left text-zinc-100 transition hover:border-lime-300/60 hover:bg-zinc-800"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-lime-300/10 text-lime-300">
+                <Icon aria-hidden="true" size={20} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-black text-white">{tab.label}</span>
+                <span className="block text-xs font-semibold text-zinc-500">
+                  Open {tab.label}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
