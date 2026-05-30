@@ -13,6 +13,7 @@ import {
   Flame,
   Home,
   History,
+  MoreHorizontal,
   Moon,
   Save,
   Settings,
@@ -44,6 +45,7 @@ import {
   getPrograms,
   seedDefaultProgramIfNeeded,
   setActiveProgram,
+  updateProgramExerciseTarget,
   updateProgramMetadata,
   updateProgramState,
   upsertProgramProgressionsFromPlan,
@@ -70,6 +72,23 @@ const tabs = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
+const mobilePrimaryTabs = [
+  { id: "dashboard", label: "Dashboard", icon: Home },
+  { id: "readiness", label: "Readiness", icon: Activity },
+  { id: "workouts", label: "Workouts", icon: Dumbbell },
+  { id: "workout-log", label: "Log", icon: CheckSquare },
+  { id: "more", label: "More", icon: MoreHorizontal },
+];
+
+const moreTabs = [
+  { id: "program", label: "Program", icon: ClipboardList },
+  { id: "library", label: "Library", icon: BookOpen },
+  { id: "progress", label: "Progress", icon: BarChart3 },
+  { id: "history", label: "History", icon: History },
+  { id: "settings", label: "Settings", icon: Settings },
+];
+
+const secondaryTabIds = new Set(moreTabs.map((tab) => tab.id));
 const dayScopedTabs = new Set(["workout-log", "progress"]);
 
 const wellnessIcons = {
@@ -694,8 +713,7 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
   const baseline = programId ? getProgramBaseline(programId, programExerciseId) : null;
   const hasStoredProgression = isRealProgramProgression(progression);
   const hasGeneratedPlan = planStatus === "generated" && planExercise?.reasons?.length;
-  const hasBaseline = Boolean(baseline);
-  const source = hasStoredProgression ? "progression" : hasBaseline ? "baseline" : hasGeneratedPlan ? "next-plan" : "program";
+  const source = hasStoredProgression ? "progression" : hasGeneratedPlan ? "next-plan" : "program";
   const storedReps = hasStoredProgression ? progression.lastRecommendedReps : null;
   const baselineReps = baseline?.startingReps;
 
@@ -703,41 +721,43 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
     source,
     sets:
       (hasStoredProgression ? progression.lastRecommendedSets : null) ??
-      baseline?.startingSets ??
       planExercise?.sets ??
-      exercise.sets,
+      exercise.sets ??
+      baseline?.startingSets,
     repsMin:
       storedReps?.min ??
-      baselineReps?.min ??
       planExercise?.repsMin ??
-      exercise.repsMin,
+      exercise.repsMin ??
+      baselineReps?.min,
     repsMax:
       storedReps?.max ??
-      baselineReps?.max ??
       planExercise?.repsMax ??
-      exercise.repsMax,
+      exercise.repsMax ??
+      baselineReps?.max,
     repsLabel:
       repsLabelFromRange(storedReps, null) !== "custom"
         ? repsLabelFromRange(storedReps, null)
-        : repsLabelFromRange(baselineReps, null) !== "custom"
-          ? repsLabelFromRange(baselineReps, null)
-          : planExercise?.repsLabel ?? exercise.repsLabel,
+        : planExercise?.repsLabel ??
+          exercise.repsLabel ??
+          (repsLabelFromRange(baselineReps, null) !== "custom"
+            ? repsLabelFromRange(baselineReps, null)
+            : "custom"),
     recommendedWeight:
       (hasStoredProgression ? progression.lastRecommendedWeight : null) ??
-      baseline?.startingWeight ??
       planExercise?.recommendedWeight ??
-      exercise.recommendedWeight,
+      exercise.recommendedWeight ??
+      baseline?.startingWeight,
     targetRPE:
       (hasStoredProgression ? progression.lastTargetRPE : null) ??
-      baseline?.startingRPE ??
       planExercise?.targetRPE ??
-      exercise.targetRPE,
-    restSeconds: baseline?.restTime ?? planExercise?.restSeconds ?? exercise.restSeconds,
+      exercise.targetRPE ??
+      baseline?.startingRPE,
+    restSeconds: planExercise?.restSeconds ?? exercise.restSeconds ?? baseline?.restTime,
     recommendationNote: hasStoredProgression
       ? progression.recommendationNote
       : hasGeneratedPlan
         ? planExercise.reasons[0]
-        : "Starting recommendation based on baseline.",
+        : "Starting recommendation based on current program target.",
     repFocus:
       (hasStoredProgression ? progression.repFocus : null) ??
       planExercise?.repFocus ??
@@ -1007,6 +1027,16 @@ export default function App() {
   function handleUpdateProgramMetadata(programId, patch) {
     updateProgramMetadata(programId, patch);
     refreshProgramData();
+  }
+
+  function handleUpdateProgramExerciseTarget(programId, programExerciseId, patch) {
+    const updatedExercise = updateProgramExerciseTarget(programId, programExerciseId, patch);
+
+    if (updatedExercise) {
+      refreshProgramData();
+    }
+
+    return updatedExercise;
   }
 
   function updateSessionField(field, value) {
@@ -1297,6 +1327,7 @@ export default function App() {
             onDuplicateProgram={handleDuplicateProgram}
             onSetActiveProgram={handleSetActiveProgram}
             onUpdateProgramMetadata={handleUpdateProgramMetadata}
+            onUpdateProgramExerciseTarget={handleUpdateProgramExerciseTarget}
           />
         )}
 
@@ -3750,6 +3781,7 @@ function ProgramPage({
   onDuplicateProgram,
   onSetActiveProgram,
   onUpdateProgramMetadata,
+  onUpdateProgramExerciseTarget,
 }) {
   const visiblePrograms = programs.filter((program) => !program.isArchived);
   const activeProgram = visiblePrograms.find((program) => program.id === activeProgramId);
@@ -3788,6 +3820,7 @@ function ProgramPage({
                 onDuplicateProgram={onDuplicateProgram}
                 onSetActiveProgram={onSetActiveProgram}
                 onUpdateProgramMetadata={onUpdateProgramMetadata}
+                onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
               />
             );
           })}
@@ -3803,13 +3836,16 @@ function ProgramCard({
   onDuplicateProgram,
   onSetActiveProgram,
   onUpdateProgramMetadata,
+  onUpdateProgramExerciseTarget,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [form, setForm] = useState(() => createProgramMetadataForm(program));
   const days = getProgramDayViewModels(program.id);
   const exerciseCount = days.reduce((total, day) => total + day.exercises.length, 0);
   const programState = getProgramState(program.id);
+  const isDefaultProgram = Boolean(program.isDefault);
 
   useEffect(() => {
     if (!isEditing) {
@@ -3893,7 +3929,7 @@ function ProgramCard({
 
       {isEditing && (
         <ProgramMetadataForm
-          isDefaultProgram={Boolean(program.isDefault)}
+          isDefaultProgram={isDefaultProgram}
           form={form}
           onChange={updateField}
           onCancel={() => {
@@ -3903,6 +3939,30 @@ function ProgramCard({
           onSave={saveMetadata}
         />
       )}
+
+      <details
+        open={isEditorOpen}
+        onToggle={(event) => setIsEditorOpen(event.currentTarget.open)}
+        className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+      >
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+          Prescription editor
+          <ChevronDown
+            aria-hidden="true"
+            size={16}
+            className={`transition ${isEditorOpen ? "rotate-180" : ""}`}
+          />
+        </summary>
+        {isDefaultProgram ? (
+          <DefaultProgramEditorLock onDuplicate={() => onDuplicateProgram(program.id)} />
+        ) : (
+          <ProgramPrescriptionEditor
+            program={program}
+            days={days}
+            onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+          />
+        )}
+      </details>
 
       <details
         open={isPreviewOpen}
@@ -4016,6 +4076,442 @@ function ProgramTextArea({ label, value, onChange }) {
       />
     </label>
   );
+}
+
+function DefaultProgramEditorLock({ onDuplicate }) {
+  return (
+    <div className="mt-3 rounded-[8px] border border-amber-300/30 bg-amber-300/10 p-3">
+      <p className="text-sm font-black text-amber-100">Duplicate to edit prescriptions.</p>
+      <p className="mt-2 text-sm leading-6 text-amber-100/80">
+        The default program is protected so the preloaded template stays available. Make a copy,
+        then edit sets, reps, kg, RPE, rest, and notes on the duplicate.
+      </p>
+      <button
+        type="button"
+        onClick={onDuplicate}
+        className="focus-ring mt-3 min-h-11 w-full rounded-[8px] bg-amber-300 px-3 text-sm font-black text-zinc-950 sm:w-auto"
+      >
+        Duplicate to Edit
+      </button>
+    </div>
+  );
+}
+
+function ProgramPrescriptionEditor({ program, days, onUpdateProgramExerciseTarget }) {
+  if (!days.length) {
+    return (
+      <p className="mt-3 rounded-[8px] bg-[#111111] px-3 py-3 text-sm font-semibold text-zinc-400">
+        No training days found for this program yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 space-y-3">
+      <p className="text-sm leading-6 text-zinc-400">
+        Edit planned targets only. This does not change exercise library info or completed workout
+        history.
+      </p>
+      {days.map((day) => {
+        const sections = day.sections?.length
+          ? day.sections
+          : [{ id: "main", name: "Main Work" }];
+
+        return (
+          <details key={day.id} className="rounded-[8px] border border-zinc-800 bg-[#111111]">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+              <span className="min-w-0">
+                <span className="block text-sm font-black text-white">{day.name}</span>
+                <span className="block text-xs font-semibold text-zinc-500">
+                  {day.focus} | {day.exercises.length} exercises
+                </span>
+              </span>
+              <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-500" />
+            </summary>
+            <div className="space-y-3 border-t border-zinc-800 p-3">
+              {sections.map((section) => {
+                const exercises = day.exercises.filter((exercise) =>
+                  exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
+                );
+
+                if (!exercises.length) {
+                  return null;
+                }
+
+                return (
+                  <div key={section.id} className="space-y-2">
+                    <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+                      {section.name}
+                    </p>
+                    {exercises.map((exercise) => (
+                      <ProgramExerciseTargetEditor
+                        key={exercise.programExerciseId ?? exercise.id}
+                        program={program}
+                        exercise={exercise}
+                        onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExerciseTarget }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [form, setForm] = useState(() => createProgramExerciseTargetForm(exercise));
+  const [errors, setErrors] = useState([]);
+  const [saveMessage, setSaveMessage] = useState("");
+  const prescriptionText = `${exercise.sets}x ${exercise.repsLabel} | ${formatWeight(exercise.recommendedWeight, exercise)} | RPE ${exercise.targetRPE} | ${formatRest(exercise.restSeconds)}`;
+
+  useEffect(() => {
+    setForm(createProgramExerciseTargetForm(exercise));
+    setErrors([]);
+    setSaveMessage("");
+  }, [
+    exercise.programExerciseId,
+    exercise.sets,
+    exercise.repsMin,
+    exercise.repsMax,
+    exercise.repsLabel,
+    exercise.recommendedWeight,
+    exercise.targetRPE,
+    exercise.restSeconds,
+    exercise.notes,
+  ]);
+
+  function updateField(field, value) {
+    setForm((currentForm) => ({ ...currentForm, [field]: value }));
+    setErrors([]);
+    setSaveMessage("");
+  }
+
+  function saveTarget() {
+    const result = validateProgramExerciseTargetForm(form, exercise);
+
+    if (!result.valid) {
+      setErrors(result.errors);
+      setSaveMessage("");
+      return;
+    }
+
+    const updatedExercise = onUpdateProgramExerciseTarget(
+      program.id,
+      exercise.programExerciseId ?? exercise.id,
+      result.patch,
+    );
+
+    if (!updatedExercise) {
+      setErrors(["This program target could not be saved. Duplicate the default program first."]);
+      setSaveMessage("");
+      return;
+    }
+
+    setErrors([]);
+    setSaveMessage("Saved target.");
+  }
+
+  return (
+    <details
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+      className="rounded-[8px] border border-zinc-800 bg-zinc-900"
+    >
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
+        <span className="min-w-0">
+          <span className="block break-words text-sm font-black text-white">{exercise.name}</span>
+          <span className="mt-1 block text-xs font-semibold leading-5 text-zinc-400">
+            {prescriptionText}
+          </span>
+        </span>
+        <span className="shrink-0 rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+          Edit
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-zinc-800 p-3">
+        <div className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
+          <ProgramEditorField
+            label="Sets"
+            value={form.targetSets}
+            onChange={(value) => updateField("targetSets", value)}
+            inputMode="numeric"
+          />
+          <ProgramEditorField
+            label="Reps Min"
+            value={form.repsMin}
+            onChange={(value) => updateField("repsMin", value)}
+            inputMode="numeric"
+          />
+          <ProgramEditorField
+            label="Reps Max"
+            value={form.repsMax}
+            onChange={(value) => updateField("repsMax", value)}
+            inputMode="numeric"
+          />
+          <ProgramEditorField
+            label="Reps Label"
+            value={form.repsLabel}
+            onChange={(value) => updateField("repsLabel", value)}
+            placeholder="Optional"
+          />
+          <ProgramEditorField
+            label="Kg / Weight"
+            value={form.targetWeight}
+            onChange={(value) => updateField("targetWeight", value)}
+            placeholder={exercise.loadType === "bodyweight" ? "BW" : "Enter kg"}
+            inputMode="decimal"
+          />
+          <ProgramEditorField
+            label="Target RPE"
+            value={form.targetRPE}
+            onChange={(value) => updateField("targetRPE", value)}
+            inputMode="decimal"
+          />
+          <ProgramEditorField
+            label="Rest Seconds"
+            value={form.restTime}
+            onChange={(value) => updateField("restTime", value)}
+            inputMode="numeric"
+          />
+        </div>
+        <ProgramTextArea
+          label="Program Exercise Notes"
+          value={form.notes}
+          onChange={(value) => updateField("notes", value)}
+        />
+        {errors.length > 0 && (
+          <div className="rounded-[8px] border border-red-400/30 bg-red-500/10 px-3 py-2">
+            {errors.map((error) => (
+              <p key={error} className="text-sm font-semibold text-red-100">
+                {error}
+              </p>
+            ))}
+          </div>
+        )}
+        {saveMessage && (
+          <p className="rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-black text-lime-100">
+            {saveMessage}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={saveTarget}
+          className="focus-ring min-h-11 w-full rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 sm:w-auto"
+        >
+          Save Exercise Target
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function ProgramEditorField({ label, value, onChange, placeholder = "", inputMode = "text" }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+        {label}
+      </span>
+      <input
+        type="text"
+        inputMode={inputMode}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600"
+      />
+    </label>
+  );
+}
+
+function createProgramExerciseTargetForm(exercise) {
+  return {
+    targetSets: stringifyProgramEditorValue(exercise.sets),
+    repsMin: stringifyProgramEditorValue(exercise.repsMin),
+    repsMax: stringifyProgramEditorValue(exercise.repsMax),
+    repsLabel: getCustomRepsLabelForEditor(exercise),
+    targetWeight: stringifyProgramWeightForEditor(exercise.recommendedWeight, exercise),
+    targetRPE: stringifyProgramEditorValue(exercise.targetRPE),
+    restTime: stringifyProgramEditorValue(getRestSecondsForEditor(exercise.restSeconds)),
+    notes: exercise.notes ?? "",
+  };
+}
+
+function stringifyProgramEditorValue(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return String(value);
+}
+
+function stringifyProgramWeightForEditor(value, exercise) {
+  if (value === null || value === undefined || value === "") {
+    return exercise.loadType === "bodyweight" ? "BW" : "";
+  }
+
+  return String(value);
+}
+
+function getRestSecondsForEditor(restSeconds) {
+  if (Array.isArray(restSeconds)) {
+    return restSeconds[1] ?? restSeconds[0] ?? "";
+  }
+
+  return restSeconds;
+}
+
+function getCustomRepsLabelForEditor(exercise) {
+  const label = String(exercise.repsLabel ?? "").trim();
+  const derived = getDerivedRepsLabel(exercise.repsMin, exercise.repsMax);
+
+  if (!label || normalizeRepsLabel(label) === normalizeRepsLabel(derived)) {
+    return "";
+  }
+
+  return label;
+}
+
+function getDerivedRepsLabel(repsMin, repsMax) {
+  if (repsMin === null || repsMin === undefined || repsMax === null || repsMax === undefined) {
+    return "";
+  }
+
+  return Number(repsMin) === Number(repsMax) ? String(repsMin) : `${repsMin}-${repsMax}`;
+}
+
+function normalizeRepsLabel(value) {
+  return String(value ?? "")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function validateProgramExerciseTargetForm(form, exercise) {
+  const errors = [];
+  const targetSets = parsePositiveInteger(form.targetSets);
+  const repsMin = parseOptionalPositiveNumber(form.repsMin);
+  const repsMax = parseOptionalPositiveNumber(form.repsMax);
+  const repsLabel = form.repsLabel.trim();
+  const targetWeight = parseProgramTargetWeight(form.targetWeight, exercise);
+  const targetRPE = parseRpeValue(form.targetRPE);
+  const restTime = parsePositiveNumber(form.restTime);
+
+  if (targetSets === null) {
+    errors.push("Sets must be a positive whole number.");
+  }
+
+  if (form.repsMin.trim() && repsMin === null) {
+    errors.push("Reps min must be a positive number.");
+  }
+
+  if (form.repsMax.trim() && repsMax === null) {
+    errors.push("Reps max must be a positive number.");
+  }
+
+  if (repsMin !== null && repsMax !== null && repsMax < repsMin) {
+    errors.push("Reps max should be equal to or above reps min.");
+  }
+
+  if (repsMin === null && repsMax === null && !repsLabel) {
+    errors.push("Add reps min/max or a reps label.");
+  }
+
+  if (targetWeight.invalid) {
+    errors.push("Weight must be blank, BW, or a valid kg number.");
+  }
+
+  if (targetRPE === null) {
+    errors.push("Target RPE must be 1-10 and can use .5 steps.");
+  }
+
+  if (restTime === null) {
+    errors.push("Rest seconds must be a positive number.");
+  }
+
+  if (errors.length) {
+    return { valid: false, errors };
+  }
+
+  return {
+    valid: true,
+    errors: [],
+    patch: {
+      targetSets,
+      targetReps: {
+        min: repsMin,
+        max: repsMax,
+        label: repsLabel || null,
+      },
+      targetWeight: targetWeight.value,
+      targetRPE,
+      restTime,
+      notes: form.notes,
+    },
+  };
+}
+
+function parsePositiveInteger(value) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parsePositiveNumber(value) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseOptionalPositiveNumber(value) {
+  if (!value.trim()) {
+    return null;
+  }
+
+  return parsePositiveNumber(value);
+}
+
+function parseRpeValue(value) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 10 || !Number.isInteger(parsed * 2)) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseProgramTargetWeight(value, exercise) {
+  const cleanValue = value.trim();
+
+  if (!cleanValue) {
+    return { invalid: false, value: null };
+  }
+
+  if (cleanValue.toLowerCase() === "bw") {
+    return { invalid: false, value: exercise.loadType === "optionalExternal" ? null : "BW" };
+  }
+
+  const parsed = Number(cleanValue);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { invalid: true, value: null };
+  }
+
+  return { invalid: false, value: parsed };
 }
 
 function ProgramPreview({ days }) {
