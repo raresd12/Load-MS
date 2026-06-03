@@ -799,6 +799,33 @@ function formatTechnicalValue(value) {
   return String(value).trim();
 }
 
+function getExerciseVideoUrl(exercise) {
+  return formatTechnicalValue(exercise?.videoUrl) || formatTechnicalValue(exercise?.video_url);
+}
+
+function CheckVideoLink({ exercise, className = "", emptyLabel = "Check Video not added yet." }) {
+  const videoUrl = getExerciseVideoUrl(exercise);
+
+  if (!videoUrl) {
+    return (
+      <span className={`${className} text-sm font-black text-zinc-500`}>
+        {emptyLabel}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={videoUrl}
+      target="_blank"
+      rel="noreferrer"
+      className={`${className} focus-ring inline-flex min-h-9 items-center rounded-[8px] text-sm font-black text-sky-300 underline underline-offset-4 hover:text-sky-200`}
+    >
+      Check Video
+    </a>
+  );
+}
+
 export default function App() {
   const [sessions, setSessions] = useLocalStorageState(STORAGE_KEYS.sessions, []);
   const [nextPlans, setNextPlans] = useLocalStorageState(STORAGE_KEYS.nextPlans, {});
@@ -1296,14 +1323,10 @@ export default function App() {
             draft={draft}
             todayReadinessEntry={todayReadinessEntry}
             todayReadinessSummary={todayReadinessSummary}
-            setupCues={setupCues}
             validationErrors={validationErrors}
-            beatLastCues={beatLastCues}
             scrollTarget={workoutLogTarget}
-            onUpdateExerciseNotes={updateExerciseNotes}
             onUpdateRecoveryActivity={updateRecoveryActivity}
             onUpdateSessionField={updateSessionField}
-            onUpdateSetupCue={updateSetupCue}
             onSaveSet={updateSetEntry}
             onGoToReadiness={() => setActiveTab("readiness")}
             onScrollTargetHandled={() => setWorkoutLogTarget(null)}
@@ -1918,23 +1941,8 @@ function WorkoutExerciseCard({
         <Metric label="Rest" value={formatRest(displayPlan.restSeconds)} />
       </div>
 
-      <div className="mt-3 rounded-[8px] bg-[#171717] px-3 py-2">
-        <p className="text-xs font-semibold leading-5 text-zinc-300">
-          <span className="font-black text-zinc-100">Reason:</span>{" "}
-          {displayPlan.recommendationNote}
-        </p>
-        {displayPlan.repFocus && (
-          <p className="mt-1 text-xs font-bold text-lime-100">{displayPlan.repFocus}</p>
-        )}
-        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
-          {displayPlan.source === "progression"
-            ? "Program recommendation"
-            : displayPlan.source === "next-plan"
-              ? "Next-session plan"
-              : displayPlan.source === "baseline"
-                ? "Baseline"
-                : "Program target"}
-        </p>
+      <div className="mt-3">
+        <CheckVideoLink exercise={exercise} emptyLabel="Check Video not added yet." />
       </div>
 
       {primaryCue && (
@@ -1957,7 +1965,7 @@ function WorkoutExerciseCard({
           className="focus-ring flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
         >
           <Info aria-hidden="true" size={16} className="text-lime-300" />
-          More Info
+          {isInfoOpen ? "Close Details" : "More Info"}
         </button>
         <button
           type="button"
@@ -1970,60 +1978,174 @@ function WorkoutExerciseCard({
       </div>
 
       {isInfoOpen && (
-        <ExerciseInfoPanel exercise={exercise} setupCue={setupCue} className="mt-3" />
+        <ExerciseInfoPanel
+          exercise={exercise}
+          setupCue={setupCue}
+          className="mt-3"
+          onClose={() => setIsInfoOpen(false)}
+        />
       )}
     </article>
   );
 }
 
 function ExerciseMoreInfo({ exercise, setupCue }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
+    <details
+      open={isOpen}
+      onToggle={(event) => setIsOpen(event.currentTarget.open)}
+      className="mt-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2"
+    >
       <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-black text-zinc-100">
         <Info aria-hidden="true" size={16} className="text-lime-300" />
-        More Info
+        {isOpen ? "Close Details" : "More Info"}
       </summary>
-      <ExerciseInfoPanel exercise={exercise} setupCue={setupCue} className="mt-3" />
+      <ExerciseInfoPanel
+        exercise={exercise}
+        setupCue={setupCue}
+        className="mt-3"
+        onClose={() => setIsOpen(false)}
+      />
     </details>
   );
 }
 
-function ExerciseInfoPanel({ exercise, setupCue, className = "" }) {
-  const leftInfoFields = [
-    ["Main Cue", exercise.mainCue],
+function ExerciseInfoPanel({ exercise, setupCue, className = "", onClose }) {
+  const primaryInfoFields = [
     ["Setup", exercise.setup || setupCue],
     ["How To Do It", exercise.howToDoIt],
-    ["What You Should Feel", exercise.whatYouShouldFeel],
-    ["Execution Tips", exercise.executionTips],
-  ];
-  const rightInfoFields = [
     ["Common Mistakes", exercise.commonMistakes],
+    ["What You Should Feel", exercise.whatYouShouldFeel],
+  ];
+  const secondaryInfoFields = [
+    ["Execution Tips", exercise.executionTips],
     ["Why It's There", exercise.whyItsThere],
     ["Progression / Regression", exercise.progressionRegression],
     ["Safety Notes", exercise.safetyNotes],
   ];
+  const hasVideoUrl = Boolean(getExerciseVideoUrl(exercise));
 
   return (
-      <div className={`${className} grid gap-2 sm:grid-cols-2`}>
-        {[leftInfoFields, rightInfoFields].map((columnFields, columnIndex) => (
-          <div key={columnIndex} className="space-y-2">
-            {columnFields.map(([label, value]) => {
-              const text = formatTechnicalValue(value);
-
-              return (
-                <div key={label} className="rounded-[8px] bg-zinc-900 px-3 py-2">
-                  <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
-                    {label}
-                  </p>
-                  <p className="mt-1 text-sm font-semibold leading-6 text-zinc-200">
-                    {text || "Not added yet."}
-                  </p>
-                </div>
-              );
-            })}
+    <div className={`${className} rounded-[8px] border border-zinc-800 bg-[#141414] p-2`}>
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)]">
+        <ExerciseDetailField
+          label="Main Cue"
+          value={exercise.mainCue}
+          className="border border-lime-300/20 bg-lime-300/10"
+          maxItems={2}
+        />
+        <div className="rounded-[8px] border border-sky-300/20 bg-sky-300/10 px-3 py-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-sky-200/80">
+            Check Video
+          </p>
+          <div className="mt-1">
+            {hasVideoUrl ? (
+              <CheckVideoLink exercise={exercise} />
+            ) : (
+              <p className="text-sm font-black text-zinc-500">Video not added yet.</p>
+            )}
           </div>
+        </div>
+      </div>
+
+      <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {primaryInfoFields.map(([label, value]) => (
+          <ExerciseDetailField key={label} label={label} value={value} />
         ))}
       </div>
+
+      <details className="mt-2 rounded-[8px] border border-zinc-800 bg-zinc-900/70">
+        <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-300">
+          More coaching notes
+          <ChevronDown aria-hidden="true" size={14} className="text-zinc-500" />
+        </summary>
+        <div className="grid gap-2 border-t border-zinc-800 p-2 md:grid-cols-2 xl:grid-cols-4">
+          {secondaryInfoFields.map(([label, value]) => (
+            <ExerciseDetailField
+              key={label}
+              label={label}
+              value={value}
+              className="bg-[#111111]"
+              compact
+            />
+          ))}
+        </div>
+      </details>
+
+      <ExerciseDetailsCloseButton onClose={onClose} />
+    </div>
+  );
+}
+
+function ExerciseDetailsCloseButton({ onClose }) {
+  if (!onClose) {
+    return null;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="focus-ring mt-2 flex min-h-11 w-full items-center justify-center rounded-[8px] border border-lime-300/60 bg-lime-300/10 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/15"
+    >
+      Close Details
+    </button>
+  );
+}
+
+function ExerciseDetailField({ label, value, className = "bg-zinc-900", compact = false, maxItems = 4 }) {
+  const text = formatTechnicalValue(value);
+
+  return (
+    <div className={`rounded-[8px] px-3 ${compact ? "py-2" : "py-2.5"} ${className}`}>
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">
+        {label}
+      </p>
+      <TechnicalContent value={value} fallback={text || "Not added yet."} maxItems={maxItems} />
+    </div>
+  );
+}
+
+function TechnicalContent({ value, fallback, maxItems = 4 }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item ?? "").trim()).filter(Boolean);
+
+    if (items.length) {
+      const visibleItems = isExpanded ? items : items.slice(0, maxItems);
+      const hasHiddenItems = items.length > maxItems;
+
+      return (
+        <>
+          <ul className="mt-1 space-y-0.5 text-[13px] font-semibold leading-5 text-zinc-200">
+            {visibleItems.map((item) => (
+              <li key={item} className="flex gap-2">
+                <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-lime-300" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+          {hasHiddenItems && (
+            <button
+              type="button"
+              onClick={() => setIsExpanded((current) => !current)}
+              className="focus-ring mt-1 min-h-8 rounded-[8px] px-2 text-xs font-black text-lime-200 hover:bg-lime-300/10"
+            >
+              {isExpanded ? "Show less" : `Show ${items.length - maxItems} more`}
+            </button>
+          )}
+        </>
+      );
+    }
+  }
+
+  return (
+    <p className="mt-1 text-[13px] font-semibold leading-5 text-zinc-200">
+      {fallback}
+    </p>
   );
 }
 
@@ -2091,14 +2213,10 @@ function WorkoutLogPage({
   draft,
   todayReadinessEntry,
   todayReadinessSummary,
-  setupCues,
   validationErrors,
-  beatLastCues,
   scrollTarget,
-  onUpdateExerciseNotes,
   onUpdateRecoveryActivity,
   onUpdateSessionField,
-  onUpdateSetupCue,
   onSaveSet,
   onGoToReadiness,
   onScrollTargetHandled,
@@ -2182,12 +2300,8 @@ function WorkoutLogPage({
             day={day}
             plan={plan}
             draft={draft}
-            setupCues={setupCues}
-            beatLastCues={beatLastCues}
             exerciseRefs={exerciseRefs}
             highlightedExerciseId={highlightedExerciseId}
-            onUpdateExerciseNotes={onUpdateExerciseNotes}
-            onUpdateSetupCue={onUpdateSetupCue}
             onSaveSet={onSaveSet}
           />
         </>
@@ -2843,30 +2957,10 @@ function CompletedWorkoutTable({
   day,
   plan,
   draft,
-  setupCues,
-  beatLastCues,
   exerciseRefs,
   highlightedExerciseId,
-  onUpdateExerciseNotes,
-  onUpdateSetupCue,
   onSaveSet,
 }) {
-  const [expandedInfoIds, setExpandedInfoIds] = useState(() => new Set());
-
-  function toggleExerciseInfo(exerciseId) {
-    setExpandedInfoIds((currentIds) => {
-      const nextIds = new Set(currentIds);
-
-      if (nextIds.has(exerciseId)) {
-        nextIds.delete(exerciseId);
-      } else {
-        nextIds.add(exerciseId);
-      }
-
-      return nextIds;
-    });
-  }
-
   return (
     <SectionShell title="Log Completed Workout">
       <div className="hidden sm:block">
@@ -2880,13 +2974,9 @@ function CompletedWorkoutTable({
         {day.exercises.map((exercise) => {
           const planExercise = getPlanExercise(plan, exercise.id);
           const draftExercise = draft.exercises[exercise.id];
-          const setupCue = getStoredSetupCue(setupCues, exercise);
           const programExerciseId = exercise.programExerciseId ?? exercise.id;
           const isHighlighted = highlightedExerciseId === programExerciseId;
-          const isInfoExpanded = expandedInfoIds.has(programExerciseId);
           const autoExerciseRpe = calculateAutoExerciseRpe(draftExercise);
-          const cueText = exercise.mainCue || setupCue || exercise.notes;
-          const hasTechnicalInfo = hasExerciseTechnicalInfo(exercise, setupCue);
 
           return (
             <article
@@ -2916,92 +3006,166 @@ function CompletedWorkoutTable({
                 </div>
               </div>
 
-              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
-                <div className="space-y-3">
-                  <SavedSetsSummary exercise={exercise} sets={draftExercise.sets} />
+              <div className="mt-3 space-y-3">
+                <SavedSetsSummary exercise={exercise} sets={draftExercise.sets} />
+                <p className="inline-flex rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
+                  Auto Exercise RPE:{" "}
+                  <span className="ml-1">
+                    {autoExerciseRpe === null ? "--" : autoExerciseRpe.toFixed(1)}
+                  </span>
+                </p>
+                <div className="md:hidden">
                   <UnifiedSetEntry
                     exercise={exercise}
                     planExercise={planExercise}
                     sets={draftExercise.sets}
                     onSave={(index, values) => onSaveSet(exercise.id, index, values)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => toggleExerciseInfo(programExerciseId)}
-                    className="focus-ring flex min-h-10 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 bg-zinc-900 px-3 text-xs font-black text-zinc-200 lg:hidden"
-                  >
-                    <Info aria-hidden="true" size={15} className="text-lime-300" />
-                    Setup / Notes / Info
-                    <ChevronDown
-                      aria-hidden="true"
-                      size={14}
-                      className={`transition ${isInfoExpanded ? "rotate-180" : ""}`}
-                    />
-                  </button>
                 </div>
-
-                <aside className={`${isInfoExpanded ? "block" : "hidden"} space-y-3 lg:block`}>
-                  <div className="rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2">
-                    <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-lime-200/80">
-                      Auto Exercise RPE
-                    </span>
-                    <span className="text-xl font-black text-lime-100">
-                      {autoExerciseRpe === null ? "--" : autoExerciseRpe.toFixed(1)}
-                    </span>
-                  </div>
-
-                  <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
-                    <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
-                      Planned target
-                    </span>
-                    <p className="text-sm font-black text-white">{formatSetsReps(planExercise)}</p>
-                    <p className="mt-1 text-xs font-bold text-zinc-400">
-                      {formatWeight(planExercise.recommendedWeight, exercise)} | RPE {planExercise.targetRPE} | {formatRest(planExercise.restSeconds)}
-                    </p>
-                  </div>
-
-                  <p className="rounded-[8px] bg-zinc-900 px-3 py-2 text-xs font-bold text-lime-100">
-                    {beatLastCues[exercise.id].target}
-                  </p>
-
-                  {cueText && (
-                    <p className="rounded-[8px] bg-zinc-900 px-3 py-2 text-xs font-bold text-zinc-300">
-                      Cue: {cueText}
-                    </p>
-                  )}
-
-                  <label className="block">
-                    <span className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-500">
-                      <CheckSquare aria-hidden="true" size={14} />
-                      Setup cue
-                    </span>
-                    <input
-                      type="text"
-                      value={setupCue}
-                      onChange={(event) => onUpdateSetupCue(exercise.id, event.target.value)}
-                      className="focus-ring min-h-10 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600"
-                      placeholder="Bench grip, seat height, machine pin, stance"
-                    />
-                  </label>
-
-                  <textarea
-                    value={draftExercise.notes}
-                    onChange={(event) => onUpdateExerciseNotes(exercise.id, event.target.value)}
-                    rows={3}
-                    className="focus-ring min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm text-white placeholder:text-zinc-600"
-                    placeholder="Quick note: form, pain, setup, machine pin"
-                  />
-
-                  {hasTechnicalInfo && (
-                    <ExerciseMoreInfo exercise={exercise} setupCue={setupCue} />
-                  )}
-                </aside>
+                <DesktopSetCardGrid
+                  exercise={exercise}
+                  planExercise={planExercise}
+                  sets={draftExercise.sets}
+                  onSave={(index, values) => onSaveSet(exercise.id, index, values)}
+                />
               </div>
             </article>
           );
         })}
       </div>
     </SectionShell>
+  );
+}
+
+function DesktopSetCardGrid({ exercise, planExercise, sets, onSave }) {
+  return (
+    <div className="hidden gap-2 md:grid md:grid-cols-2 lg:grid-cols-4">
+      {sets.map((set, index) => (
+        <DesktopSetCard
+          key={index}
+          exercise={exercise}
+          planExercise={planExercise}
+          set={set}
+          setIndex={index}
+          onSave={onSave}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
+  const [values, setValues] = useState(() =>
+    getSetEntryValues(set ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)),
+  );
+  const [errors, setErrors] = useState([]);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  useEffect(() => {
+    setValues(getSetEntryValues(set ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)));
+    setErrors([]);
+    setSaveMessage("");
+  }, [exercise, planExercise, set]);
+
+  function updateValue(field, value) {
+    setValues((currentValues) => ({ ...currentValues, [field]: value }));
+    setErrors([]);
+    setSaveMessage("");
+  }
+
+  function saveSet() {
+    const nextErrors = validateSetEntry(values, exercise);
+
+    if (nextErrors.length) {
+      setErrors(nextErrors);
+      setSaveMessage("");
+      return;
+    }
+
+    onSave(setIndex, values);
+    setErrors([]);
+    setSaveMessage(`Set ${setIndex + 1} saved.`);
+  }
+
+  function handleInputKeyDown(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      saveSet();
+    }
+  }
+
+  const hasSavedValue = !isBlank(set?.reps) || !isBlank(set?.weight) || !isBlank(set?.rpe);
+
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-xs font-black uppercase tracking-[0.12em] text-zinc-400">
+          Set {setIndex + 1}
+        </p>
+        <span className="rounded-[6px] bg-[#111111] px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-zinc-500">
+          {hasSavedValue ? "Saved" : "Default"}
+        </span>
+      </div>
+      <div className="grid gap-2">
+        <StepperInput
+          label="Reps"
+          value={values.reps}
+          onChange={(value) => updateValue("reps", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) => updateValue("reps", adjustInputValue(values.reps, delta, { min: 0 }))}
+          stepAmount={1}
+          type="number"
+          inputMode="numeric"
+          placeholder="reps"
+        />
+        <StepperInput
+          label="Kg"
+          value={values.weight}
+          onChange={(value) => updateValue("weight", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) =>
+            updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
+          }
+          stepAmount={1}
+          type={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "number"}
+          inputMode={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "decimal"}
+          placeholder={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "BW" : "kg"}
+        />
+        <StepperInput
+          label="RPE"
+          value={values.rpe}
+          onChange={(value) => updateValue("rpe", value)}
+          onKeyDown={handleInputKeyDown}
+          onStep={(delta) => updateValue("rpe", adjustInputValue(values.rpe, delta, { min: 1, max: 10 }))}
+          stepAmount={0.5}
+          type="number"
+          inputMode="decimal"
+          min="1"
+          max="10"
+          step="0.5"
+          placeholder="8"
+        />
+      </div>
+      {errors.length > 0 && (
+        <div className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
+          {errors.map((error) => (
+            <p key={error}>{error}</p>
+          ))}
+        </div>
+      )}
+      {saveMessage && (
+        <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
+          {saveMessage}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={saveSet}
+        className="focus-ring mt-3 min-h-10 w-full rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+      >
+        Save Set
+      </button>
+    </div>
   );
 }
 
@@ -3689,7 +3853,9 @@ function LibraryPage({ exercises, setupCues }) {
             return (
               <article
                 key={exercise.id}
-                className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4"
+                className={`rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4 ${
+                  isOpen ? "md:col-span-2" : ""
+                }`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
@@ -3731,6 +3897,7 @@ function LibraryPage({ exercises, setupCues }) {
                     exercise={exercise}
                     setupCue={setupCue}
                     className="mt-3"
+                    onClose={() => setOpenExerciseId(null)}
                   />
                 )}
               </article>

@@ -1,4 +1,5 @@
 import { workoutProgram } from "../config/workoutProgram.js";
+import { exerciseLibraryContentBatches } from "../data/exerciseLibraryContent.js";
 import { readStorage, STORAGE_KEYS, writeStorage } from "./storage.js";
 
 export const PROGRAM_STORAGE_VERSION = 1;
@@ -10,6 +11,21 @@ function nowIso() {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function asCleanArray(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? "").trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function byOrderIndex(left, right) {
@@ -56,6 +72,64 @@ function splitMuscles(muscleGroup) {
     .filter(Boolean);
 }
 
+function isEmptyLibraryValue(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => String(item ?? "").trim()).length === 0;
+  }
+
+  return value === null || value === undefined || String(value).trim() === "";
+}
+
+function normalizeLibraryValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item ?? "").trim().toLowerCase())
+      .filter(Boolean)
+      .join("|");
+  }
+
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function shouldFillLibraryField(currentValue, seededValue) {
+  return (
+    isEmptyLibraryValue(currentValue) ||
+    normalizeLibraryValue(currentValue) === normalizeLibraryValue(seededValue)
+  );
+}
+
+function normalizeExerciseLibraryContent(content) {
+  return {
+    name: content.exercise_name,
+    category: content.category,
+    mainMuscles: asCleanArray(content.main_muscles),
+    secondaryMuscles: asCleanArray(content.secondary_muscles),
+    equipment: content.equipment,
+    difficulty: content.difficulty,
+    goalTags: asCleanArray(content.goal_tags),
+    setup: content.setup,
+    mainCue: content.main_cue,
+    howToDoIt: content.how_to_do_it,
+    executionTips: content.execution_tips,
+    commonMistakes: content.common_mistakes,
+    whatYouShouldFeel: content.what_you_should_feel,
+    whyItsThere: content.why_its_there,
+    progressionRegression: content.progression_regression,
+    safetyNotes: content.safety_notes,
+    video_url: content.video_url,
+  };
+}
+
+function getExerciseLibraryContentById() {
+  return exerciseLibraryContentBatches.reduce((contentById, batch) => {
+    Object.entries(batch).forEach(([exerciseId, content]) => {
+      contentById.set(exerciseId, normalizeExerciseLibraryContent(content));
+    });
+
+    return contentById;
+  }, new Map());
+}
+
 function createTargetReps(exercise) {
   return {
     min: exercise.repsMin,
@@ -85,6 +159,8 @@ function createLibraryExercise(exercise) {
     whyItsThere: "",
     progressionRegression: "",
     safetyNotes: "",
+    videoUrl: "",
+    video_url: "",
   };
 }
 
@@ -272,6 +348,84 @@ function getProgramDisplayNickname(program) {
   return program?.name ?? "Program";
 }
 
+function mergeExerciseLibraryContent(seedLibraryExercises) {
+  const contentById = getExerciseLibraryContentById();
+
+  if (!contentById.size) {
+    return false;
+  }
+
+  const seedById = new Map(asArray(seedLibraryExercises).map((exercise) => [exercise.id, exercise]));
+  const exerciseLibrary = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, []));
+  let didChange = false;
+
+  const nextExerciseLibrary = exerciseLibrary.map((exercise) => {
+    const content = contentById.get(exercise.id);
+
+    if (!content) {
+      return exercise;
+    }
+
+    const seededExercise =
+      seedById.get(exercise.id) ??
+      (getLegacyExerciseConfig(exercise.id)
+        ? createLibraryExercise(getLegacyExerciseConfig(exercise.id))
+        : {});
+    const nextExercise = { ...exercise };
+
+    [
+      "name",
+      "category",
+      "mainMuscles",
+      "secondaryMuscles",
+      "equipment",
+      "difficulty",
+      "goalTags",
+      "setup",
+      "mainCue",
+      "howToDoIt",
+      "executionTips",
+      "commonMistakes",
+      "whatYouShouldFeel",
+      "whyItsThere",
+      "progressionRegression",
+      "safetyNotes",
+    ].forEach((field) => {
+      const contentValue = content[field];
+
+      if (
+        !isEmptyLibraryValue(contentValue) &&
+        shouldFillLibraryField(nextExercise[field], seededExercise[field])
+      ) {
+        nextExercise[field] = contentValue;
+      }
+    });
+
+    if (
+      !isEmptyLibraryValue(content.video_url) &&
+      isEmptyLibraryValue(nextExercise.video_url) &&
+      isEmptyLibraryValue(nextExercise.videoUrl)
+    ) {
+      nextExercise.video_url = content.video_url;
+    }
+
+    if (
+      normalizeLibraryValue(nextExercise) !== normalizeLibraryValue(exercise) ||
+      JSON.stringify(nextExercise) !== JSON.stringify(exercise)
+    ) {
+      didChange = true;
+    }
+
+    return nextExercise;
+  });
+
+  if (didChange) {
+    writeStorage(STORAGE_KEYS.exerciseLibrary, nextExerciseLibrary);
+  }
+
+  return didChange;
+}
+
 export function seedDefaultProgramIfNeeded() {
   const seedTime = nowIso();
   const existingPrograms = getPrograms();
@@ -307,6 +461,7 @@ export function seedDefaultProgramIfNeeded() {
     );
     writeProgramStates(mergeById(getProgramStates(), [seed.programState]));
     writeStorage(STORAGE_KEYS.activeProgramId, seed.program.id);
+    mergeExerciseLibraryContent(seed.libraryExercises);
 
     return {
       seeded: true,
@@ -339,6 +494,8 @@ export function seedDefaultProgramIfNeeded() {
   if (didBackfillDefaultNickname) {
     writeStorage(STORAGE_KEYS.programs, nextPrograms);
   }
+
+  mergeExerciseLibraryContent(seed.libraryExercises);
 
   return {
     seeded: false,
@@ -686,6 +843,7 @@ export function getProgramDayViewModels(programId) {
         whyItsThere: libraryExercise?.whyItsThere ?? "",
         progressionRegression: libraryExercise?.progressionRegression ?? "",
         safetyNotes: libraryExercise?.safetyNotes ?? "",
+        videoUrl: libraryExercise?.videoUrl || libraryExercise?.video_url || "",
         notes: programExercise.notes ?? "",
         isOptional: Boolean(programExercise.isOptional),
       };
