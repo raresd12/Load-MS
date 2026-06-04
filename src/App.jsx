@@ -89,7 +89,7 @@ const moreTabs = [
 ];
 
 const secondaryTabIds = new Set(moreTabs.map((tab) => tab.id));
-const dayScopedTabs = new Set(["workout-log", "progress"]);
+const dayScopedTabs = new Set(["workout-log"]);
 
 const wellnessIcons = {
   soreness: Flame,
@@ -1335,11 +1335,13 @@ export default function App() {
         )}
 
         {activeTab === "progress" && (
-          <NextPlanPage
-            selectedDay={selectedDay}
-            selectedDayId={selectedDayId}
-            nextPlans={nextPlans}
-            lastGeneratedPlan={lastGeneratedPlan}
+          <ProgressPage
+            sessions={sessions}
+            readinessByDate={readinessByDate}
+            programs={programs}
+            activeProgram={activeProgram}
+            activeProgramDays={activeProgramDays}
+            exerciseLibrary={exerciseLibrary}
           />
         )}
 
@@ -3590,6 +3592,920 @@ function SessionFeedback({ draft, onUpdateSessionField }) {
       </div>
     </SectionShell>
   );
+}
+
+const recentWorkoutWindowDays = 30;
+
+function ProgressPage({
+  sessions,
+  readinessByDate,
+  programs,
+  activeProgram,
+  activeProgramDays,
+  exerciseLibrary,
+}) {
+  const analytics = useMemo(
+    () =>
+      buildProgressAnalytics({
+        sessions,
+        readinessByDate,
+        programs,
+        activeProgram,
+        activeProgramDays,
+        exerciseLibrary,
+      }),
+    [sessions, readinessByDate, programs, activeProgram, activeProgramDays, exerciseLibrary],
+  );
+  const [selectedExerciseKey, setSelectedExerciseKey] = useState(
+    () => analytics.exerciseOptions[0]?.key ?? "",
+  );
+
+  useEffect(() => {
+    if (!analytics.exerciseOptions.length) {
+      setSelectedExerciseKey("");
+      return;
+    }
+
+    if (!analytics.exerciseOptions.some((option) => option.key === selectedExerciseKey)) {
+      setSelectedExerciseKey(analytics.exerciseOptions[0].key);
+    }
+  }, [analytics.exerciseOptions, selectedExerciseKey]);
+
+  const selectedExercise =
+    analytics.exerciseOptions.find((option) => option.key === selectedExerciseKey) ??
+    analytics.exerciseOptions[0] ??
+    null;
+  const selectedStats = selectedExercise
+    ? buildSelectedExerciseAnalytics(selectedExercise, analytics.setRecords)
+    : null;
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          Progress Analytics
+        </p>
+        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-black text-white">Progress</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+              Local training trends from saved workouts and readiness check-ins.
+            </p>
+          </div>
+          <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-black text-zinc-200">
+            {activeProgram?.nickname || activeProgram?.name || "No active program"}
+          </span>
+        </div>
+      </section>
+
+      <section className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Workouts" value={analytics.totalWorkouts} />
+        <Metric label={`${recentWorkoutWindowDays}d count`} value={analytics.recentWorkoutCount} />
+        <Metric label="Last workout" value={formatProgressDate(analytics.lastWorkoutDate)} />
+        <Metric label="Completed sets" value={analytics.totalCompletedSets} />
+        <Metric label="Volume" value={formatVolume(analytics.totalVolume)} />
+        <Metric label="Avg session RPE" value={formatAverage(analytics.averageSessionRpe)} />
+        <Metric label="Avg readiness" value={formatReadinessAverage(analytics.averageReadiness)} />
+        <Metric label="Weighted sets" value={analytics.weightedSetCount} />
+      </section>
+
+      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+              Exercise progress
+            </p>
+            <h3 className="mt-1 text-xl font-black text-white">Select an exercise</h3>
+          </div>
+          <span className="rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+            {analytics.loggedExerciseCount} logged
+          </span>
+        </div>
+
+        {analytics.exerciseOptions.length ? (
+          <>
+            <label className="mt-4 block">
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+                Exercise
+              </span>
+              <select
+                value={selectedExerciseKey}
+                onChange={(event) => setSelectedExerciseKey(event.target.value)}
+                className="focus-ring min-h-12 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-black text-white"
+              >
+                {analytics.exerciseOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.name} {option.dayName ? `- ${option.dayName}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <ExerciseProgressPanel exercise={selectedExercise} stats={selectedStats} />
+          </>
+        ) : (
+          <ProgressEmptyState
+            title="No exercises available yet."
+            body="Log a workout or seed an active program to start seeing exercise progress."
+          />
+        )}
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <RecentWorkoutTrend sessions={analytics.sortedSessions} />
+        <ReadinessTrend entries={analytics.readinessEntries} />
+      </section>
+    </div>
+  );
+}
+
+function ExerciseProgressPanel({ exercise, stats }) {
+  if (!exercise || !stats) {
+    return null;
+  }
+
+  if (!stats.completedSets.length) {
+    return (
+      <div className="mt-4">
+        <ProgressEmptyState
+          title="No logged sets for this exercise yet."
+          body="It can still appear here from the active program. Log sets to unlock trends."
+        />
+        {exercise.prescription && (
+          <p className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-black text-zinc-200">
+            Current target: {exercise.prescription}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <ProgressStatCard
+          label="Latest"
+          value={stats.latestSession ? formatProgressDate(stats.latestSession.date) : "No data"}
+          detail={stats.latestSession?.setSummary ?? "No logged sets yet."}
+        />
+        <ProgressStatCard
+          label="Best set"
+          value={stats.bestSet ? formatSetPerformance(stats.bestSet) : "No weighted set"}
+          detail={
+            stats.bestSet?.estimatedOneRepMax
+              ? `e1RM ${formatKg(stats.bestSet.estimatedOneRepMax)}`
+              : "Based on reps/load when e1RM is unavailable."
+          }
+        />
+        <ProgressStatCard
+          label="Best estimated strength"
+          value={stats.bestEstimatedStrength ? formatKg(stats.bestEstimatedStrength) : "No kg data"}
+          detail={`Total volume ${formatVolume(stats.totalVolume)} | Avg RPE ${formatAverage(stats.averageSetRpe)}`}
+        />
+      </div>
+
+      <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-black text-white">{exercise.name}</p>
+            <p className="mt-1 text-xs font-semibold text-zinc-500">
+              {exercise.programName ?? "Logged exercise"} {exercise.dayName ? `| ${exercise.dayName}` : ""}
+            </p>
+          </div>
+          <span className="rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+            {stats.completedSets.length} sets
+          </span>
+        </div>
+
+        {stats.recentSessions.length ? (
+          <div className="mt-3 space-y-2">
+            {stats.recentSessions
+              .slice(0, 6)
+              .reverse()
+              .map((sessionEntry) => (
+                <ExerciseTrendRow
+                  key={`${sessionEntry.sessionId}-${sessionEntry.date}`}
+                  entry={sessionEntry}
+                  maxValue={stats.trendMaxValue}
+                />
+              ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm font-semibold text-zinc-400">
+            No recent session trend available yet.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProgressStatCard({ label, value, detail }) {
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+        {label}
+      </p>
+      <p className="mt-1 break-words text-lg font-black text-white">{value}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">{detail}</p>
+    </div>
+  );
+}
+
+function ExerciseTrendRow({ entry, maxValue }) {
+  const value = entry.bestEstimatedStrength ?? entry.totalVolume ?? entry.totalReps;
+  const width = maxValue > 0 ? Math.max(8, Math.min(100, (value / maxValue) * 100)) : 0;
+
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+      <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
+        <p className="text-sm font-black text-white">{formatProgressDate(entry.date)}</p>
+        <p className="text-xs font-semibold text-zinc-400">
+          {entry.setSummary} | Avg RPE {formatAverage(entry.averageRpe)}
+        </p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          className="h-full rounded-full bg-lime-300"
+          style={{ width: `${width}%` }}
+        />
+      </div>
+      <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.1em] text-zinc-500">
+        {entry.bestEstimatedStrength
+          ? `Best e1RM ${formatKg(entry.bestEstimatedStrength)}`
+          : entry.totalVolume
+            ? `Volume ${formatVolume(entry.totalVolume)}`
+            : `${entry.totalReps} reps`}
+      </p>
+    </div>
+  );
+}
+
+function RecentWorkoutTrend({ sessions }) {
+  const recentSessions = sessions.slice(0, 5);
+
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        Recent workouts
+      </p>
+      {recentSessions.length ? (
+        <div className="mt-3 space-y-2">
+          {recentSessions.map((session) => (
+            <div
+              key={session.id ?? `${session.date}-${session.dayName}`}
+              className="flex items-center justify-between gap-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-white">
+                  {session.dayName ?? "Workout"}
+                </p>
+                <p className="text-xs font-semibold text-zinc-500">
+                  {formatProgressDate(session.date)}
+                </p>
+              </div>
+              <span className="shrink-0 rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black text-zinc-300">
+                RPE {formatAverage(numberValue(session.sessionRpe, null))}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <ProgressEmptyState
+          title="No workouts logged yet."
+          body="Save a workout to start the progress feed."
+        />
+      )}
+    </section>
+  );
+}
+
+function ReadinessTrend({ entries }) {
+  const recentEntries = entries.slice(0, 7);
+
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        Readiness trend
+      </p>
+      {recentEntries.length ? (
+        <div className="mt-3 space-y-2">
+          {recentEntries.map((entry) => {
+            const copy = getReadinessCopy(entry.readiness);
+            const width = Math.max(8, Math.min(100, (entry.readiness.averageScore / 5) * 100));
+
+            return (
+              <div key={entry.date} className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-black text-white">{formatDateKey(entry.date)}</p>
+                  <p className="text-xs font-black text-zinc-300">
+                    {copy.label} {entry.readiness.averageScore.toFixed(1)}
+                  </p>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className={`h-full rounded-full ${
+                      entry.readiness.status === "green"
+                        ? "bg-lime-300"
+                        : entry.readiness.status === "red"
+                          ? "bg-red-300"
+                          : "bg-amber-300"
+                    }`}
+                    style={{ width: `${width}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <ProgressEmptyState
+          title="No readiness check-ins yet."
+          body="Save readiness to compare recovery with performance."
+        />
+      )}
+    </section>
+  );
+}
+
+function ProgressEmptyState({ title, body }) {
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-4">
+      <p className="font-black text-white">{title}</p>
+      <p className="mt-1 text-sm font-semibold leading-6 text-zinc-400">{body}</p>
+    </div>
+  );
+}
+
+function buildProgressAnalytics({
+  sessions,
+  readinessByDate,
+  programs,
+  activeProgram,
+  activeProgramDays,
+  exerciseLibrary,
+}) {
+  const sortedSessions = [...(sessions ?? [])].sort(
+    (left, right) => getDateTime(right.date) - getDateTime(left.date),
+  );
+  const exerciseLookup = buildProgressExerciseLookup({
+    programs,
+    activeProgram,
+    activeProgramDays,
+    exerciseLibrary,
+  });
+  const setRecords = sortedSessions.flatMap((session) =>
+    getSessionSetRecords(session, exerciseLookup),
+  );
+  const completedSets = setRecords.filter((set) => set.completed);
+  const weightedSets = completedSets.filter(
+    (set) => typeof set.weight === "number" && Number.isFinite(set.reps),
+  );
+  const sessionRpes = sortedSessions
+    .map((session) => numberValue(session.sessionRpe, NaN))
+    .filter(Number.isFinite);
+  const readinessEntries = buildReadinessEntries(readinessByDate, sortedSessions);
+  const readinessScores = readinessEntries
+    .map((entry) => entry.readiness.averageScore)
+    .filter(Number.isFinite);
+  const now = Date.now();
+  const recentWindowMs = recentWorkoutWindowDays * 24 * 60 * 60 * 1000;
+  const recentWorkoutCount = sortedSessions.filter((session) => {
+    const dateTime = getDateTime(session.date);
+    return dateTime && now - dateTime <= recentWindowMs;
+  }).length;
+  const exerciseOptions = buildProgressExerciseOptions({
+    activeProgram,
+    activeProgramDays,
+    exerciseLookup,
+    setRecords,
+  });
+
+  return {
+    sortedSessions,
+    setRecords,
+    totalWorkouts: sortedSessions.length,
+    recentWorkoutCount,
+    lastWorkoutDate: sortedSessions[0]?.date ?? null,
+    totalCompletedSets: completedSets.length,
+    weightedSetCount: weightedSets.length,
+    totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+    averageSessionRpe: average(sessionRpes),
+    averageReadiness: average(readinessScores),
+    readinessEntries,
+    exerciseOptions,
+    loggedExerciseCount: exerciseOptions.filter((option) => option.loggedSetCount > 0).length,
+  };
+}
+
+function buildProgressExerciseLookup({
+  programs,
+  activeProgram,
+  activeProgramDays,
+  exerciseLibrary,
+}) {
+  const byProgramExercise = new Map();
+  const byLooseProgramExercise = new Map();
+  const byExerciseId = new Map();
+  const byExerciseName = new Map();
+  const libraryById = new Map((exerciseLibrary ?? []).map((exercise) => [exercise.id, exercise]));
+  const programEntries = new Map();
+
+  function addProgramExercise(program, day, exercise) {
+    const entry = {
+      key: getProgressExerciseKey({
+        programId: program?.id,
+        programExerciseId: exercise.programExerciseId ?? exercise.id,
+        exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId,
+        exerciseName: exercise.name,
+      }),
+      programId: program?.id ?? null,
+      programName: program?.nickname || program?.name || null,
+      dayId: day?.id ?? null,
+      dayName: day?.name ?? null,
+      programExerciseId: exercise.programExerciseId ?? exercise.id,
+      exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id,
+      name: exercise.name,
+      category: exercise.category,
+      prescription: `${exercise.sets}x ${exercise.repsLabel} | ${formatWeight(exercise.recommendedWeight, exercise)} | RPE ${exercise.targetRPE} | ${formatRest(exercise.restSeconds)}`,
+      activeProgram: activeProgram?.id === program?.id,
+      loggedSetCount: 0,
+    };
+
+    if (entry.programId && entry.programExerciseId) {
+      byProgramExercise.set(`${entry.programId}::${entry.programExerciseId}`, entry);
+    }
+
+    if (entry.programExerciseId) {
+      byLooseProgramExercise.set(entry.programExerciseId, entry);
+    }
+
+    if (entry.exerciseId) {
+      const current = byExerciseId.get(entry.exerciseId);
+      if (!current || entry.activeProgram) {
+        byExerciseId.set(entry.exerciseId, entry);
+      }
+    }
+
+    if (entry.name) {
+      byExerciseName.set(normalizeProgressName(entry.name), entry);
+    }
+
+    programEntries.set(entry.key, entry);
+  }
+
+  (programs ?? []).forEach((program) => {
+    getProgramDayViewModels(program.id).forEach((day) => {
+      day.exercises.forEach((exercise) => addProgramExercise(program, day, exercise));
+    });
+  });
+
+  if (activeProgram && !programEntries.size) {
+    activeProgramDays.forEach((day) => {
+      day.exercises.forEach((exercise) => addProgramExercise(activeProgram, day, exercise));
+    });
+  }
+
+  return {
+    byProgramExercise,
+    byLooseProgramExercise,
+    byExerciseId,
+    byExerciseName,
+    libraryById,
+    programEntries,
+  };
+}
+
+function getSessionSetRecords(session, exerciseLookup) {
+  if (Array.isArray(session?.workoutSets) && session.workoutSets.length) {
+    return session.workoutSets.map((set) => normalizeWorkoutSetRecord(session, set, exerciseLookup));
+  }
+
+  return Object.entries(session?.exercises ?? {}).flatMap(([exerciseKey, exerciseLog]) => {
+    const sets = Array.isArray(exerciseLog?.sets) ? exerciseLog.sets : [];
+
+    return sets.map((set, index) =>
+      normalizeLegacySetRecord(session, exerciseKey, exerciseLog, set, index, exerciseLookup),
+    );
+  });
+}
+
+function normalizeWorkoutSetRecord(session, set, exerciseLookup) {
+  const lookupEntry = resolveProgressExerciseEntry(
+    {
+      programId: set.programId ?? session.programId,
+      programExerciseId: set.programExerciseId,
+      exerciseId: set.exerciseId,
+      exerciseName: set.exerciseName,
+    },
+    exerciseLookup,
+  );
+  const reps = parseAnalyticsNumber(set.actualReps);
+  const weight = normalizeWeight(set.actualWeight);
+  const rpe = parseAnalyticsRpe(set.actualRPE);
+
+  return {
+    sessionId: set.sessionId ?? session.id,
+    date: session.date,
+    programId: set.programId ?? session.programId ?? lookupEntry?.programId ?? null,
+    dayId: set.dayId ?? session.dayId ?? lookupEntry?.dayId ?? null,
+    dayName: session.dayName ?? lookupEntry?.dayName ?? null,
+    programExerciseId: set.programExerciseId ?? lookupEntry?.programExerciseId ?? null,
+    exerciseId: set.exerciseId ?? lookupEntry?.exerciseId ?? null,
+    exerciseName: lookupEntry?.name ?? getLibraryExerciseName(set.exerciseId, exerciseLookup) ?? "Exercise",
+    exerciseKey: getProgressExerciseKey({
+      programId: set.programId ?? session.programId ?? lookupEntry?.programId,
+      programExerciseId: set.programExerciseId ?? lookupEntry?.programExerciseId,
+      exerciseId: set.exerciseId ?? lookupEntry?.exerciseId,
+      exerciseName: lookupEntry?.name,
+    }),
+    setNumber: set.setNumber,
+    reps,
+    weight,
+    rpe,
+    completed: Boolean(set.completed) || isCompletedAnalyticsSet(reps, weight, rpe),
+    estimatedOneRepMax: calculateEstimatedOneRepMax(weight, reps),
+  };
+}
+
+function normalizeLegacySetRecord(session, exerciseKey, exerciseLog, set, index, exerciseLookup) {
+  const lookupEntry = resolveProgressExerciseEntry(
+    {
+      programId: session.programId,
+      programExerciseId: exerciseLog?.programExerciseId ?? exerciseKey,
+      exerciseId: exerciseLog?.exerciseId,
+      exerciseName: exerciseLog?.name ?? exerciseLog?.exerciseName,
+    },
+    exerciseLookup,
+  );
+  const reps = parseAnalyticsNumber(set?.reps);
+  const weight = normalizeWeight(set?.weight);
+  const setRpe = parseAnalyticsRpe(set?.rpe);
+  const exerciseRpe = parseAnalyticsRpe(exerciseLog?.exerciseRPE);
+  const rpe = setRpe ?? exerciseRpe;
+
+  return {
+    sessionId: session.id,
+    date: session.date,
+    programId: session.programId ?? lookupEntry?.programId ?? null,
+    dayId: session.dayId ?? lookupEntry?.dayId ?? null,
+    dayName: session.dayName ?? lookupEntry?.dayName ?? null,
+    programExerciseId: exerciseLog?.programExerciseId ?? lookupEntry?.programExerciseId ?? null,
+    exerciseId: exerciseLog?.exerciseId ?? lookupEntry?.exerciseId ?? null,
+    exerciseName:
+      lookupEntry?.name ??
+      getLibraryExerciseName(exerciseLog?.exerciseId, exerciseLookup) ??
+      exerciseLog?.name ??
+      exerciseLog?.exerciseName ??
+      exerciseKey,
+    exerciseKey: getProgressExerciseKey({
+      programId: session.programId ?? lookupEntry?.programId,
+      programExerciseId: exerciseLog?.programExerciseId ?? lookupEntry?.programExerciseId,
+      exerciseId: exerciseLog?.exerciseId ?? lookupEntry?.exerciseId,
+      exerciseName: lookupEntry?.name ?? exerciseLog?.name ?? exerciseKey,
+    }),
+    setNumber: index + 1,
+    reps,
+    weight,
+    rpe,
+    completed: isCompletedAnalyticsSet(reps, weight, rpe),
+    estimatedOneRepMax: calculateEstimatedOneRepMax(weight, reps),
+  };
+}
+
+function resolveProgressExerciseEntry(identity, exerciseLookup) {
+  if (identity.programId && identity.programExerciseId) {
+    const strictMatch = exerciseLookup.byProgramExercise.get(
+      `${identity.programId}::${identity.programExerciseId}`,
+    );
+
+    if (strictMatch) {
+      return strictMatch;
+    }
+  }
+
+  if (identity.programExerciseId) {
+    const looseMatch = exerciseLookup.byLooseProgramExercise.get(identity.programExerciseId);
+
+    if (looseMatch) {
+      return looseMatch;
+    }
+  }
+
+  if (identity.exerciseId) {
+    const exerciseMatch = exerciseLookup.byExerciseId.get(identity.exerciseId);
+
+    if (exerciseMatch) {
+      return exerciseMatch;
+    }
+  }
+
+  if (identity.exerciseName) {
+    return exerciseLookup.byExerciseName.get(normalizeProgressName(identity.exerciseName)) ?? null;
+  }
+
+  return null;
+}
+
+function buildProgressExerciseOptions({ activeProgram, activeProgramDays, exerciseLookup, setRecords }) {
+  const options = new Map();
+
+  activeProgramDays.forEach((day) => {
+    day.exercises.forEach((exercise) => {
+      const key = getProgressExerciseKey({
+        programId: activeProgram?.id,
+        programExerciseId: exercise.programExerciseId ?? exercise.id,
+        exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId,
+        exerciseName: exercise.name,
+      });
+
+      options.set(key, {
+        key,
+        programId: activeProgram?.id ?? null,
+        programExerciseId: exercise.programExerciseId ?? exercise.id,
+        exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id,
+        name: exercise.name,
+        programName: activeProgram?.nickname || activeProgram?.name || null,
+        dayName: day.name,
+        prescription: `${exercise.sets}x ${exercise.repsLabel} | ${formatWeight(exercise.recommendedWeight, exercise)} | RPE ${exercise.targetRPE} | ${formatRest(exercise.restSeconds)}`,
+        loggedSetCount: 0,
+        activeProgram: true,
+      });
+    });
+  });
+
+  setRecords.forEach((record) => {
+    const existing = options.get(record.exerciseKey);
+
+    if (existing) {
+      existing.loggedSetCount += record.completed ? 1 : 0;
+      return;
+    }
+
+    const lookupEntry = resolveProgressExerciseEntry(record, exerciseLookup);
+
+    options.set(record.exerciseKey, {
+      key: record.exerciseKey,
+      programId: record.programId,
+      programExerciseId: record.programExerciseId,
+      exerciseId: record.exerciseId,
+      name: lookupEntry?.name ?? record.exerciseName ?? "Exercise",
+      programName: lookupEntry?.programName ?? null,
+      dayName: record.dayName ?? lookupEntry?.dayName ?? null,
+      prescription: lookupEntry?.prescription ?? "",
+      loggedSetCount: record.completed ? 1 : 0,
+      activeProgram: false,
+    });
+  });
+
+  return [...options.values()].sort((left, right) => {
+    if (left.loggedSetCount !== right.loggedSetCount) {
+      return right.loggedSetCount - left.loggedSetCount;
+    }
+
+    if (left.activeProgram !== right.activeProgram) {
+      return left.activeProgram ? -1 : 1;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function buildSelectedExerciseAnalytics(exercise, setRecords) {
+  const completedSets = setRecords
+    .filter((set) => set.exerciseKey === exercise.key && set.completed)
+    .sort((left, right) => getDateTime(right.date) - getDateTime(left.date));
+  const weightedSets = completedSets.filter(
+    (set) => typeof set.weight === "number" && Number.isFinite(set.reps),
+  );
+  const estimatedSets = weightedSets.filter((set) => set.estimatedOneRepMax !== null);
+  const bestSet = [...completedSets].sort(compareBestSet)[0] ?? null;
+  const recentSessions = buildExerciseSessionSummaries(completedSets);
+  const trendValues = recentSessions.map(
+    (entry) => entry.bestEstimatedStrength ?? entry.totalVolume ?? entry.totalReps,
+  );
+
+  return {
+    completedSets,
+    weightedSets,
+    latestSession: recentSessions[0] ?? null,
+    bestSet,
+    bestEstimatedStrength: estimatedSets.length
+      ? Math.max(...estimatedSets.map((set) => set.estimatedOneRepMax))
+      : null,
+    totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+    averageSetRpe: average(completedSets.map((set) => set.rpe).filter(Number.isFinite)),
+    recentSessions,
+    trendMaxValue: Math.max(0, ...trendValues),
+  };
+}
+
+function buildExerciseSessionSummaries(records) {
+  const sessionsById = new Map();
+
+  records.forEach((record) => {
+    const key = record.sessionId ?? `${record.date}-${record.exerciseKey}`;
+    const entry = sessionsById.get(key) ?? {
+      sessionId: key,
+      date: record.date,
+      sets: [],
+    };
+
+    entry.sets.push(record);
+    sessionsById.set(key, entry);
+  });
+
+  return [...sessionsById.values()]
+    .map((entry) => {
+      const sets = entry.sets.sort((left, right) => left.setNumber - right.setNumber);
+      const weightedSets = sets.filter(
+        (set) => typeof set.weight === "number" && Number.isFinite(set.reps),
+      );
+      const rpes = sets.map((set) => set.rpe).filter(Number.isFinite);
+      const totalReps = sets.reduce((total, set) => total + (Number.isFinite(set.reps) ? set.reps : 0), 0);
+      const totalVolume = weightedSets.reduce((total, set) => total + set.weight * set.reps, 0);
+      const bestEstimatedStrength = weightedSets.length
+        ? Math.max(...weightedSets.map((set) => set.estimatedOneRepMax ?? 0))
+        : null;
+
+      return {
+        ...entry,
+        sets,
+        totalReps,
+        totalVolume,
+        bestEstimatedStrength,
+        averageRpe: average(rpes),
+        setSummary: sets.map(formatSetPerformance).join(" | "),
+      };
+    })
+    .sort((left, right) => getDateTime(right.date) - getDateTime(left.date));
+}
+
+function buildReadinessEntries(readinessByDate, sessions) {
+  const entries = Object.entries(readinessByDate ?? {})
+    .map(([date, entry]) => {
+      const readiness = entry?.readiness ?? (entry?.wellness ? interpretWellness(entry.wellness) : null);
+
+      if (!readiness) {
+        return null;
+      }
+
+      return { date: entry.date ?? date, readiness };
+    })
+    .filter(Boolean);
+
+  if (!entries.length) {
+    sessions.forEach((session) => {
+      const readiness = session.readiness ?? (session.wellness ? interpretWellness(session.wellness) : null);
+
+      if (readiness && session.date) {
+        entries.push({
+          date: getLocalDateKey(new Date(session.date)),
+          readiness,
+        });
+      }
+    });
+  }
+
+  return entries.sort((left, right) => getDateTime(`${right.date}T00:00:00`) - getDateTime(`${left.date}T00:00:00`));
+}
+
+function compareBestSet(left, right) {
+  const leftStrength = left.estimatedOneRepMax ?? -1;
+  const rightStrength = right.estimatedOneRepMax ?? -1;
+
+  if (leftStrength !== rightStrength) {
+    return rightStrength - leftStrength;
+  }
+
+  const leftWeight = typeof left.weight === "number" ? left.weight : -1;
+  const rightWeight = typeof right.weight === "number" ? right.weight : -1;
+
+  if (leftWeight !== rightWeight) {
+    return rightWeight - leftWeight;
+  }
+
+  return (right.reps ?? -1) - (left.reps ?? -1);
+}
+
+function getProgressExerciseKey({ programId, programExerciseId, exerciseId, exerciseName }) {
+  if (programId && programExerciseId) {
+    return `program-exercise:${programId}:${programExerciseId}`;
+  }
+
+  if (programExerciseId) {
+    return `program-exercise:${programExerciseId}`;
+  }
+
+  if (exerciseId) {
+    return `exercise:${exerciseId}`;
+  }
+
+  return `name:${normalizeProgressName(exerciseName ?? "exercise")}`;
+}
+
+function getLibraryExerciseName(exerciseId, exerciseLookup) {
+  return exerciseLookup.libraryById.get(exerciseId)?.name ?? null;
+}
+
+function normalizeProgressName(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function parseAnalyticsNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseAnalyticsRpe(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 && parsed <= 10 ? parsed : null;
+}
+
+function isCompletedAnalyticsSet(reps, weight, rpe) {
+  return Number.isFinite(reps) && (weight !== null || rpe !== null);
+}
+
+function calculateEstimatedOneRepMax(weight, reps) {
+  if (typeof weight !== "number" || !Number.isFinite(reps) || reps <= 0) {
+    return null;
+  }
+
+  return weight * (1 + reps / 30);
+}
+
+function average(values) {
+  const validValues = values.filter(Number.isFinite);
+
+  if (!validValues.length) {
+    return null;
+  }
+
+  return validValues.reduce((total, value) => total + value, 0) / validValues.length;
+}
+
+function getDateTime(value) {
+  if (!value) {
+    return 0;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function formatProgressDate(value) {
+  if (!value) {
+    return "No data";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "No data";
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function formatAverage(value) {
+  return Number.isFinite(value) ? value.toFixed(1) : "No data";
+}
+
+function formatReadinessAverage(value) {
+  return Number.isFinite(value) ? `${value.toFixed(1)} / 5` : "No data";
+}
+
+function formatKg(value) {
+  if (!Number.isFinite(value)) {
+    return "No kg data";
+  }
+
+  return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} kg`;
+}
+
+function formatVolume(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "No kg data";
+  }
+
+  return `${Math.round(value).toLocaleString()} kg`;
+}
+
+function formatSetPerformance(set) {
+  const weightText =
+    typeof set.weight === "number"
+      ? formatKg(set.weight)
+      : set.weight === "BW"
+        ? "BW"
+        : "No kg";
+  const repsText = Number.isFinite(set.reps) ? `${set.reps} reps` : "No reps";
+  const rpeText = Number.isFinite(set.rpe) ? ` @ RPE ${set.rpe}` : "";
+
+  return `${weightText} x ${repsText}${rpeText}`;
 }
 
 function NextPlanPage({ selectedDay, selectedDayId, nextPlans, lastGeneratedPlan }) {
