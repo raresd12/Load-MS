@@ -2044,4 +2044,510 @@ export const exerciseLibraryContentBatch4 = {
   }
 };
 
-export const exerciseLibraryContentBatches = [exerciseLibraryContentBatch1, exerciseLibraryContentBatch2, exerciseLibraryContentBatch3, exerciseLibraryContentBatch4];
+export const exerciseLibraryContentBatch5 = {
+  "overhead-tricep-extension": {
+    exercise_name: "Overhead Tricep Extension",
+    category: "Arms / Triceps / Long Head",
+    main_muscles: "Triceps long head",
+    secondary_muscles: "Triceps lateral head, core, shoulders",
+    equipment: "Cable or dumbbell",
+    difficulty: "Intermediate",
+    goal_tags: "Triceps, Arm Size, Long Head, Hypertrophy",
+    video_url: "https://www.youtube.com/shorts/7hx0-DZgdl8",
+    setup: [
+      "setează cablul jos sau mediu, în funcție de variantă",
+      "prinde rope-ul sau gantera cu control",
+      "coatele orientate înainte/sus",
+      "abdomenul încordat",
+      "ține brațele stabile, fără să miști umerii excesiv"
+    ],
+    main_cue: "Stretch deep, extend hard.",
+    how_to_do_it: [
+      "lasă coatele să se îndoaie controlat",
+      "simte stretch în triceps",
+      "extinde coatele până strângi tricepsul",
+      "ține coatele relativ fixe",
+      "revino lent în stretch"
+    ],
+    execution_tips: [
+      "nu transforma mișcarea în shoulder press",
+      "ține coatele stabile",
+      "controlează stretch-ul",
+      "folosește greutate moderată",
+      "strânge tricepsul la extensie"
+    ],
+    common_mistakes: [
+      "coate care se deschid prea mult",
+      "greutate prea mare",
+      "mișcat umerii în loc de coate",
+      "range prea scurt",
+      "coborâre necontrolată"
+    ],
+    what_you_should_feel: [
+      "stretch bun în triceps",
+      "tricepsul lucrând puternic la extensie",
+      "core stabil",
+      "nu durere ascuțită în cot sau umăr"
+    ],
+    why_its_there: [
+      "lucrează long head-ul tricepsului",
+      "ajută la brațe mai mari",
+      "completează dips și skull crushers",
+      "bun pentru hipertrofie prin poziție de stretch"
+    ],
+    progression_regression: [
+      "mai ușor: rope pushdown, greutate mai mică, single-arm cable extension",
+      "mai greu: slow eccentric, pause în stretch, heavier controlled sets",
+      "alternativă: dumbbell overhead extension, rope overhead extension"
+    ],
+    safety_notes: [
+      "nu forța dacă simți durere în cot",
+      "nu lăsa coatele să fugă haotic",
+      "controlează întinderea jos",
+      "nu încărca prea mult dacă pierzi forma"
+    ]
+  },
+
+  "weighted-dips": {
+    exercise_name: "Weighted Dips",
+    category: "Push / Chest / Triceps / Strength",
+    main_muscles: "Triceps, chest, front delts",
+    secondary_muscles: "Core, serratus, upper back",
+    equipment: "Dip bars, dip belt or weight vest",
+    difficulty: "Advanced",
+    goal_tags: "Push Strength, Triceps, Chest, Bodyweight Strength, Upper Power",
+    video_url: "https://www.youtube.com/shorts/ctMb4vxES14",
+    setup: [
+      "atașează greutatea stabil, fără balans mare",
+      "prinde barele ferm",
+      "pornește sus cu umerii jos",
+      "abdomenul încordat",
+      "trunchiul ușor înclinat dacă vrei mai mult piept"
+    ],
+    main_cue: "Stay tight, press strong.",
+    how_to_do_it: [
+      "coboară controlat până la adâncime sigură",
+      "ține umerii jos și stabili",
+      "păstrează corpul strâns",
+      "împinge puternic în bare",
+      "revino sus fără să pierzi controlul"
+    ],
+    execution_tips: [
+      "adaugă greutate doar dacă dips bodyweight sunt curate",
+      "controlează partea de jos",
+      "nu te grăbi între reps",
+      "ține coatele pe o traiectorie naturală",
+      "oprește setul când forma se rupe"
+    ],
+    common_mistakes: [
+      "greutate adăugată prea devreme",
+      "coborâre prea jos cu durere",
+      "umeri ridicați spre urechi",
+      "balans cu greutatea",
+      "range scurt și ego weight"
+    ],
+    what_you_should_feel: [
+      "triceps și piept lucrând puternic",
+      "core stabil",
+      "stretch controlat în piept",
+      "nu durere ascuțită în umăr/cot"
+    ],
+    why_its_there: [
+      "construiește forță mare de împins",
+      "ajută la triceps și piept puternice",
+      "este un exercițiu excelent de upper body strength",
+      "completează bench press și shoulder press"
+    ],
+    progression_regression: [
+      "mai ușor: dips bodyweight, assisted dips, machine dips",
+      "mai greu: mai multă greutate, paused weighted dips, slow eccentric",
+      "alternativă: close-grip bench press, weighted push-ups"
+    ],
+    safety_notes: [
+      "nu adăuga greutate dacă forma bodyweight nu e solidă",
+      "nu forța adâncimea dacă umerii dor",
+      "controlează greutatea atașată",
+      "oprește dacă simți durere în cot/umăr"
+    ]
+  },
+
+  "chin-ups": {
+    exercise_name: "Chin-Ups",
+    category: "Pull / Lats / Biceps / Strength",
+    main_muscles: "Lats, biceps, upper back",
+    secondary_muscles: "Core, grip, rear delts",
+    equipment: "Pull-up bar",
+    difficulty: "Intermediate",
+    goal_tags: "Pull Strength, Biceps, V-Taper, Bodyweight Strength",
+    video_url: "https://www.youtube.com/shorts/Oi3bW9nQmGI",
+    setup: [
+      "prinde bara cu palmele spre tine",
+      "priza aproximativ la lățimea umerilor",
+      "pornește din dead hang activ",
+      "umerii jos și controlați",
+      "abdomenul încordat"
+    ],
+    main_cue: "Pull elbows down and chest up.",
+    how_to_do_it: [
+      "pornește fără balans",
+      "trage coatele în jos",
+      "ridică pieptul spre bară",
+      "treci bărbia clar peste bară",
+      "coboară controlat până aproape de extensie completă"
+    ],
+    execution_tips: [
+      "ține coatele aproape de corp",
+      "nu trage doar cu bicepsul",
+      "controlează coborârea",
+      "păstrează corpul stabil",
+      "folosește același range la fiecare rep"
+    ],
+    common_mistakes: [
+      "balans excesiv",
+      "reps scurte",
+      "gât împins înainte",
+      "umeri ridicați spre urechi",
+      "coborâre necontrolată"
+    ],
+    what_you_should_feel: [
+      "lats și biceps lucrând clar",
+      "upper back activ",
+      "core stabil",
+      "nu durere în cot sau umăr"
+    ],
+    why_its_there: [
+      "dezvoltă forță de tragere",
+      "ajută la biceps și lats",
+      "susține progresul la pull-ups și weighted pull-ups",
+      "bun pentru V-taper și control bodyweight"
+    ],
+    progression_regression: [
+      "mai ușor: assisted chin-ups, negative chin-ups, lat pulldown",
+      "mai greu: weighted chin-ups, slow eccentric, chest-to-bar chin-ups",
+      "alternativă: neutral grip pull-ups, underhand pulldown"
+    ],
+    safety_notes: [
+      "nu forța dacă te dor coatele",
+      "nu folosi balans mare",
+      "controlează coborârea",
+      "oprește dacă pierzi poziția umerilor"
+    ]
+  },
+
+  "skull-crushers": {
+    exercise_name: "Skull Crushers",
+    category: "Arms / Triceps / Isolation",
+    main_muscles: "Triceps",
+    secondary_muscles: "Forearms, shoulders stabilizers",
+    equipment: "EZ bar or dumbbells, bench",
+    difficulty: "Intermediate",
+    goal_tags: "Triceps, Arm Size, Hypertrophy, Lockout Strength",
+    video_url: "https://www.youtube.com/shorts/OQ4TWXkZjTc",
+    setup: [
+      "stai întins pe bancă",
+      "ține bara EZ sau ganterele deasupra umerilor",
+      "coatele orientate în sus",
+      "omoplații stabili pe bancă",
+      "încheieturile confortabile"
+    ],
+    main_cue: "Bend elbows, not shoulders.",
+    how_to_do_it: [
+      "îndoaie coatele controlat",
+      "coboară greutatea spre frunte sau ușor în spatele capului",
+      "ține brațele superioare relativ stabile",
+      "extinde coatele și strânge tricepsul",
+      "controlează fiecare rep"
+    ],
+    execution_tips: [
+      "folosește greutate moderată",
+      "ține coatele cât mai stabile",
+      "coboară lent",
+      "nu bloca agresiv coatele sus",
+      "simte tricepsul, nu cotul"
+    ],
+    common_mistakes: [
+      "greutate prea mare",
+      "coate care se deschid mult",
+      "mișcare din umeri",
+      "coborâre necontrolată",
+      "durere în cot ignorată"
+    ],
+    what_you_should_feel: [
+      "triceps lucrând puternic",
+      "stretch controlat jos",
+      "antebrațe stabile",
+      "nu durere ascuțită în coate"
+    ],
+    why_its_there: [
+      "adaugă volum direct pentru triceps",
+      "ajută la arm size",
+      "completează dips și overhead extensions",
+      "bun pentru forță de lockout la pressing"
+    ],
+    progression_regression: [
+      "mai ușor: rope pushdown, dumbbell skull crusher ușor",
+      "mai greu: slow eccentric, pause reps, heavier EZ skull crushers",
+      "alternativă: cable skull crusher, lying triceps extension"
+    ],
+    safety_notes: [
+      "nu lăsa greutatea să cadă spre cap",
+      "nu forța dacă te dor coatele",
+      "controlează coborârea",
+      "nu folosi ego weight"
+    ]
+  },
+
+  "rope-overhead-extension": {
+    exercise_name: "Rope Overhead Extension",
+    category: "Arms / Triceps / Cable",
+    main_muscles: "Triceps long head",
+    secondary_muscles: "Triceps lateral head, core, shoulders",
+    equipment: "Cable machine, rope attachment",
+    difficulty: "Intermediate",
+    goal_tags: "Triceps, Long Head, Arm Size, Hypertrophy",
+    video_url: "https://www.youtube.com/shorts/8z2Ha0wLlsQ",
+    setup: [
+      "atașează rope-ul la cablu",
+      "stai cu spatele la aparat sau ușor în față",
+      "coatele orientate înainte",
+      "abdomenul încordat",
+      "lasă tricepsul să intre în stretch sus/în spate"
+    ],
+    main_cue: "Extend and spread the rope.",
+    how_to_do_it: [
+      "pornește cu coatele îndoite și tricepsul întins",
+      "extinde coatele înainte/sus",
+      "desparte ușor rope-ul la final",
+      "strânge tricepsul",
+      "revino lent în stretch"
+    ],
+    execution_tips: [
+      "ține coatele stabile",
+      "nu folosi balans din trunchi",
+      "controlează stretch-ul",
+      "desparte rope-ul doar la final",
+      "alege greutate care permite range complet"
+    ],
+    common_mistakes: [
+      "coate care fug lateral",
+      "greutate prea mare",
+      "mișcare din umeri",
+      "range scurt",
+      "coborâre necontrolată"
+    ],
+    what_you_should_feel: [
+      "tricepsul întins și contractat clar",
+      "mai ales long head-ul tricepsului",
+      "core stabilizând poziția",
+      "nu durere ascuțită în cot"
+    ],
+    why_its_there: [
+      "lucrează tricepsul în poziție de stretch",
+      "bun pentru brațe mai mari",
+      "completează skull crushers și dips",
+      "cablul menține tensiune constantă"
+    ],
+    progression_regression: [
+      "mai ușor: rope pushdown, single-arm cable extension",
+      "mai greu: slow eccentric, pause în stretch, higher load controlled",
+      "alternativă: dumbbell overhead extension, cable overhead extension"
+    ],
+    safety_notes: [
+      "nu forța cotul dacă doare",
+      "ține controlul pe tot range-ul",
+      "nu smuci cablul",
+      "nu lăsa coatele să se deschidă haotic"
+    ]
+  },
+
+  "explosive-push-ups": {
+    exercise_name: "Explosive Push-Ups",
+    category: "Athletic / Push / Upper Power",
+    main_muscles: "Chest, triceps, front delts",
+    secondary_muscles: "Core, serratus, wrists",
+    equipment: "Bodyweight",
+    difficulty: "Intermediate",
+    goal_tags: "Upper Power, Explosiveness, Athletic Push, Basketball",
+    video_url: "https://www.youtube.com/shorts/VLKZxtn-Pt4",
+    setup: [
+      "pornește în poziție de push-up",
+      "mâinile aproximativ sub umeri",
+      "corp în linie dreaptă",
+      "abdomenul și glutes încordate",
+      "încheieturile încălzite și stabile"
+    ],
+    main_cue: "Push the floor away fast.",
+    how_to_do_it: [
+      "coboară controlat ca la push-up normal",
+      "împinge exploziv în podea",
+      "lasă palmele să se desprindă ușor dacă poți controla",
+      "aterizează moale cu coatele ușor flexate",
+      "repetă doar cât timp viteza rămâne bună"
+    ],
+    execution_tips: [
+      "calitatea contează mai mult decât numărul de reps",
+      "ține corpul rigid",
+      "aterizează controlat",
+      "oprește setul când devii lent",
+      "începe cu variante mai ușoare dacă încheieturile nu sunt pregătite"
+    ],
+    common_mistakes: [
+      "șolduri căzute",
+      "aterizare dură",
+      "reps lente la exercițiu exploziv",
+      "coate deschise haotic",
+      "prea mult volum obosit"
+    ],
+    what_you_should_feel: [
+      "explozie în piept și triceps",
+      "core stabil",
+      "contact rapid și controlat cu solul",
+      "nu durere în încheieturi/umeri"
+    ],
+    why_its_there: [
+      "dezvoltă putere de împins",
+      "bun pentru atletism și baschet",
+      "completează pressing-ul greu",
+      "ajută viteza de contracție a upper body"
+    ],
+    progression_regression: [
+      "mai ușor: incline explosive push-ups, normal push-ups rapide",
+      "mai greu: clap push-ups, depth push-ups, weighted explosive push-ups doar avansat",
+      "alternativă: medicine ball chest pass, band-assisted plyo push-up"
+    ],
+    safety_notes: [
+      "nu face pe suprafață alunecoasă",
+      "nu continua dacă aterizarea devine dură",
+      "oprește dacă te dor încheieturile sau umerii",
+      "nu transforma exercițiul în challenge de oboseală"
+    ]
+  },
+
+  "decline-sit-ups-cable-abs": {
+    exercise_name: "Decline Sit-Ups / Cable Abs",
+    category: "Core / Abs / Weighted Core",
+    main_muscles: "Abs",
+    secondary_muscles: "Hip flexors, obliques",
+    equipment: "Decline bench and/or cable machine",
+    difficulty: "Intermediate",
+    goal_tags: "Abs, Core Strength, Hypertrophy, Trunk Control",
+    video_url: "https://www.youtube.com/shorts/FPd-Cwdzr_U",
+    setup: [
+      "fixează picioarele pe banca declinată",
+      "ține abdomenul pregătit, nu te lăsa complet relaxat jos",
+      "dacă folosești cablu, ține mânerele stabil lângă corp/cap",
+      "coastele jos",
+      "alege greutate controlabilă"
+    ],
+    main_cue: "Curl ribs toward pelvis.",
+    how_to_do_it: [
+      "coboară controlat pe bancă",
+      "pornește ridicarea prin abdomen",
+      "rulează trunchiul în sus, nu trage doar din șolduri",
+      "strânge abs sus",
+      "revino lent fără să cazi"
+    ],
+    execution_tips: [
+      "gândește-te la crunch, nu doar sit-up",
+      "nu trage cu gâtul",
+      "ține tensiune în abs",
+      "folosește greutate doar dacă forma rămâne bună",
+      "controlează coborârea"
+    ],
+    common_mistakes: [
+      "tras mai mult din hip flexors decât din abs",
+      "coborâre rapidă",
+      "tras de gât",
+      "greutate prea mare",
+      "spate arcuit agresiv jos"
+    ],
+    what_you_should_feel: [
+      "abs lucrând puternic",
+      "contracție clară sus",
+      "hip flexors doar ca suport",
+      "nu durere în lombar sau gât"
+    ],
+    why_its_there: [
+      "adaugă lucru direct pentru abs",
+      "permite progresie cu greutate/cablu",
+      "completează plank și hanging leg raises",
+      "ajută controlul trunchiului"
+    ],
+    progression_regression: [
+      "mai ușor: bodyweight decline crunch, floor crunch, reverse crunch",
+      "mai greu: cable decline sit-up, weighted decline sit-up, slow eccentric",
+      "alternativă: cable crunch, machine crunch, hanging leg raise"
+    ],
+    safety_notes: [
+      "nu trage de gât",
+      "nu folosi greutate care îți rupe forma",
+      "oprește dacă simți lombarul preluând",
+      "controlează coborârea pe bancă"
+    ]
+  },
+
+  "plank": {
+    exercise_name: "Plank",
+    category: "Core / Stability / Anti-Extension",
+    main_muscles: "Abs, deep core",
+    secondary_muscles: "Glutes, shoulders, quads",
+    equipment: "Bodyweight",
+    difficulty: "Beginner",
+    goal_tags: "Core Stability, Posture, Trunk Control, Injury Prevention",
+    video_url: "https://www.youtube.com/shorts/j6WVxGJZv5Y",
+    setup: [
+      "coatele sub umeri",
+      "antebrațele pe podea",
+      "picioarele întinse în spate",
+      "glutes și abdomen încordate",
+      "corp în linie dreaptă"
+    ],
+    main_cue: "Ribs down, squeeze glutes.",
+    how_to_do_it: [
+      "ridică genunchii de pe podea",
+      "ține corpul drept",
+      "încordează abdomenul și glutes",
+      "respiră controlat",
+      "menține poziția fără să lași șoldurile să cadă"
+    ],
+    execution_tips: [
+      "ține coastele jos",
+      "nu lăsa lombarul să se arcuiască",
+      "strânge glutes",
+      "apasă coatele în podea",
+      "mai bine timp mai scurt cu formă bună"
+    ],
+    common_mistakes: [
+      "șolduri prea jos",
+      "fund prea sus",
+      "lombar arcuit",
+      "umeri relaxați",
+      "ținut mult timp cu formă proastă"
+    ],
+    what_you_should_feel: [
+      "abdomen și deep core tensionate",
+      "glutes active",
+      "umeri stabili",
+      "nu durere în lombar"
+    ],
+    why_its_there: [
+      "construiește stabilitate de bază",
+      "ajută postura și controlul trunchiului",
+      "susține exerciții mari precum RDL, dips și pull-ups",
+      "bun pentru durabilitate și control în sport"
+    ],
+    progression_regression: [
+      "mai ușor: plank pe genunchi, elevated plank",
+      "mai greu: long-lever plank, weighted plank, RKC plank",
+      "alternativă: dead bug, hollow hold, side plank"
+    ],
+    safety_notes: [
+      "oprește dacă simți lombarul preluând",
+      "nu ține doar pentru timp dacă forma e stricată",
+      "păstrează respirația controlată",
+      "nu lăsa umerii să se prăbușească"
+    ]
+  }
+};
+
+export const exerciseLibraryContentBatches = [exerciseLibraryContentBatch1, exerciseLibraryContentBatch2, exerciseLibraryContentBatch3, exerciseLibraryContentBatch4, exerciseLibraryContentBatch5];
