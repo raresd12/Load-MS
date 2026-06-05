@@ -58,16 +58,18 @@ function getNumericWeight(value, exercise) {
 }
 
 function getSetLogs(exerciseLog) {
-  return exerciseLog?.sets ?? [];
+  return Array.isArray(exerciseLog?.sets) ? exerciseLog.sets : [];
 }
 
 function getLoggedReps(setLogs) {
-  return setLogs.map((set) => toNumber(set.reps, NaN)).filter(Number.isFinite);
+  return setLogs
+    .map((set) => toNumber(set.reps ?? set.actualReps, NaN))
+    .filter(Number.isFinite);
 }
 
 function getWorkingWeight(setLogs, plannedWeight, exercise) {
   const loggedWeights = setLogs
-    .map((set) => getNumericWeight(set.weight, exercise))
+    .map((set) => getNumericWeight(set.weight ?? set.actualWeight ?? set.kg, exercise))
     .filter((value) => value !== null);
 
   if (loggedWeights.length) {
@@ -78,19 +80,21 @@ function getWorkingWeight(setLogs, plannedWeight, exercise) {
 }
 
 function getLoadJump(exercise) {
+  const classification = classifyExerciseType(exercise);
+
   if (exercise.incrementKg) {
     return exercise.incrementKg;
   }
 
   if (exercise.equipment === "dumbbell") {
-    return exercise.category === "compound" ? 2 : 1;
+    return classification.type === "compound" ? 2 : 1;
   }
 
   if (exercise.loadType === "optionalExternal") {
     return 2.5;
   }
 
-  return exercise.category === "compound" ? 2.5 : 1.25;
+  return classification.type === "compound" ? 2.5 : 1.25;
 }
 
 function increaseLoad(currentWeight, exercise) {
@@ -141,6 +145,20 @@ function getExerciseLog(container, exerciseOrId) {
     return logs[matchedId];
   }
 
+  const analyticsSummary = container?.analytics?.exerciseSummaries?.find((summary) =>
+    ids.includes(summary.exerciseId) || ids.includes(summary.programExerciseId),
+  );
+
+  if (analyticsSummary) {
+    return {
+      exerciseRPE: analyticsSummary.exerciseRPE,
+      totalReps: analyticsSummary.totalReps,
+      setCount: analyticsSummary.setCount,
+      averageWeight: analyticsSummary.averageWeight,
+      sets: [],
+    };
+  }
+
   const workoutSets = container?.workoutSets?.filter(
     (set) => ids.includes(set.programExerciseId) || ids.includes(set.exerciseId),
   );
@@ -176,10 +194,7 @@ function getPreviousExerciseSession(dayId, exercise, sessions = []) {
 }
 
 function isAccessoryReductionCandidate(exercise) {
-  return (
-    exercise.priority !== "high" &&
-    (exercise.category === "isolation" || exercise.category === "core")
-  );
+  return classifyExerciseType(exercise).isLowPriorityAccessory;
 }
 
 export const wellnessMetrics = [
@@ -302,6 +317,9 @@ export function getBasePlan(day) {
       exerciseRPE: null,
       reasons: ["Base program prescription."],
       conservative: false,
+      decision: "hold",
+      confidence: "low",
+      warnings: [],
     })),
   };
 }
@@ -393,13 +411,688 @@ export function generateNextPlan(day, session, previousSessions = []) {
         previousSessions,
       );
 
-      return calculateExerciseRecommendation(
+      return calculateExerciseRecommendationV2(
         exercise,
         session,
         previousExerciseSession,
         wellnessSummary,
       );
     }),
+  };
+}
+
+function textIncludesAny(text, patterns) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function getFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getExerciseRpeFromLog(exerciseLog, setLogs) {
+  const directRpe = getFiniteNumber(exerciseLog?.exerciseRPE ?? exerciseLog?.exerciseRpe);
+
+  if (directRpe !== null) {
+    return directRpe;
+  }
+
+  const setRpes = setLogs
+    .map((set) => getFiniteNumber(set.rpe ?? set.actualRPE))
+    .filter((value) => value !== null);
+
+  return average(setRpes);
+}
+
+function getAggregateTotalReps(exerciseLog, loggedReps) {
+  if (loggedReps.length) {
+    return sum(loggedReps);
+  }
+
+  return getFiniteNumber(
+    exerciseLog?.totalReps ??
+      exerciseLog?.completedReps ??
+      exerciseLog?.repsCompleted ??
+      exerciseLog?.actualReps,
+  );
+}
+
+function getLoggedSetCount(exerciseLog, loggedReps) {
+  if (loggedReps.length) {
+    return loggedReps.length;
+  }
+
+  return getFiniteNumber(
+    exerciseLog?.setCount ?? exerciseLog?.loggedSetCount ?? exerciseLog?.completedSetCount,
+  );
+}
+
+function getExerciseAverageWeight(exerciseLog, setLogs, plannedWeight, exercise) {
+  const aggregateWeight = getFiniteNumber(exerciseLog?.averageWeight ?? exerciseLog?.actualWeight);
+
+  if (aggregateWeight !== null) {
+    return aggregateWeight;
+  }
+
+  return getWorkingWeight(setLogs, plannedWeight, exercise);
+}
+
+export function classifyExerciseType(exercise = {}) {
+  const text = [
+    exercise.id,
+    exercise.name,
+    exercise.category,
+    exercise.progressionType,
+    exercise.muscleGroup,
+    exercise.equipment,
+    exercise.type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const progressionType = String(exercise.progressionType ?? exercise.type ?? "").toLowerCase();
+  const priority = String(exercise.priority ?? "").toLowerCase();
+  const equipment = String(exercise.equipment ?? "").toLowerCase();
+  const athleticPattern = [
+    /\bathletic\b/,
+    /\bjump\b/,
+    /\bjumps\b/,
+    /\bclean\b/,
+    /\bexplosive\b/,
+    /\bpogo\b/,
+    /\bplyo/,
+    /\bbasketball\b/,
+  ];
+  const mobilityPattern = [/\bmobility\b/, /\bstretch/];
+  const corePattern = [
+    /\bcore\b/,
+    /\babs?\b/,
+    /\bplank\b/,
+    /\bcrunch\b/,
+    /\bleg raise\b/,
+    /\bsit-?up\b/,
+    /\bcopenhagen\b/,
+  ];
+  const isolationPattern = [
+    /\bisolation\b/,
+    /\bpump\b/,
+    /\bcurl\b/,
+    /\bextension\b/,
+    /\braise\b/,
+    /\bfly\b/,
+    /\bcalf\b/,
+    /\bhamstring curl\b/,
+    /\btibialis\b/,
+    /\bpec deck\b/,
+    /\bskull\b/,
+  ];
+  const compoundPattern = [
+    /\bbench\b/,
+    /\bpress\b/,
+    /\bpull-?ups?\b/,
+    /\bchin-?ups?\b/,
+    /\bdips?\b/,
+    /\brow\b/,
+    /\bpulldown\b/,
+    /\bsquat\b/,
+    /\bdeadlift\b/,
+    /\brdl\b/,
+    /\blunge\b/,
+    /\bsplit squat\b/,
+  ];
+
+  let type = "compound";
+
+  if (progressionType === "mobility" || textIncludesAny(text, mobilityPattern)) {
+    type = "mobility";
+  } else if (progressionType === "athletic" || textIncludesAny(text, athleticPattern)) {
+    type = "athletic";
+  } else if (progressionType === "core" || textIncludesAny(text, corePattern)) {
+    type = "core";
+  } else if (textIncludesAny(text, isolationPattern)) {
+    type = "isolation";
+  } else if (
+    progressionType === "strength" ||
+    progressionType === "hypertrophy" ||
+    textIncludesAny(text, compoundPattern)
+  ) {
+    type = "compound";
+  } else if (progressionType === "pump") {
+    type = "isolation";
+  }
+
+  const isHighPriority = priority === "high";
+  const isMainCompound = type === "compound" && (isHighPriority || progressionType === "strength");
+  const isWeightedBodyweight = exercise.loadType === "optionalExternal";
+  const isLoadable = exercise.loadType !== "bodyweight";
+  const isLowPriorityAccessory =
+    !isMainCompound &&
+    priority !== "high" &&
+    (type === "isolation" || type === "core");
+
+  return {
+    type,
+    isMainCompound,
+    isAccessory: !isMainCompound && type !== "athletic" && type !== "mobility",
+    isLowPriorityAccessory,
+    isHighPriority,
+    isLoadable,
+    isDumbbell: equipment === "dumbbell",
+    isWeightedBodyweight,
+  };
+}
+
+export function determineProgressionMode(exercise, classification = classifyExerciseType(exercise)) {
+  if (classification.type === "athletic" || classification.type === "mobility") {
+    return "quality_first";
+  }
+
+  if (classification.type === "core") {
+    return "core_control";
+  }
+
+  if (classification.type === "isolation") {
+    return "reps_first";
+  }
+
+  return "double_progression";
+}
+
+export function evaluateReadinessModifier(readiness = {}) {
+  const summary = readiness?.status ? readiness : interpretWellness(readiness);
+  const status = summary.status ?? "yellow";
+
+  return {
+    ...summary,
+    status,
+    isRed: status === "red" || Boolean(summary.isPoor),
+    isYellow: status === "yellow",
+    isGreen: status === "green" || Boolean(summary.isGood),
+    isMissing: Boolean(summary.missing),
+    capsAggression: status === "red",
+  };
+}
+
+export function evaluateSessionFatigue(sessionRpe) {
+  const value = getFiniteNumber(sessionRpe);
+
+  return {
+    value,
+    isMissing: value === null,
+    isManageable: value !== null && value <= 7,
+    isProductiveHard: value !== null && value >= 8 && value < 9,
+    isVeryHigh: value !== null && value >= 9,
+    capsAggression: value !== null && value >= 9,
+  };
+}
+
+export function evaluateExercisePerformance({
+  exercise,
+  session,
+  previousExerciseSession,
+  planned = {},
+}) {
+  const exerciseLog = getExerciseLog(session, exercise);
+  const setLogs = getSetLogs(exerciseLog);
+  const loggedReps = getLoggedReps(setLogs);
+  const previousExerciseLog = getExerciseLog(previousExerciseSession, exercise);
+  const previousSetLogs = getSetLogs(previousExerciseLog);
+  const previousLoggedReps = getLoggedReps(previousSetLogs);
+  const targetSets = toNumber(planned.sets, exercise.sets);
+  const repsMin = planned.repsMin ?? exercise.repsMin;
+  const repsMax = planned.repsMax ?? exercise.repsMax;
+  const targetRPE = planned.targetRPE ?? exercise.targetRPE;
+  const plannedWeight = planned.recommendedWeight ?? exercise.recommendedWeight;
+  const workingWeight = getExerciseAverageWeight(exerciseLog, setLogs, plannedWeight, exercise);
+  const previousWorkingWeight = getExerciseAverageWeight(
+    previousExerciseLog,
+    previousSetLogs,
+    plannedWeight,
+    exercise,
+  );
+  const exerciseRPE = getExerciseRpeFromLog(exerciseLog, setLogs);
+  const totalReps = getAggregateTotalReps(exerciseLog, loggedReps);
+  const previousTotalReps = getAggregateTotalReps(previousExerciseLog, previousLoggedReps);
+  const loggedSetCount = getLoggedSetCount(exerciseLog, loggedReps) ?? 0;
+  const hasSetLevelData = loggedReps.length > 0;
+  const hasAggregateData = !hasSetLevelData && totalReps !== null;
+  const allSetsLogged = targetSets > 0 && loggedSetCount >= targetSets;
+  const targetMinTotal =
+    repsMin === null || repsMin === undefined ? null : targetSets * Number(repsMin);
+  const targetTopTotal =
+    repsMax === null || repsMax === undefined ? null : targetSets * Number(repsMax);
+  const allAtMin =
+    repsMin === null || repsMin === undefined
+      ? allSetsLogged
+      : hasSetLevelData
+        ? allSetsLogged && loggedReps.every((rep) => rep >= repsMin)
+        : allSetsLogged && totalReps !== null && targetMinTotal !== null && totalReps >= targetMinTotal;
+  const allAtTop =
+    repsMax === null || repsMax === undefined
+      ? false
+      : hasSetLevelData
+        ? allSetsLogged && loggedReps.every((rep) => rep >= repsMax)
+        : allSetsLogged && totalReps !== null && targetTopTotal !== null && totalReps >= targetTopTotal;
+  const belowMin =
+    repsMin === null || repsMin === undefined
+      ? false
+      : hasSetLevelData
+        ? loggedReps.some((rep) => rep < repsMin)
+        : totalReps !== null && targetMinTotal !== null && totalReps < targetMinTotal;
+  const missedSets = Math.max(0, targetSets - loggedSetCount);
+  const belowMinCount =
+    repsMin === null || repsMin === undefined
+      ? 0
+      : hasSetLevelData
+        ? loggedReps.filter((rep) => rep < repsMin).length
+        : belowMin
+          ? 1
+          : 0;
+  const comparableLoad =
+    workingWeight === null ||
+    previousWorkingWeight === null ||
+    Math.abs(workingWeight - previousWorkingWeight) <= getLoadJump(exercise);
+  const regressed =
+    totalReps !== null &&
+    previousTotalReps !== null &&
+    totalReps < previousTotalReps &&
+    comparableLoad;
+  const hasMeaningfulData =
+    Boolean(exerciseLog) &&
+    (hasSetLevelData || hasAggregateData || exerciseRPE !== null || workingWeight !== null);
+  const dataQuality = hasSetLevelData ? "set_level" : hasAggregateData ? "aggregate" : "missing";
+  const warnings = [];
+
+  if (hasAggregateData) {
+    warnings.push("Set-level data was unavailable, so progression used aggregate reps.");
+  }
+
+  if (exerciseRPE === null) {
+    warnings.push("Exercise RPE was unavailable, so load progression stayed conservative.");
+  }
+
+  return {
+    exerciseLog,
+    planned,
+    targetSets,
+    repsMin,
+    repsMax,
+    repsLabel: planned.repsLabel ?? exercise.repsLabel,
+    targetRPE,
+    plannedWeight,
+    previousWeight: plannedWeight,
+    workingWeight,
+    previousWorkingWeight,
+    exerciseRPE,
+    hasExerciseRpe: exerciseRPE !== null,
+    totalReps,
+    previousTotalReps,
+    totalRepsImproved:
+      totalReps !== null && previousTotalReps !== null && totalReps > previousTotalReps,
+    loggedSetCount,
+    allSetsLogged,
+    allAtMin,
+    allAtTop,
+    belowMin,
+    belowMinCount,
+    missedSets,
+    regressed,
+    hasMeaningfulData,
+    dataQuality,
+    warnings,
+  };
+}
+
+function getBaseCoachRecommendation(performance) {
+  return {
+    decision: "hold",
+    confidence: "medium",
+    nextWeight: performance.workingWeight,
+    nextSets: performance.targetSets,
+    repFocus: null,
+    conservative: false,
+    reasons: [],
+    warnings: [...performance.warnings],
+  };
+}
+
+function isManageableExerciseRpe(performance, maxRpe = 8.5) {
+  return performance.hasExerciseRpe && performance.exerciseRPE <= maxRpe;
+}
+
+function isHighExerciseRpe(performance, minRpe = 9) {
+  return performance.hasExerciseRpe && performance.exerciseRPE >= minRpe;
+}
+
+function canIncreaseLoadNow({ exercise, performance, readinessModifier, sessionFatigue, maxRpe = 8.5 }) {
+  return (
+    canProgressLoad(exercise) &&
+    performance.workingWeight !== null &&
+    performance.allAtTop &&
+    isManageableExerciseRpe(performance, maxRpe) &&
+    !readinessModifier.isRed &&
+    !sessionFatigue.isVeryHigh
+  );
+}
+
+function getConfidence({ performance, decision, mode }) {
+  if (decision === "insufficient_data") {
+    return "low";
+  }
+
+  if (performance.dataQuality === "set_level" && performance.hasExerciseRpe) {
+    return mode === "quality_first" ? "medium" : "high";
+  }
+
+  if (performance.dataQuality === "aggregate") {
+    return "medium";
+  }
+
+  return "low";
+}
+
+export function generateCoachReason(decision, { mode, performance, readinessModifier, sessionFatigue }) {
+  if (readinessModifier.isRed && decision === "hold" && performance.belowMin) {
+    return "Performance was below target, but readiness was low today. Load was held rather than reduced aggressively.";
+  }
+
+  if (readinessModifier.isRed && decision === "hold" && performance.allAtTop) {
+    return "Performance was strong despite low readiness, so progression stayed conservative.";
+  }
+
+  if (sessionFatigue.isVeryHigh && decision === "hold") {
+    return "Load held because session RPE was very high.";
+  }
+
+  switch (decision) {
+    case "increase_load":
+      if (mode === "reps_first") {
+        return "Load increased because every set reached the top of the range with controlled RPE.";
+      }
+      if (mode === "quality_first") {
+        return "Load increased slowly because available RPE and completion data support crisp athletic work.";
+      }
+      if (mode === "core_control") {
+        return "Core difficulty progressed carefully after controlled top-range work.";
+      }
+      return "Load increased because all programmed sets reached the top of the rep range at manageable RPE.";
+    case "increase_reps":
+      return "Load kept stable; beat the last total reps before adding weight.";
+    case "reduce_load":
+      return "Load slightly reduced because reps fell below target with high RPE.";
+    case "reduce_volume":
+      return "Accessory volume reduced by 1 set because readiness was red and session RPE was very high.";
+    case "recovery_suggestion":
+      return "Recovery signals were low, so next time should stay conservative.";
+    case "deload_suggestion":
+      return "Fatigue signals were high enough to suggest a lighter session rather than forcing progression.";
+    case "insufficient_data":
+      return "Not enough completed workout data was available, so the plan stays conservative.";
+    case "hold":
+    default:
+      if (mode === "quality_first") {
+        return "Athletic work held steady so speed, quality, and crisp execution stay the priority.";
+      }
+      if (mode === "core_control") {
+        return "Core plan held steady; add control before load or volume.";
+      }
+      return "Load held while reps and RPE build inside the target range.";
+  }
+}
+
+export function calculateNextRecommendation({
+  exercise,
+  classification,
+  mode,
+  performance,
+  readinessModifier,
+  sessionFatigue,
+}) {
+  const recommendation = getBaseCoachRecommendation(performance);
+
+  if (!performance.hasMeaningfulData) {
+    recommendation.decision = "insufficient_data";
+    recommendation.confidence = "low";
+    recommendation.repFocus = "Log this next time to establish a baseline.";
+    recommendation.nextWeight = performance.plannedWeight;
+    recommendation.conservative = true;
+    recommendation.reasons.push(
+      generateCoachReason(recommendation.decision, {
+        mode,
+        performance,
+        readinessModifier,
+        sessionFatigue,
+      }),
+    );
+    return recommendation;
+  }
+
+  if (performance.totalRepsImproved) {
+    recommendation.reasons.push(
+      `Total reps improved from ${performance.previousTotalReps} to ${performance.totalReps}.`,
+    );
+  }
+
+  if (mode === "quality_first") {
+    recommendation.warnings.push(
+      "No speed or quality metric is logged, so athletic decisions use RPE, readiness, and completion as proxies.",
+    );
+
+    const isHangClean =
+      exercise.id === "hang-cleans" ||
+      exercise.legacyExerciseId === "hang-cleans" ||
+      /hang cleans?/i.test(exercise.name ?? "");
+
+    if (
+      isHangClean &&
+      canIncreaseLoadNow({
+        exercise,
+        performance,
+        readinessModifier,
+        sessionFatigue,
+        maxRpe: 7.5,
+      })
+    ) {
+      recommendation.decision = "increase_load";
+      recommendation.nextWeight = increaseLoad(performance.workingWeight, exercise);
+      recommendation.repFocus = "Keep every rep fast and crisp.";
+    } else {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Prioritize speed and crisp execution over more volume.";
+      recommendation.conservative = readinessModifier.isRed || sessionFatigue.isVeryHigh;
+    }
+  } else if (mode === "core_control") {
+    if (canIncreaseLoadNow({ exercise, performance, readinessModifier, sessionFatigue })) {
+      recommendation.decision = "increase_load";
+      recommendation.nextWeight = increaseLoad(performance.workingWeight, exercise);
+      recommendation.repFocus = "Keep control strict with the small jump.";
+    } else if (
+      performance.allAtTop &&
+      isManageableExerciseRpe(performance) &&
+      !readinessModifier.isRed &&
+      !sessionFatigue.isVeryHigh
+    ) {
+      recommendation.decision = "increase_reps";
+      recommendation.repFocus = "Use slower control or a slightly harder variation.";
+    } else if (performance.belowMin && isHighExerciseRpe(performance)) {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Rebuild controlled reps before making it harder.";
+      recommendation.conservative = true;
+    } else {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Add quality before load or volume.";
+      recommendation.conservative = readinessModifier.isRed || sessionFatigue.isVeryHigh;
+    }
+  } else if (mode === "reps_first") {
+    if (canIncreaseLoadNow({ exercise, performance, readinessModifier, sessionFatigue })) {
+      recommendation.decision = "increase_load";
+      recommendation.nextWeight = increaseLoad(performance.workingWeight, exercise);
+      recommendation.repFocus = "Reset to the lower end and keep reps clean.";
+    } else if (performance.belowMin && isHighExerciseRpe(performance)) {
+      if (readinessModifier.isRed) {
+        recommendation.decision = "hold";
+        recommendation.repFocus = "Repeat the load under better recovery.";
+      } else {
+        recommendation.decision = "reduce_load";
+        recommendation.nextWeight = decreaseLoad(performance.workingWeight, exercise, 2.5);
+        recommendation.repFocus = "Reclaim the rep range before loading again.";
+      }
+      recommendation.conservative = true;
+    } else if (performance.allAtMin || performance.totalRepsImproved) {
+      recommendation.decision = "increase_reps";
+      recommendation.repFocus = "Add 1 rep where form stays sharp.";
+      recommendation.conservative = readinessModifier.isRed || sessionFatigue.isVeryHigh;
+    } else {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Get every set back into the target range.";
+      recommendation.conservative = readinessModifier.isRed;
+    }
+  } else {
+    if (canIncreaseLoadNow({ exercise, performance, readinessModifier, sessionFatigue })) {
+      recommendation.decision = "increase_load";
+      recommendation.nextWeight = increaseLoad(performance.workingWeight, exercise);
+      recommendation.repFocus = "Own the same rep range with the heavier load.";
+    } else if ((performance.belowMin || performance.regressed) && isHighExerciseRpe(performance)) {
+      if (readinessModifier.isRed) {
+        recommendation.decision = "hold";
+        recommendation.repFocus = "Repeat the load and reassess under better recovery.";
+      } else if (performance.belowMinCount > 1 || performance.exerciseRPE >= 9.5) {
+        recommendation.decision = "reduce_load";
+        recommendation.nextWeight = decreaseLoad(performance.workingWeight, exercise, 5);
+        recommendation.repFocus = "Rebuild the bottom of the range with cleaner reps.";
+      } else {
+        recommendation.decision = "hold";
+        recommendation.repFocus = "Repeat the load and rebuild clean reps.";
+      }
+      recommendation.conservative = true;
+    } else if (performance.allAtMin || performance.totalRepsImproved) {
+      if (
+        isHighExerciseRpe(performance, 8.5) ||
+        (classification.isMainCompound && (readinessModifier.isRed || sessionFatigue.isVeryHigh))
+      ) {
+        recommendation.decision = "hold";
+        recommendation.repFocus =
+          performance.totalReps !== null
+            ? `Repeat ${performance.totalReps} total reps with cleaner fatigue.`
+            : "Repeat this load before pushing progression.";
+        recommendation.conservative = readinessModifier.isRed || sessionFatigue.isVeryHigh;
+      } else {
+        recommendation.decision = "increase_reps";
+        recommendation.repFocus =
+          performance.totalReps !== null
+            ? `Beat ${performance.totalReps} total reps next time.`
+            : "Beat last session's total reps.";
+        recommendation.conservative = false;
+      }
+    } else {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Keep load and build total reps before adding weight.";
+      recommendation.conservative = readinessModifier.isRed;
+    }
+  }
+
+  if (
+    sessionFatigue.isVeryHigh &&
+    readinessModifier.isRed &&
+    classification.isLowPriorityAccessory &&
+    recommendation.nextSets > 1
+  ) {
+    recommendation.decision = "reduce_volume";
+    recommendation.nextSets = Math.max(1, recommendation.nextSets - 1);
+    recommendation.nextWeight = performance.workingWeight;
+    recommendation.repFocus = "Keep quality high with 1 less accessory set.";
+    recommendation.conservative = true;
+  }
+
+  if (
+    (readinessModifier.isRed || sessionFatigue.isVeryHigh) &&
+    recommendation.decision === "increase_load"
+  ) {
+    recommendation.decision = "hold";
+    recommendation.nextWeight = performance.workingWeight;
+    recommendation.repFocus = "Confirm this performance again before increasing load.";
+    recommendation.conservative = true;
+  }
+
+  const primaryReason = generateCoachReason(recommendation.decision, {
+    mode,
+    performance,
+    readinessModifier,
+    sessionFatigue,
+  });
+
+  recommendation.reasons = [
+    primaryReason,
+    ...recommendation.reasons.filter((reason) => reason !== primaryReason),
+  ];
+  recommendation.confidence = getConfidence({
+    performance,
+    decision: recommendation.decision,
+    mode,
+  });
+
+  if (readinessModifier.isMissing) {
+    recommendation.warnings.push("No readiness snapshot was available, so readiness was treated as neutral.");
+  }
+
+  return recommendation;
+}
+
+function calculateExerciseRecommendationV2(
+  exercise,
+  session,
+  previousExerciseSession,
+  wellnessSummary,
+) {
+  const planned = getExerciseLog(session.plannedExercises, exercise) ?? {};
+  const classification = classifyExerciseType(exercise);
+  const mode = determineProgressionMode(exercise, classification);
+  const readinessModifier = evaluateReadinessModifier(wellnessSummary);
+  const sessionFatigue = evaluateSessionFatigue(session.sessionRpe);
+  const performance = evaluateExercisePerformance({
+    exercise,
+    session,
+    previousExerciseSession,
+    planned,
+  });
+  const recommendation = calculateNextRecommendation({
+    exercise,
+    classification,
+    mode,
+    performance,
+    readinessModifier,
+    sessionFatigue,
+  });
+
+  return {
+    exerciseId: exercise.id,
+    name: exercise.name,
+    sets: recommendation.nextSets,
+    repsMin: performance.repsMin,
+    repsMax: performance.repsMax,
+    repsLabel: performance.repsLabel,
+    restSeconds: planned.restSeconds ?? exercise.restSeconds,
+    targetRPE: performance.targetRPE,
+    recommendedWeight: recommendation.nextWeight,
+    previousWeight: performance.previousWeight,
+    repFocus: recommendation.repFocus,
+    totalReps: performance.totalReps,
+    previousTotalReps: performance.previousTotalReps,
+    exerciseRPE: performance.exerciseRPE,
+    reasons: recommendation.reasons.length
+      ? recommendation.reasons
+      : [
+          generateCoachReason(recommendation.decision, {
+            mode,
+            performance,
+            readinessModifier,
+            sessionFatigue,
+          }),
+        ],
+    conservative: recommendation.conservative,
+    decision: recommendation.decision,
+    confidence: recommendation.confidence,
+    warnings: [...new Set(recommendation.warnings.filter(Boolean))],
   };
 }
 
