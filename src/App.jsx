@@ -705,6 +705,17 @@ function repsLabelFromRange(reps, fallbackLabel) {
   return fallbackLabel ?? "custom";
 }
 
+function normalizeCoachWarnings(value) {
+  if (!value) {
+    return [];
+  }
+
+  const warnings = Array.isArray(value) ? value : [value];
+  return warnings
+    .map((warning) => String(warning ?? "").trim())
+    .filter(Boolean);
+}
+
 function getWorkoutExerciseRecommendation(programId, exercise, planExercise, planStatus) {
   const programExerciseId = exercise.programExerciseId ?? exercise.id;
   const progression = programId
@@ -716,6 +727,18 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
   const source = hasStoredProgression ? "progression" : hasGeneratedPlan ? "next-plan" : "program";
   const storedReps = hasStoredProgression ? progression.lastRecommendedReps : null;
   const baselineReps = baseline?.startingReps;
+  const decision =
+    (hasStoredProgression ? progression.decision : null) ??
+    (hasGeneratedPlan ? planExercise?.decision : null) ??
+    null;
+  const confidence =
+    (hasStoredProgression ? progression.confidence : null) ??
+    (hasGeneratedPlan ? planExercise?.confidence : null) ??
+    null;
+  const warnings = normalizeCoachWarnings(
+    (hasStoredProgression ? progression.warnings : null) ??
+      (hasGeneratedPlan ? planExercise?.warnings : null),
+  );
 
   return {
     source,
@@ -764,7 +787,35 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
       null,
     conservative:
       Boolean(hasStoredProgression ? progression.conservative : planExercise?.conservative),
+    decision,
+    confidence,
+    warnings,
   };
+}
+
+function getCoachDecisionLabel(decision) {
+  const labels = {
+    increase_load: "Increase load",
+    increase_reps: "Build reps",
+    hold: "Hold steady",
+    reduce_load: "Reduce load",
+    reduce_volume: "Reduce volume",
+    deload_suggestion: "Consider lighter day",
+    recovery_suggestion: "Recovery focus",
+    insufficient_data: "Establish baseline",
+  };
+
+  return labels[decision] ?? "";
+}
+
+function getCoachConfidenceLabel(confidence) {
+  const labels = {
+    high: "High confidence",
+    medium: "Medium confidence",
+    low: "Low confidence",
+  };
+
+  return labels[confidence] ?? "";
 }
 
 function getProgramNickname(program) {
@@ -1943,6 +1994,8 @@ function WorkoutExerciseCard({
         <Metric label="Rest" value={formatRest(displayPlan.restSeconds)} />
       </div>
 
+      <CoachRecommendationSummary displayPlan={displayPlan} />
+
       <div className="mt-3">
         <CheckVideoLink exercise={exercise} emptyLabel="Check Video not added yet." />
       </div>
@@ -1988,6 +2041,60 @@ function WorkoutExerciseCard({
         />
       )}
     </article>
+  );
+}
+
+function CoachRecommendationSummary({ displayPlan }) {
+  const decisionLabel = getCoachDecisionLabel(displayPlan.decision);
+  const confidenceLabel = getCoachConfidenceLabel(displayPlan.confidence);
+  const reason = String(displayPlan.recommendationNote ?? "").trim();
+  const warnings = normalizeCoachWarnings(displayPlan.warnings);
+  const visibleWarnings = warnings.slice(0, 2);
+  const hiddenWarningCount = Math.max(0, warnings.length - visibleWarnings.length);
+
+  if (!decisionLabel && !confidenceLabel && !reason && !warnings.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {decisionLabel && (
+          <span className="rounded-[8px] bg-lime-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-lime-100">
+            {decisionLabel}
+          </span>
+        )}
+        {confidenceLabel && (
+          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-400">
+            {confidenceLabel}
+          </span>
+        )}
+      </div>
+
+      {reason && (
+        <p className="mt-2 text-xs font-semibold leading-5 text-zinc-300">
+          {reason}
+        </p>
+      )}
+
+      {visibleWarnings.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {visibleWarnings.map((warning) => (
+            <span
+              key={warning}
+              className="rounded-[8px] border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[11px] font-bold leading-4 text-amber-100/90"
+            >
+              {warning}
+            </span>
+          ))}
+          {hiddenWarningCount > 0 && (
+            <span className="rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-bold text-zinc-400">
+              +{hiddenWarningCount} more
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

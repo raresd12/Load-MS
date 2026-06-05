@@ -774,6 +774,11 @@ export function upsertProgramProgressionsFromPlan(programId, plan) {
       previousTotalReps: exercisePlan.previousTotalReps ?? null,
       exerciseRPE: exercisePlan.exerciseRPE ?? null,
       conservative: Boolean(exercisePlan.conservative),
+      decision: exercisePlan.decision ?? null,
+      confidence: exercisePlan.confidence ?? null,
+      warnings: Array.isArray(exercisePlan.warnings)
+        ? exercisePlan.warnings.filter(Boolean)
+        : [],
       sourceSessionId: plan.sourceSessionId ?? null,
       sourcePlanGeneratedAt: plan.generatedAt ?? null,
       updatedAt,
