@@ -145,6 +145,24 @@ function getExerciseLog(container, exerciseOrId) {
     return logs[matchedId];
   }
 
+  if (Array.isArray(logs)) {
+    const matchedExercise = logs.find((log) =>
+      ids.some((id) =>
+        [
+          log?.id,
+          log?.exerciseId,
+          log?.programExerciseId,
+          log?.legacyExerciseId,
+          log?.libraryExerciseId,
+        ].includes(id),
+      ),
+    );
+
+    if (matchedExercise) {
+      return matchedExercise;
+    }
+  }
+
   const analyticsSummary = container?.analytics?.exerciseSummaries?.find((summary) =>
     ids.includes(summary.exerciseId) || ids.includes(summary.programExerciseId),
   );
@@ -168,7 +186,7 @@ function getExerciseLog(container, exerciseOrId) {
   }
 
   const setRpes = workoutSets
-    .map((set) => Number(set.actualRPE))
+    .map((set) => Number(set.actualRPE ?? set.rpe))
     .filter(Number.isFinite);
   const exerciseRPE = setRpes.length
     ? Number((setRpes.reduce((total, rpe) => total + rpe, 0) / setRpes.length).toFixed(1))
@@ -180,17 +198,40 @@ function getExerciseLog(container, exerciseOrId) {
       .slice()
       .sort((left, right) => left.setNumber - right.setNumber)
       .map((set) => ({
-        reps: set.actualReps,
-        weight: set.actualWeight,
-        rpe: set.actualRPE,
+        reps: set.actualReps ?? set.reps,
+        weight: set.actualWeight ?? set.weight ?? set.kg,
+        rpe: set.actualRPE ?? set.rpe,
       })),
   };
 }
 
 function getPreviousExerciseSession(dayId, exercise, sessions = []) {
-  return sessions.find(
-    (session) => session.dayId === dayId && getExerciseLog(session, exercise),
-  );
+  return getPreviousExerciseSessions(dayId, exercise, null, sessions)[0] ?? null;
+}
+
+function getSessionTime(session) {
+  const date = new Date(session?.date ?? session?.completedAt ?? session?.createdAt ?? 0);
+  const time = date.getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getPreviousExerciseSessions(dayId, exercise, currentSession, sessions = []) {
+  return [...(sessions ?? [])]
+    .filter((session) => {
+      if (!session || session.id === currentSession?.id) {
+        return false;
+      }
+
+      const sameDay =
+        !dayId ||
+        !session.dayId ||
+        session.dayId === dayId ||
+        session.dayName === currentSession?.dayName;
+
+      return sameDay && Boolean(getExerciseLog(session, exercise));
+    })
+    .sort((left, right) => getSessionTime(right) - getSessionTime(left))
+    .slice(0, 5);
 }
 
 function isAccessoryReductionCandidate(exercise) {
@@ -320,6 +361,8 @@ export function getBasePlan(day) {
       decision: "hold",
       confidence: "low",
       warnings: [],
+      historyTrend: "insufficient_history",
+      historySampleSize: 0,
     })),
   };
 }
@@ -405,17 +448,19 @@ export function generateNextPlan(day, session, previousSessions = []) {
     wellnessSummary,
     readinessNotes,
     exercises: day.exercises.map((exercise) => {
-      const previousExerciseSession = getPreviousExerciseSession(
+      const previousExerciseSessions = getPreviousExerciseSessions(
         day.id,
         exercise,
+        session,
         previousSessions,
       );
 
       return calculateExerciseRecommendationV2(
         exercise,
         session,
-        previousExerciseSession,
+        previousExerciseSessions,
         wellnessSummary,
+        day.id,
       );
     }),
   };
@@ -743,6 +788,170 @@ export function evaluateExercisePerformance({
   };
 }
 
+function getSessionReadinessSummary(session) {
+  if (session?.readiness?.status) {
+    return session.readiness;
+  }
+
+  if (session?.readinessSnapshot?.readiness?.status) {
+    return session.readinessSnapshot.readiness;
+  }
+
+  if (session?.wellness) {
+    return interpretWellness(session.wellness);
+  }
+
+  return { ...interpretWellness(), missing: true };
+}
+
+function isStrongHistoryPerformance(sample) {
+  return (
+    sample.performance.allAtTop &&
+    sample.performance.hasExerciseRpe &&
+    sample.performance.exerciseRPE <= 8.5 &&
+    !sample.sessionFatigue.isVeryHigh
+  );
+}
+
+function isGoodHistoryPerformance(sample) {
+  return (
+    sample.performance.allAtMin &&
+    (!sample.performance.hasExerciseRpe || sample.performance.exerciseRPE <= 8.5) &&
+    !sample.sessionFatigue.isVeryHigh
+  );
+}
+
+function isMissedHighRpePerformance(sample) {
+  return sample.performance.belowMin && isHighExerciseRpe(sample.performance);
+}
+
+function compareHistorySamples(newer, older, exercise) {
+  const newerWeight = newer.performance.workingWeight;
+  const olderWeight = older.performance.workingWeight;
+  const comparableLoad =
+    newerWeight === null ||
+    olderWeight === null ||
+    Math.abs(newerWeight - olderWeight) <= getLoadJump(exercise);
+  const newerTotal = newer.performance.totalReps;
+  const olderTotal = older.performance.totalReps;
+
+  if (newerTotal === null || olderTotal === null || !comparableLoad) {
+    return "unknown";
+  }
+
+  if (newerTotal > olderTotal) {
+    return "improved";
+  }
+
+  if (newerTotal < olderTotal) {
+    return "regressed";
+  }
+
+  return "stable";
+}
+
+export function evaluateExerciseHistory({
+  exercise,
+  dayId,
+  session,
+  previousSessions = [],
+  planned = {},
+}) {
+  const historySessions = getPreviousExerciseSessions(dayId, exercise, session, previousSessions);
+  const samples = historySessions
+    .map((historySession) => {
+      const readinessModifier = evaluateReadinessModifier(getSessionReadinessSummary(historySession));
+      const sessionFatigue = evaluateSessionFatigue(historySession.sessionRpe);
+      const performance = evaluateExercisePerformance({
+        exercise,
+        session: historySession,
+        previousExerciseSession: null,
+        planned,
+      });
+
+      return {
+        session: historySession,
+        performance,
+        readinessModifier,
+        sessionFatigue,
+        isStrong: false,
+        isGood: false,
+        isMissedHighRpe: false,
+      };
+    })
+    .filter((sample) => sample.performance.hasMeaningfulData)
+    .slice(0, 5)
+    .map((sample) => ({
+      ...sample,
+      isStrong: isStrongHistoryPerformance(sample),
+      isGood: isGoodHistoryPerformance(sample),
+      isMissedHighRpe: isMissedHighRpePerformance(sample),
+    }));
+
+  const comparisons = samples
+    .slice(0, -1)
+    .map((sample, index) => compareHistorySamples(sample, samples[index + 1], exercise));
+  const strongCount = samples.filter((sample) => sample.isStrong).length;
+  const goodCount = samples.filter((sample) => sample.isGood).length;
+  const missedHighRpeCount = samples.filter((sample) => sample.isMissedHighRpe).length;
+  const highExerciseRpeCount = samples.filter((sample) => isHighExerciseRpe(sample.performance)).length;
+  const highSessionRpeCount = samples.filter((sample) => sample.sessionFatigue.isVeryHigh).length;
+  const redReadinessCount = samples.filter((sample) => sample.readinessModifier.isRed).length;
+  const improvingPairs = comparisons.filter((comparison) => comparison === "improved").length;
+  const regressingPairs = comparisons.filter((comparison) => comparison === "regressed").length;
+  const consecutiveStrongSessions = samples.findIndex((sample) => !sample.isStrong);
+  const consecutiveMissedHighRpe = samples.findIndex((sample) => !sample.isMissedHighRpe);
+  const warnings = [];
+  let trend = "insufficient_history";
+
+  if (samples.length >= 2) {
+    if (missedHighRpeCount >= 2 || regressingPairs >= 2) {
+      trend = "regressing";
+    } else if (highExerciseRpeCount >= 2 || highSessionRpeCount >= 2) {
+      trend = "repeated_high_rpe";
+    } else if (improvingPairs >= 2 || strongCount >= 2) {
+      trend = "improving";
+    } else {
+      trend = "stable";
+    }
+  }
+
+  if (missedHighRpeCount >= 2) {
+    warnings.push("Repeated missed targets with high RPE showed up in recent history.");
+  }
+
+  if (highSessionRpeCount >= 2) {
+    warnings.push("Recent sessions repeatedly hit session RPE 9+, so progression stays conservative.");
+  }
+
+  if (highExerciseRpeCount >= 2) {
+    warnings.push("Recent exercise RPE has repeatedly been high.");
+  }
+
+  if (redReadinessCount >= 2) {
+    warnings.push("Recent readiness was repeatedly low, so history is interpreted conservatively.");
+  }
+
+  return {
+    trend,
+    sampleSize: samples.length,
+    samples,
+    strongCount,
+    goodCount,
+    missedHighRpeCount,
+    highExerciseRpeCount,
+    highSessionRpeCount,
+    redReadinessCount,
+    improvingPairs,
+    regressingPairs,
+    consecutiveStrongSessions:
+      consecutiveStrongSessions === -1 ? samples.length : consecutiveStrongSessions,
+    consecutiveMissedHighRpe:
+      consecutiveMissedHighRpe === -1 ? samples.length : consecutiveMissedHighRpe,
+    warnings,
+  };
+}
+
 function getBaseCoachRecommendation(performance) {
   return {
     decision: "hold",
@@ -753,6 +962,8 @@ function getBaseCoachRecommendation(performance) {
     conservative: false,
     reasons: [],
     warnings: [...performance.warnings],
+    historyTrend: "insufficient_history",
+    historySampleSize: 0,
   };
 }
 
@@ -840,6 +1051,192 @@ export function generateCoachReason(decision, { mode, performance, readinessModi
   }
 }
 
+function addUniqueReason(recommendation, reason, position = "end") {
+  if (!reason || recommendation.reasons.includes(reason)) {
+    return;
+  }
+
+  if (position === "start") {
+    recommendation.reasons.unshift(reason);
+  } else {
+    recommendation.reasons.push(reason);
+  }
+}
+
+function removeReasonsContaining(recommendation, fragments) {
+  recommendation.reasons = recommendation.reasons.filter(
+    (reason) => !fragments.some((fragment) => reason.includes(fragment)),
+  );
+}
+
+function applyHistoryContext({
+  classification,
+  mode,
+  performance,
+  recommendation,
+  historySummary,
+  sessionFatigue,
+}) {
+  recommendation.historyTrend = historySummary.trend;
+  recommendation.historySampleSize = historySummary.sampleSize;
+  recommendation.warnings.push(...historySummary.warnings);
+
+  if (!historySummary.sampleSize) {
+    if (recommendation.decision === "increase_load") {
+      recommendation.confidence = "medium";
+      recommendation.conservative = true;
+      addUniqueReason(
+        recommendation,
+        "This was the first strong logged pattern for this exercise, so the progression stays small and conservative.",
+      );
+    }
+
+    return recommendation;
+  }
+
+  const currentMissedHighRpe = performance.belowMin && isHighExerciseRpe(performance);
+  const repeatedMissedHighRpe =
+    currentMissedHighRpe &&
+    (historySummary.consecutiveMissedHighRpe >= 1 || historySummary.missedHighRpeCount >= 2);
+  const repeatedHighSessionRpe =
+    historySummary.highSessionRpeCount >= 2 ||
+    (sessionFatigue.isVeryHigh && historySummary.highSessionRpeCount >= 1);
+  const repeatedHighExerciseRpe =
+    historySummary.highExerciseRpeCount >= 2 ||
+    (isHighExerciseRpe(performance) && historySummary.highExerciseRpeCount >= 1);
+  const twoStrongSessions =
+    performance.allAtTop &&
+    isManageableExerciseRpe(performance) &&
+    historySummary.consecutiveStrongSessions >= 1;
+
+  if (historySummary.trend === "improving") {
+    addUniqueReason(
+      recommendation,
+      "Recent history is improving, so this recommendation has more confidence.",
+    );
+  }
+
+  if (repeatedMissedHighRpe) {
+    recommendation.warnings.push("Repeated missed targets with high RPE showed up across recent sessions.");
+  }
+
+  if (repeatedHighSessionRpe) {
+    recommendation.warnings.push("Repeated high session RPE showed up across recent sessions.");
+  }
+
+  if (repeatedHighExerciseRpe) {
+    recommendation.warnings.push("Repeated high exercise RPE showed up across recent sessions.");
+  }
+
+  if (historySummary.trend === "regressing") {
+    recommendation.conservative = true;
+    addUniqueReason(
+      recommendation,
+      "Recent history is regressing, so the next session is kept conservative.",
+    );
+  }
+
+  if (repeatedHighSessionRpe || repeatedHighExerciseRpe || historySummary.trend === "repeated_high_rpe") {
+    recommendation.conservative = true;
+    recommendation.confidence = recommendation.confidence === "high" ? "medium" : recommendation.confidence;
+  }
+
+  if (recommendation.decision === "increase_load") {
+    if (mode === "quality_first") {
+      recommendation.conservative = true;
+      recommendation.confidence = twoStrongSessions ? "medium" : "low";
+      addUniqueReason(
+        recommendation,
+        "Athletic progression stays quality-first; do not chase load unless reps stay crisp.",
+      );
+      return recommendation;
+    }
+
+    if (historySummary.trend === "regressing" || repeatedHighSessionRpe || repeatedHighExerciseRpe) {
+      removeReasonsContaining(recommendation, ["Load increased", "progressed"]);
+      recommendation.decision = mode === "reps_first" ? "increase_reps" : "hold";
+      recommendation.nextWeight = performance.workingWeight;
+      recommendation.repFocus =
+        mode === "reps_first"
+          ? "Confirm clean top-range reps again before adding load."
+          : "Confirm this load again before increasing.";
+      recommendation.conservative = true;
+      recommendation.confidence = "medium";
+      addUniqueReason(
+        recommendation,
+        "Recent history showed fatigue or regression, so load was not increased off one good session.",
+        "start",
+      );
+      return recommendation;
+    }
+
+    if (twoStrongSessions) {
+      recommendation.confidence = "high";
+      addUniqueReason(
+        recommendation,
+        "Two strong sessions in a row support this load increase.",
+        "start",
+      );
+    } else {
+      recommendation.confidence = recommendation.confidence === "high" ? "medium" : recommendation.confidence;
+      recommendation.conservative = true;
+      addUniqueReason(
+        recommendation,
+        "One strong session supports only a small progression; repeatability still matters.",
+      );
+    }
+  }
+
+  if (recommendation.decision === "reduce_load") {
+    if (!repeatedMissedHighRpe) {
+      removeReasonsContaining(recommendation, ["Load slightly reduced", "reduced because"]);
+      recommendation.decision = "hold";
+      recommendation.nextWeight = performance.workingWeight;
+      recommendation.repFocus = "Repeat the load once before reducing unless the same issue repeats.";
+      recommendation.conservative = true;
+      recommendation.confidence = "medium";
+      addUniqueReason(
+        recommendation,
+        "One difficult session usually earns a hold, not an automatic reduction.",
+        "start",
+      );
+    } else if (classification.isMainCompound && historySummary.consecutiveMissedHighRpe < 2) {
+      removeReasonsContaining(recommendation, ["Load slightly reduced", "reduced because"]);
+      recommendation.decision = "hold";
+      recommendation.nextWeight = performance.workingWeight;
+      recommendation.repFocus = "Protect the main lift and reassess before reducing load.";
+      recommendation.conservative = true;
+      recommendation.confidence = "medium";
+      recommendation.warnings.push("Main compound load was protected from an aggressive reduction.");
+    } else {
+      recommendation.confidence = historySummary.consecutiveMissedHighRpe >= 2 ? "high" : "medium";
+      addUniqueReason(
+        recommendation,
+        "Repeated missed targets with high RPE support a small load reduction.",
+        "start",
+      );
+    }
+  }
+
+  if (
+    recommendation.decision === "hold" &&
+    mode === "reps_first" &&
+    historySummary.trend === "improving" &&
+    !isHighExerciseRpe(performance, 8.5)
+  ) {
+    recommendation.decision = "increase_reps";
+    recommendation.repFocus = "Keep load and build reps before increasing weight.";
+    recommendation.confidence = "medium";
+    addUniqueReason(
+      recommendation,
+      "Isolation history is improving, so reps-first progression stays the target.",
+      "start",
+    );
+  }
+
+  return recommendation;
+}
+
 export function calculateNextRecommendation({
   exercise,
   classification,
@@ -847,6 +1244,7 @@ export function calculateNextRecommendation({
   performance,
   readinessModifier,
   sessionFatigue,
+  historySummary = { trend: "insufficient_history", sampleSize: 0, warnings: [] },
 }) {
   const recommendation = getBaseCoachRecommendation(performance);
 
@@ -1035,16 +1433,44 @@ export function calculateNextRecommendation({
     recommendation.warnings.push("No readiness snapshot was available, so readiness was treated as neutral.");
   }
 
+  applyHistoryContext({
+    classification,
+    mode,
+    performance,
+    recommendation,
+    historySummary,
+    sessionFatigue,
+  });
+
+  const finalPrimaryReason = generateCoachReason(recommendation.decision, {
+    mode,
+    performance,
+    readinessModifier,
+    sessionFatigue,
+  });
+
+  recommendation.reasons = [
+    finalPrimaryReason,
+    ...recommendation.reasons.filter((reason) => reason && reason !== finalPrimaryReason),
+  ];
+  recommendation.warnings = [...new Set(recommendation.warnings.filter(Boolean))];
+
   return recommendation;
 }
 
 function calculateExerciseRecommendationV2(
   exercise,
   session,
-  previousExerciseSession,
+  previousExerciseSessions,
   wellnessSummary,
+  dayId,
 ) {
   const planned = getExerciseLog(session.plannedExercises, exercise) ?? {};
+  const historySessions = Array.isArray(previousExerciseSessions)
+    ? previousExerciseSessions
+    : previousExerciseSessions
+      ? [previousExerciseSessions]
+      : [];
   const classification = classifyExerciseType(exercise);
   const mode = determineProgressionMode(exercise, classification);
   const readinessModifier = evaluateReadinessModifier(wellnessSummary);
@@ -1052,7 +1478,14 @@ function calculateExerciseRecommendationV2(
   const performance = evaluateExercisePerformance({
     exercise,
     session,
-    previousExerciseSession,
+    previousExerciseSession: historySessions[0] ?? null,
+    planned,
+  });
+  const historySummary = evaluateExerciseHistory({
+    exercise,
+    dayId,
+    session,
+    previousSessions: historySessions,
     planned,
   });
   const recommendation = calculateNextRecommendation({
@@ -1062,6 +1495,7 @@ function calculateExerciseRecommendationV2(
     performance,
     readinessModifier,
     sessionFatigue,
+    historySummary,
   });
 
   return {
@@ -1093,6 +1527,8 @@ function calculateExerciseRecommendationV2(
     decision: recommendation.decision,
     confidence: recommendation.confidence,
     warnings: [...new Set(recommendation.warnings.filter(Boolean))],
+    historyTrend: recommendation.historyTrend,
+    historySampleSize: recommendation.historySampleSize,
   };
 }
 
