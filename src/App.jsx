@@ -3924,14 +3924,52 @@ function ProgressPage({
       </section>
 
       <section className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Workouts" value={analytics.totalWorkouts} />
-        <Metric label={`${recentWorkoutWindowDays}d count`} value={analytics.recentWorkoutCount} />
-        <Metric label="Last workout" value={formatProgressDate(analytics.lastWorkoutDate)} />
-        <Metric label="Completed sets" value={analytics.totalCompletedSets} />
-        <Metric label="Volume" value={formatVolume(analytics.totalVolume)} />
-        <Metric label="Avg session RPE" value={formatAverage(analytics.averageSessionRpe)} />
-        <Metric label="Avg readiness" value={formatReadinessAverage(analytics.averageReadiness)} />
-        <Metric label="Weighted sets" value={analytics.weightedSetCount} />
+        <ProgressStatCard
+          label="Total workouts"
+          value={analytics.totalWorkouts}
+          detail={`${analytics.recentWorkoutCount} in the last ${recentWorkoutWindowDays} days`}
+        />
+        <ProgressStatCard
+          label="Last workout"
+          value={formatProgressDate(analytics.lastWorkoutDate)}
+          detail={analytics.lastWorkoutName ?? "No saved sessions yet."}
+        />
+        <ProgressStatCard
+          label="Logged sets"
+          value={analytics.totalCompletedSets}
+          detail={`${analytics.weightedSetCount} weighted sets counted for volume`}
+        />
+        <ProgressStatCard
+          label="Total volume"
+          value={formatVolume(analytics.totalVolume)}
+          detail="Weighted sets only. BW and empty kg are ignored."
+        />
+        <ProgressStatCard
+          label="Avg session RPE"
+          value={formatAverage(analytics.averageSessionRpe)}
+          detail={analytics.sessionRpeSampleSize ? `${analytics.sessionRpeSampleSize} sessions with RPE` : "No session RPE yet."}
+        />
+        <ProgressStatCard
+          label="Avg readiness"
+          value={formatReadinessAverage(analytics.averageReadiness)}
+          detail={analytics.readinessEntries.length ? `${analytics.readinessEntries.length} readiness check-ins` : "No readiness data yet."}
+        />
+        <ProgressStatCard
+          label="Recent workouts"
+          value={analytics.recentSevenDayWorkoutCount}
+          detail="Saved sessions in the last 7 days"
+        />
+        <ProgressStatCard
+          label="Best recent set"
+          value={analytics.bestRecentSet ? formatSetPerformance(analytics.bestRecentSet) : "No data"}
+          detail={analytics.bestRecentSet?.exerciseName ?? "Log weighted sets to unlock this."}
+        />
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        {analytics.insights.map((insight) => (
+          <ProgressInsightCard key={insight.title} insight={insight} />
+        ))}
       </section>
 
       <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
@@ -4007,9 +4045,9 @@ function ExerciseProgressPanel({ exercise, stats }) {
 
   return (
     <div className="mt-4 space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 min-[430px]:grid-cols-2 xl:grid-cols-3">
         <ProgressStatCard
-          label="Latest"
+          label="Latest logged session"
           value={stats.latestSession ? formatProgressDate(stats.latestSession.date) : "No data"}
           detail={stats.latestSession?.setSummary ?? "No logged sets yet."}
         />
@@ -4025,7 +4063,22 @@ function ExerciseProgressPanel({ exercise, stats }) {
         <ProgressStatCard
           label="Best estimated strength"
           value={stats.bestEstimatedStrength ? formatKg(stats.bestEstimatedStrength) : "No kg data"}
-          detail={`Total volume ${formatVolume(stats.totalVolume)} | Avg RPE ${formatAverage(stats.averageSetRpe)}`}
+          detail="Epley estimate from valid weighted sets"
+        />
+        <ProgressStatCard
+          label="Recent total reps"
+          value={stats.repsTrend.value}
+          detail={stats.repsTrend.detail}
+        />
+        <ProgressStatCard
+          label="Recent volume"
+          value={stats.volumeTrend.value}
+          detail={stats.volumeTrend.detail}
+        />
+        <ProgressStatCard
+          label="Average set RPE"
+          value={formatAverage(stats.averageSetRpe)}
+          detail={`${stats.completedSets.length} completed sets | ${formatVolume(stats.totalVolume)} volume`}
         />
       </div>
 
@@ -4074,6 +4127,23 @@ function ProgressStatCard({ label, value, detail }) {
       <p className="mt-1 break-words text-lg font-black text-white">{value}</p>
       <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">{detail}</p>
     </div>
+  );
+}
+
+function ProgressInsightCard({ insight }) {
+  return (
+    <article className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+          {insight.title}
+        </p>
+        <span className={`rounded-[8px] px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${insight.toneClass}`}>
+          {insight.status}
+        </span>
+      </div>
+      <p className="mt-2 text-lg font-black text-white">{insight.value}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">{insight.body}</p>
+    </article>
   );
 }
 
@@ -4239,28 +4309,390 @@ function buildProgressAnalytics({
     const dateTime = getDateTime(session.date);
     return dateTime && now - dateTime <= recentWindowMs;
   }).length;
+  const recentSevenDayWorkoutCount = sortedSessions.filter((session) => {
+    const dateTime = getDateTime(session.date);
+    return dateTime && now - dateTime <= 7 * 24 * 60 * 60 * 1000;
+  }).length;
   const exerciseOptions = buildProgressExerciseOptions({
     activeProgram,
     activeProgramDays,
     exerciseLookup,
     setRecords,
   });
+  const sessionSummaries = buildProgressSessionSummaries(sortedSessions, setRecords);
+  const bestRecentSet = getBestRecentSet(completedSets, now, recentWorkoutWindowDays);
+  const insights = buildTrainingInsightCards({
+    totalWorkouts: sortedSessions.length,
+    recentWorkoutCount,
+    recentSevenDayWorkoutCount,
+    sessionSummaries,
+    sessionRpes,
+    readinessEntries,
+    bestRecentSet,
+  });
 
   return {
     sortedSessions,
+    sessionSummaries,
     setRecords,
     totalWorkouts: sortedSessions.length,
     recentWorkoutCount,
+    recentSevenDayWorkoutCount,
     lastWorkoutDate: sortedSessions[0]?.date ?? null,
+    lastWorkoutName: sortedSessions[0]?.dayName ?? sortedSessions[0]?.dayFocus ?? null,
     totalCompletedSets: completedSets.length,
     weightedSetCount: weightedSets.length,
     totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
     averageSessionRpe: average(sessionRpes),
+    sessionRpeSampleSize: sessionRpes.length,
     averageReadiness: average(readinessScores),
     readinessEntries,
+    bestRecentSet,
+    insights,
     exerciseOptions,
     loggedExerciseCount: exerciseOptions.filter((option) => option.loggedSetCount > 0).length,
   };
+}
+
+function buildProgressSessionSummaries(sessions, setRecords) {
+  const recordsBySession = new Map();
+
+  setRecords.forEach((record) => {
+    const key = record.sessionId;
+    if (!key) {
+      return;
+    }
+
+    const currentRecords = recordsBySession.get(key) ?? [];
+    currentRecords.push(record);
+    recordsBySession.set(key, currentRecords);
+  });
+
+  return sessions.map((session) => {
+    const sessionKey = getProgressSessionKey(session);
+    const records = recordsBySession.get(sessionKey) ?? [];
+    const completedRecords = records.filter((record) => record.completed);
+    const weightedRecords = completedRecords.filter(
+      (record) => typeof record.weight === "number" && Number.isFinite(record.reps),
+    );
+    const fallbackLoggedSets = numberValue(session.analytics?.loggedSetCount, 0);
+    const fallbackExerciseCount =
+      numberValue(session.analytics?.exerciseCount, null) ??
+      (Array.isArray(session.exercises)
+        ? session.exercises.length
+        : Object.keys(session.exercises ?? {}).length);
+
+    return {
+      sessionKey,
+      date: session.date,
+      dayName: session.dayName ?? session.dayFocus ?? "Workout",
+      sessionRpe: numberValue(session.sessionRpe, null),
+      readiness: session.readiness ?? session.readinessSnapshot?.readiness ?? null,
+      completedSetCount: completedRecords.length || fallbackLoggedSets,
+      exerciseCount: completedRecords.length
+        ? new Set(completedRecords.map((record) => record.exerciseKey)).size
+        : fallbackExerciseCount,
+      totalReps: completedRecords.reduce(
+        (total, record) => total + (Number.isFinite(record.reps) ? record.reps : 0),
+        0,
+      ),
+      totalVolume: weightedRecords.reduce((total, record) => total + record.weight * record.reps, 0),
+      weightedSetCount: weightedRecords.length,
+    };
+  });
+}
+
+function getBestRecentSet(completedSets, now, windowDays) {
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  const recentSets = completedSets.filter((set) => {
+    const dateTime = getDateTime(set.date);
+    return dateTime && now - dateTime <= windowMs;
+  });
+
+  return [...recentSets].sort(compareBestSet)[0] ?? null;
+}
+
+function buildTrainingInsightCards({
+  totalWorkouts,
+  recentWorkoutCount,
+  recentSevenDayWorkoutCount,
+  sessionSummaries,
+  sessionRpes,
+  readinessEntries,
+  bestRecentSet,
+}) {
+  const recentSessionRpes = sessionRpes.slice(0, 5);
+  const recentRpeAverage = average(recentSessionRpes);
+  const readinessTrend = compareRecentReadiness(readinessEntries);
+  const volumeTrend = compareRecentSessionValues(
+    sessionSummaries.filter((summary) => summary.totalVolume > 0),
+    "totalVolume",
+  );
+
+  return [
+    buildConsistencyInsight(totalWorkouts, recentWorkoutCount, recentSevenDayWorkoutCount),
+    buildFatigueInsight(recentRpeAverage, recentSessionRpes.length),
+    buildReadinessInsight(readinessTrend),
+    buildVolumeInsight(volumeTrend),
+    buildBestRecentSetInsight(bestRecentSet),
+  ];
+}
+
+function buildConsistencyInsight(totalWorkouts, recentWorkoutCount, recentSevenDayWorkoutCount) {
+  if (!totalWorkouts) {
+    return createProgressInsight({
+      title: "Training consistency",
+      status: "No data",
+      value: "No workouts",
+      body: "Save your first workout to start tracking consistency.",
+      tone: "neutral",
+    });
+  }
+
+  if (recentSevenDayWorkoutCount >= 3) {
+    return createProgressInsight({
+      title: "Training consistency",
+      status: "Strong",
+      value: `${recentSevenDayWorkoutCount} this week`,
+      body: "Training has been consistent this week.",
+      tone: "good",
+    });
+  }
+
+  if (recentSevenDayWorkoutCount >= 1) {
+    return createProgressInsight({
+      title: "Training consistency",
+      status: "Building",
+      value: `${recentSevenDayWorkoutCount} this week`,
+      body: "Some work is logged. Keep the rhythm simple and repeatable.",
+      tone: "steady",
+    });
+  }
+
+  return createProgressInsight({
+    title: "Training consistency",
+    status: "Watch",
+    value: `${recentWorkoutCount} in 30d`,
+    body: "No workout logged this week yet.",
+    tone: "caution",
+  });
+}
+
+function buildFatigueInsight(recentRpeAverage, sampleSize) {
+  if (!sampleSize || !Number.isFinite(recentRpeAverage)) {
+    return createProgressInsight({
+      title: "Recent fatigue",
+      status: "No data",
+      value: "No RPE",
+      body: "Add session RPE to see fatigue patterns.",
+      tone: "neutral",
+    });
+  }
+
+  if (recentRpeAverage >= 8.5) {
+    return createProgressInsight({
+      title: "Recent fatigue",
+      status: "High",
+      value: `RPE ${recentRpeAverage.toFixed(1)}`,
+      body: "Session RPE is trending high. Watch fatigue.",
+      tone: "caution",
+    });
+  }
+
+  if (recentRpeAverage >= 7) {
+    return createProgressInsight({
+      title: "Recent fatigue",
+      status: "Productive",
+      value: `RPE ${recentRpeAverage.toFixed(1)}`,
+      body: "Sessions look hard enough without obvious red flags.",
+      tone: "steady",
+    });
+  }
+
+  return createProgressInsight({
+    title: "Recent fatigue",
+    status: "Low",
+    value: `RPE ${recentRpeAverage.toFixed(1)}`,
+    body: "Fatigue looks manageable. Push when performance supports it.",
+    tone: "good",
+  });
+}
+
+function buildReadinessInsight(trend) {
+  if (!trend.sampleSize) {
+    return createProgressInsight({
+      title: "Readiness trend",
+      status: "No data",
+      value: "No check-ins",
+      body: "Save readiness to compare recovery with performance.",
+      tone: "neutral",
+    });
+  }
+
+  if (trend.currentAverage >= 4) {
+    return createProgressInsight({
+      title: "Readiness trend",
+      status: "Strong",
+      value: `${trend.currentAverage.toFixed(1)} / 5`,
+      body: "Readiness looks strong lately.",
+      tone: "good",
+    });
+  }
+
+  if (trend.currentAverage < 3) {
+    return createProgressInsight({
+      title: "Readiness trend",
+      status: "Low",
+      value: `${trend.currentAverage.toFixed(1)} / 5`,
+      body: "Readiness is low. Keep progression conservative.",
+      tone: "caution",
+    });
+  }
+
+  return createProgressInsight({
+    title: "Readiness trend",
+    status: trend.direction,
+    value: `${trend.currentAverage.toFixed(1)} / 5`,
+    body:
+      trend.direction === "Up"
+        ? "Readiness is moving up."
+        : trend.direction === "Down"
+          ? "Readiness dipped recently. Watch recovery."
+          : "Readiness looks stable.",
+    tone: trend.direction === "Up" ? "good" : trend.direction === "Down" ? "caution" : "steady",
+  });
+}
+
+function buildVolumeInsight(trend) {
+  if (!trend.sampleSize) {
+    return createProgressInsight({
+      title: "Volume trend",
+      status: "No data",
+      value: "No kg volume",
+      body: "Weighted sets unlock volume trend.",
+      tone: "neutral",
+    });
+  }
+
+  if (trend.direction === "Up") {
+    return createProgressInsight({
+      title: "Volume trend",
+      status: "Up",
+      value: formatVolume(trend.currentAverage),
+      body: "Volume is moving up recently.",
+      tone: "good",
+    });
+  }
+
+  if (trend.direction === "Down") {
+    return createProgressInsight({
+      title: "Volume trend",
+      status: "Down",
+      value: formatVolume(trend.currentAverage),
+      body: "Volume dipped recently. Check recovery and exercise selection.",
+      tone: "caution",
+    });
+  }
+
+  return createProgressInsight({
+    title: "Volume trend",
+    status: "Stable",
+    value: formatVolume(trend.currentAverage),
+    body: "Volume looks stable.",
+    tone: "steady",
+  });
+}
+
+function buildBestRecentSetInsight(bestRecentSet) {
+  if (!bestRecentSet) {
+    return createProgressInsight({
+      title: "Best recent set",
+      status: "No data",
+      value: "No set yet",
+      body: "Log weighted sets to surface standout performances.",
+      tone: "neutral",
+    });
+  }
+
+  return createProgressInsight({
+    title: "Best recent set",
+    status: "Best",
+    value: formatSetPerformance(bestRecentSet),
+    body: bestRecentSet.exerciseName ?? "Best recent weighted performance.",
+    tone: "good",
+  });
+}
+
+function createProgressInsight({ title, status, value, body, tone }) {
+  const toneClasses = {
+    good: "border border-lime-300/30 bg-lime-300/10 text-lime-100",
+    steady: "border border-sky-300/30 bg-sky-300/10 text-sky-100",
+    caution: "border border-amber-300/30 bg-amber-300/10 text-amber-100",
+    neutral: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+  };
+
+  return {
+    title,
+    status,
+    value,
+    body,
+    toneClass: toneClasses[tone] ?? toneClasses.neutral,
+  };
+}
+
+function compareRecentReadiness(entries) {
+  const scores = (entries ?? [])
+    .map((entry) => entry.readiness?.averageScore)
+    .filter(Number.isFinite);
+  const currentScores = scores.slice(0, 3);
+  const previousScores = scores.slice(3, 6);
+  const currentAverage = average(currentScores);
+  const previousAverage = average(previousScores);
+
+  return {
+    sampleSize: currentScores.length,
+    currentAverage,
+    previousAverage,
+    direction: getTrendDirection(currentAverage, previousAverage, 0.2),
+  };
+}
+
+function compareRecentSessionValues(entries, field) {
+  const values = (entries ?? [])
+    .map((entry) => entry[field])
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const currentValues = values.slice(0, 3);
+  const previousValues = values.slice(3, 6);
+  const currentAverage = average(currentValues);
+  const previousAverage = average(previousValues);
+
+  return {
+    sampleSize: currentValues.length,
+    currentAverage,
+    previousAverage,
+    direction: getTrendDirection(currentAverage, previousAverage, 0.05, true),
+  };
+}
+
+function getTrendDirection(currentAverage, previousAverage, threshold, useRelativeThreshold = false) {
+  if (!Number.isFinite(currentAverage) || !Number.isFinite(previousAverage)) {
+    return "Stable";
+  }
+
+  const difference = currentAverage - previousAverage;
+  const minimumChange = useRelativeThreshold
+    ? Math.max(1, Math.abs(previousAverage) * threshold)
+    : threshold;
+
+  if (difference > minimumChange) {
+    return "Up";
+  }
+
+  if (difference < -minimumChange) {
+    return "Down";
+  }
+
+  return "Stable";
 }
 
 function buildProgressExerciseLookup({
@@ -4382,7 +4814,7 @@ function normalizeWorkoutSetRecord(session, set, exerciseLookup) {
   const rpe = parseAnalyticsRpe(set.actualRPE ?? set.rpe);
 
   return {
-    sessionId: set.sessionId ?? session.id,
+    sessionId: set.sessionId ?? session.id ?? getProgressSessionKey(session),
     date: session.date,
     programId: set.programId ?? session.programId ?? lookupEntry?.programId ?? null,
     dayId: set.dayId ?? session.dayId ?? lookupEntry?.dayId ?? null,
@@ -4423,7 +4855,7 @@ function normalizeLegacySetRecord(session, exerciseKey, exerciseLog, set, index,
   const rpe = setRpe ?? exerciseRpe;
 
   return {
-    sessionId: session.id,
+    sessionId: session.id ?? getProgressSessionKey(session),
     date: session.date,
     programId: session.programId ?? lookupEntry?.programId ?? null,
     dayId: session.dayId ?? lookupEntry?.dayId ?? null,
@@ -4563,6 +4995,8 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
   const trendValues = recentSessions.map(
     (entry) => entry.bestEstimatedStrength ?? entry.totalVolume ?? entry.totalReps,
   );
+  const repsTrend = buildExerciseMetricTrend(recentSessions, "totalReps", formatPlainNumber, "reps");
+  const volumeTrend = buildExerciseMetricTrend(recentSessions, "totalVolume", formatVolume);
 
   return {
     completedSets,
@@ -4575,7 +5009,51 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
     totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
     averageSetRpe: average(completedSets.map((set) => set.rpe).filter(Number.isFinite)),
     recentSessions,
+    repsTrend,
+    volumeTrend,
     trendMaxValue: Math.max(0, ...trendValues),
+  };
+}
+
+function buildExerciseMetricTrend(recentSessions, field, formatter, suffix = "") {
+  const validEntries = recentSessions.filter(
+    (entry) => Number.isFinite(entry[field]) && entry[field] > 0,
+  );
+
+  if (!validEntries.length) {
+    return {
+      value: "No data",
+      detail: "Log this exercise to build a trend.",
+    };
+  }
+
+  const latest = validEntries[0][field];
+
+  if (validEntries.length < 2) {
+    return {
+      value: suffix ? `${formatter(latest)} ${suffix}` : formatter(latest),
+      detail: "One logged session so far.",
+    };
+  }
+
+  const previous = validEntries[1][field];
+  const difference = latest - previous;
+  const formattedLatest = suffix ? `${formatter(latest)} ${suffix}` : formatter(latest);
+
+  if (Math.abs(difference) < 0.01) {
+    return {
+      value: formattedLatest,
+      detail: "Stable versus last time.",
+    };
+  }
+
+  const formattedDifference = suffix
+    ? `${formatter(Math.abs(difference))} ${suffix}`
+    : formatter(Math.abs(difference));
+
+  return {
+    value: formattedLatest,
+    detail: `${difference > 0 ? "Up" : "Down"} ${formattedDifference} versus last time.`,
   };
 }
 
@@ -4683,6 +5161,10 @@ function getProgressExerciseKey({ programId, programExerciseId, exerciseId, exer
   return `name:${normalizeProgressName(exerciseName ?? "exercise")}`;
 }
 
+function getProgressSessionKey(session) {
+  return session?.id ?? `${session?.date ?? "session"}-${session?.dayId ?? session?.dayName ?? "workout"}`;
+}
+
 function getLibraryExerciseName(exerciseId, exerciseLookup) {
   return exerciseLookup.libraryById.get(exerciseId)?.name ?? null;
 }
@@ -4752,6 +5234,14 @@ function formatProgressDate(value) {
 
 function formatAverage(value) {
   return Number.isFinite(value) ? value.toFixed(1) : "No data";
+}
+
+function formatPlainNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "No data";
+  }
+
+  return value % 1 === 0 ? value.toFixed(0) : value.toFixed(1);
 }
 
 function formatReadinessAverage(value) {
