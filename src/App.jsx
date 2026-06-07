@@ -739,6 +739,22 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
     (hasStoredProgression ? progression.warnings : null) ??
       (hasGeneratedPlan ? planExercise?.warnings : null),
   );
+  const historyTrend =
+    (hasStoredProgression ? progression.historyTrend : null) ??
+    planExercise?.historyTrend ??
+    null;
+  const historySampleSize =
+    (hasStoredProgression ? progression.historySampleSize : null) ??
+    planExercise?.historySampleSize ??
+    null;
+  const progressionMode =
+    (hasStoredProgression ? progression.progressionMode : null) ??
+    planExercise?.progressionMode ??
+    null;
+  const exerciseProfile =
+    (hasStoredProgression ? progression.exerciseProfile : null) ??
+    planExercise?.exerciseProfile ??
+    null;
 
   return {
     source,
@@ -790,6 +806,10 @@ function getWorkoutExerciseRecommendation(programId, exercise, planExercise, pla
     decision,
     confidence,
     warnings,
+    historyTrend,
+    historySampleSize,
+    progressionMode,
+    exerciseProfile,
   };
 }
 
@@ -816,6 +836,42 @@ function getCoachConfidenceLabel(confidence) {
   };
 
   return labels[confidence] ?? "";
+}
+
+function getCoachHistoryTrendLabel(trend) {
+  const labels = {
+    improving: "Improving trend",
+    stable: "Stable trend",
+    regressing: "Regression watch",
+    repeated_high_rpe: "High fatigue pattern",
+    insufficient_history: "Limited history",
+  };
+
+  return labels[trend] ?? "";
+}
+
+function getCoachProgressionModeLabel(mode) {
+  const labels = {
+    double_progression: "Double progression",
+    load_progression: "Load progression",
+    reps_first: "Reps first",
+    quality_first: "Quality first",
+    rpe_capped: "RPE-capped",
+    core_control: "Core control",
+    hold_conservative: "Conservative hold",
+  };
+
+  return labels[mode] ?? "";
+}
+
+function getCoachVolumePolicyLabel(policy) {
+  const labels = {
+    protected: "Volume protected",
+    normal: "Normal volume",
+    reducible_low_priority: "Low-priority volume can flex",
+  };
+
+  return labels[policy] ?? "";
 }
 
 function getProgramNickname(program) {
@@ -2003,6 +2059,7 @@ function WorkoutExerciseCard({
       </div>
 
       <CoachRecommendationSummary displayPlan={displayPlan} />
+      <CoachRecommendationDetails displayPlan={displayPlan} />
 
       <div className="mt-3">
         <CheckVideoLink exercise={exercise} emptyLabel="Check Video not added yet." />
@@ -2103,6 +2160,99 @@ function CoachRecommendationSummary({ displayPlan }) {
         </div>
       )}
     </div>
+  );
+}
+
+function CoachDetailRow({ label, value }) {
+  if (!value) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">
+        {label}
+      </p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-200">{value}</p>
+    </div>
+  );
+}
+
+function CoachRecommendationDetails({ displayPlan }) {
+  const decisionLabel = getCoachDecisionLabel(displayPlan.decision);
+  const confidenceLabel = getCoachConfidenceLabel(displayPlan.confidence);
+  const reason = String(displayPlan.recommendationNote ?? "").trim();
+  const warnings = normalizeCoachWarnings(displayPlan.warnings);
+  const historyTrendLabel = getCoachHistoryTrendLabel(displayPlan.historyTrend);
+  const historySampleSize = Number(displayPlan.historySampleSize);
+  const historyValue = historyTrendLabel
+    ? `${historyTrendLabel}${Number.isFinite(historySampleSize) ? ` | ${historySampleSize} recent ${historySampleSize === 1 ? "session" : "sessions"}` : ""}`
+    : "";
+  const progressionMode =
+    getCoachProgressionModeLabel(displayPlan.progressionMode) ||
+    getCoachProgressionModeLabel(displayPlan.exerciseProfile?.progressionMode);
+  const loadStep = Number(displayPlan.exerciseProfile?.loadIncrementKg);
+  const loadStepValue = Number.isFinite(loadStep) && loadStep > 0
+    ? `${loadStep} kg${displayPlan.exerciseProfile?.equipment === "dumbbell" ? " per dumbbell" : ""}`
+    : "";
+  const volumePolicy = getCoachVolumePolicyLabel(displayPlan.exerciseProfile?.volumePolicy);
+  const conservativeContext = displayPlan.conservative
+    ? "Progression is capped today because readiness, fatigue, history, or exercise profile calls for control."
+    : "";
+  const hasDetails = Boolean(
+    decisionLabel ||
+      confidenceLabel ||
+      reason ||
+      warnings.length ||
+      historyValue ||
+      progressionMode ||
+      loadStepValue ||
+      volumePolicy ||
+      conservativeContext,
+  );
+
+  if (!hasDetails) {
+    return null;
+  }
+
+  return (
+    <details className="mt-2 rounded-[8px] border border-zinc-800 bg-[#141414] px-3 py-2">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+        Coach Details
+        <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-500" />
+      </summary>
+
+      <div className="border-t border-zinc-800 pt-3">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <CoachDetailRow label="Decision" value={decisionLabel} />
+          <CoachDetailRow label="Confidence" value={confidenceLabel} />
+          <CoachDetailRow label="Why" value={reason} />
+          <CoachDetailRow label="History" value={historyValue} />
+          <CoachDetailRow label="Progression Mode" value={progressionMode} />
+          <CoachDetailRow label="Load Step" value={loadStepValue} />
+          <CoachDetailRow label="Volume" value={volumePolicy} />
+          <CoachDetailRow label="Context" value={conservativeContext} />
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="mt-2 rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-3 py-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-100/70">
+              Warnings
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {warnings.map((warning) => (
+                <span
+                  key={warning}
+                  className="rounded-[8px] border border-amber-300/20 bg-[#111111] px-2 py-1 text-[11px] font-bold leading-4 text-amber-100/90"
+                >
+                  {warning}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
