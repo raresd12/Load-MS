@@ -3972,6 +3972,8 @@ function ProgressPage({
         ))}
       </section>
 
+      <ReadinessPerformanceSection analysis={analytics.readinessPerformance} />
+
       <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -4210,6 +4212,134 @@ function ProgressInsightCard({ insight }) {
   );
 }
 
+function ReadinessPerformanceSection({ analysis }) {
+  if (!analysis) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+            Readiness vs Performance
+          </p>
+          <h3 className="mt-1 text-xl font-black text-white">Recovery signal check</h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+            Conservative read on readiness, session RPE, and logged work. No causation claims.
+          </p>
+        </div>
+        <span className="w-fit rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+          {analysis.linkedSessionCount} linked sessions
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 min-[430px]:grid-cols-2 xl:grid-cols-4">
+        <ProgressStatCard
+          label="Avg readiness on workouts"
+          value={formatReadinessAverage(analysis.averageReadiness)}
+          detail={analysis.averageReadinessDetail}
+        />
+        <ProgressStatCard
+          label="High fatigue days"
+          value={analysis.highFatigueCount}
+          detail={analysis.highFatigueDetail}
+        />
+        <ProgressStatCard
+          label="Best performance day"
+          value={analysis.bestPerformance?.label ?? "No data"}
+          detail={analysis.bestPerformance?.detail ?? "Log performance with readiness to unlock this."}
+        />
+        <ProgressStatCard
+          label="Practical coach note"
+          value={analysis.coachNoteTitle}
+          detail={analysis.coachNote}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+            Readiness distribution
+          </p>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {["green", "yellow", "red"].map((status) => (
+              <ReadinessStatusCount
+                key={status}
+                status={status}
+                count={analysis.statusCounts[status] ?? 0}
+              />
+            ))}
+          </div>
+          {analysis.statusCounts.missing > 0 && (
+            <p className="mt-3 text-xs font-semibold leading-5 text-zinc-500">
+              {analysis.statusCounts.missing} saved sessions have no readiness snapshot.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">
+            Avg session RPE by readiness
+          </p>
+          <div className="mt-3 space-y-2">
+            {["green", "yellow", "red"].map((status) => (
+              <ReadinessRpeRow
+                key={status}
+                status={status}
+                entry={analysis.rpeByStatus[status]}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <p className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-semibold leading-6 text-zinc-300">
+        {analysis.performanceNote}
+      </p>
+    </section>
+  );
+}
+
+function ReadinessStatusCount({ status, count }) {
+  const copy = getReadinessCopy({ status });
+
+  return (
+    <div className={`rounded-[8px] px-3 py-2 text-center ${readinessStyles[status] ?? readinessStyles.yellow}`}>
+      <p className="text-xl font-black">{count}</p>
+      <p className="mt-1 text-[10px] font-black uppercase tracking-[0.1em]">{copy.label}</p>
+    </div>
+  );
+}
+
+function ReadinessRpeRow({ status, entry }) {
+  const copy = getReadinessCopy({ status });
+  const averageRpe = Number.isFinite(entry?.averageRpe) ? `RPE ${entry.averageRpe.toFixed(1)}` : "No RPE";
+  const count = entry?.count ?? 0;
+  const width = Number.isFinite(entry?.averageRpe)
+    ? Math.max(8, Math.min(100, (entry.averageRpe / 10) * 100))
+    : 0;
+
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-black text-white">{copy.label}</p>
+        <p className="text-xs font-bold text-zinc-400">
+          {averageRpe} | {count} {count === 1 ? "session" : "sessions"}
+        </p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          className={`h-full rounded-full ${
+            status === "green" ? "bg-lime-300" : status === "red" ? "bg-red-300" : "bg-amber-300"
+          }`}
+          style={{ width: `${width}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ExerciseTrendRow({ entry, maxValue }) {
   const value = entry.bestEstimatedStrength ?? entry.totalVolume ?? entry.totalReps;
   const width = maxValue > 0 ? Math.max(8, Math.min(100, (value / maxValue) * 100)) : 0;
@@ -4393,7 +4523,7 @@ function buildProgressAnalytics({
     exerciseLookup,
     setRecords,
   });
-  const sessionSummaries = buildProgressSessionSummaries(sortedSessions, setRecords);
+  const sessionSummaries = buildProgressSessionSummaries(sortedSessions, setRecords, readinessByDate);
   const bestRecentSet = getBestRecentSet(completedSets, now, recentWorkoutWindowDays);
   const insights = buildTrainingInsightCards({
     totalWorkouts: sortedSessions.length,
@@ -4404,6 +4534,7 @@ function buildProgressAnalytics({
     readinessEntries,
     bestRecentSet,
   });
+  const readinessPerformance = buildReadinessPerformanceAnalytics(sessionSummaries);
 
   return {
     sortedSessions,
@@ -4423,12 +4554,13 @@ function buildProgressAnalytics({
     readinessEntries,
     bestRecentSet,
     insights,
+    readinessPerformance,
     exerciseOptions,
     loggedExerciseCount: exerciseOptions.filter((option) => option.loggedSetCount > 0).length,
   };
 }
 
-function buildProgressSessionSummaries(sessions, setRecords) {
+function buildProgressSessionSummaries(sessions, setRecords, readinessByDate = {}) {
   const recordsBySession = new Map();
 
   setRecords.forEach((record) => {
@@ -4449,6 +4581,8 @@ function buildProgressSessionSummaries(sessions, setRecords) {
     const weightedRecords = completedRecords.filter(
       (record) => typeof record.weight === "number" && Number.isFinite(record.reps),
     );
+    const estimatedRecords = weightedRecords.filter((record) => record.estimatedOneRepMax !== null);
+    const readiness = getSessionReadinessForProgress(session, readinessByDate);
     const fallbackLoggedSets = numberValue(session.analytics?.loggedSetCount, 0);
     const fallbackExerciseCount =
       numberValue(session.analytics?.exerciseCount, null) ??
@@ -4461,7 +4595,7 @@ function buildProgressSessionSummaries(sessions, setRecords) {
       date: session.date,
       dayName: session.dayName ?? session.dayFocus ?? "Workout",
       sessionRpe: numberValue(session.sessionRpe, null),
-      readiness: session.readiness ?? session.readinessSnapshot?.readiness ?? null,
+      readiness,
       completedSetCount: completedRecords.length || fallbackLoggedSets,
       exerciseCount: completedRecords.length
         ? new Set(completedRecords.map((record) => record.exerciseKey)).size
@@ -4471,9 +4605,251 @@ function buildProgressSessionSummaries(sessions, setRecords) {
         0,
       ),
       totalVolume: weightedRecords.reduce((total, record) => total + record.weight * record.reps, 0),
+      bestEstimatedStrength: estimatedRecords.length
+        ? Math.max(...estimatedRecords.map((record) => record.estimatedOneRepMax))
+        : null,
       weightedSetCount: weightedRecords.length,
     };
   });
+}
+
+function getSessionReadinessForProgress(session, readinessByDate = {}) {
+  if (session?.readiness?.status) {
+    return session.readiness;
+  }
+
+  if (session?.readinessSnapshot?.readiness?.status) {
+    return session.readinessSnapshot.readiness;
+  }
+
+  if (session?.wellness) {
+    return interpretWellness(session.wellness);
+  }
+
+  const readinessDate = session?.readinessDate;
+  const dateKey = session?.date ? getLocalDateKey(new Date(session.date)) : null;
+  const linkedEntry = readinessByDate?.[readinessDate] ?? readinessByDate?.[dateKey];
+
+  if (linkedEntry?.readiness?.status) {
+    return linkedEntry.readiness;
+  }
+
+  if (linkedEntry?.wellness) {
+    return interpretWellness(linkedEntry.wellness);
+  }
+
+  return null;
+}
+
+function buildReadinessPerformanceAnalytics(sessionSummaries) {
+  const statusCounts = { green: 0, yellow: 0, red: 0, missing: 0 };
+  const linkedSessions = [];
+
+  (sessionSummaries ?? []).forEach((session) => {
+    const status = session.readiness?.status;
+
+    if (status === "green" || status === "yellow" || status === "red") {
+      statusCounts[status] += 1;
+      linkedSessions.push(session);
+      return;
+    }
+
+    statusCounts.missing += 1;
+  });
+
+  const readinessScores = linkedSessions
+    .map((session) => session.readiness?.averageScore)
+    .filter(Number.isFinite);
+  const averageReadiness = average(readinessScores);
+  const rpeByStatus = buildReadinessRpeGroups(linkedSessions);
+  const highFatigueSessions = linkedSessions.filter(
+    (session) =>
+      (session.readiness?.status === "red" || session.readiness?.status === "yellow") &&
+      Number.isFinite(session.sessionRpe) &&
+      session.sessionRpe >= 9,
+  );
+  const bestPerformance = getBestReadinessPerformanceDay(linkedSessions);
+  const linkedSessionCount = linkedSessions.length;
+  const lowReadinessRpe = average(
+    linkedSessions
+      .filter((session) => session.readiness?.status === "red" || session.readiness?.status === "yellow")
+      .map((session) => session.sessionRpe)
+      .filter(Number.isFinite),
+  );
+  const greenReadinessRpe = rpeByStatus.green.averageRpe;
+
+  return {
+    linkedSessionCount,
+    statusCounts,
+    averageReadiness,
+    averageReadinessDetail: linkedSessionCount
+      ? `${linkedSessionCount} sessions have readiness linked`
+      : "No readiness-linked workouts yet.",
+    rpeByStatus,
+    highFatigueCount: highFatigueSessions.length,
+    highFatigueDetail: highFatigueSessions.length
+      ? "Red/yellow readiness with session RPE 9+."
+      : linkedSessionCount
+        ? "No low-readiness + RPE 9+ sessions found."
+        : "Needs readiness plus session RPE.",
+    bestPerformance,
+    performanceNote: buildReadinessPerformanceNote({
+      linkedSessionCount,
+      lowReadinessRpe,
+      greenReadinessRpe,
+      highFatigueCount: highFatigueSessions.length,
+      bestPerformance,
+    }),
+    ...buildReadinessCoachNote({
+      linkedSessionCount,
+      lowReadinessRpe,
+      greenReadinessRpe,
+      highFatigueCount: highFatigueSessions.length,
+    }),
+  };
+}
+
+function buildReadinessRpeGroups(linkedSessions) {
+  return ["green", "yellow", "red"].reduce((groups, status) => {
+    const sessions = linkedSessions.filter((session) => session.readiness?.status === status);
+    const rpes = sessions.map((session) => session.sessionRpe).filter(Number.isFinite);
+
+    groups[status] = {
+      count: sessions.length,
+      rpeCount: rpes.length,
+      averageRpe: average(rpes),
+    };
+
+    return groups;
+  }, {});
+}
+
+function getBestReadinessPerformanceDay(linkedSessions) {
+  const candidates = linkedSessions
+    .map((session) => {
+      const metric = getSessionPerformanceMetric(session);
+      return metric.value > 0 ? { session, metric } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.metric.value - left.metric.value);
+  const best = candidates[0];
+
+  if (!best) {
+    return null;
+  }
+
+  const copy = getReadinessCopy(best.session.readiness);
+  const readinessAverage = Number.isFinite(best.session.readiness?.averageScore)
+    ? ` ${best.session.readiness.averageScore.toFixed(1)}/5`
+    : "";
+
+  return {
+    label: formatProgressDate(best.session.date),
+    detail: `${best.metric.label}: ${best.metric.formatted} | ${copy.label}${readinessAverage}`,
+  };
+}
+
+function getSessionPerformanceMetric(session) {
+  if (Number.isFinite(session.bestEstimatedStrength) && session.bestEstimatedStrength > 0) {
+    return {
+      label: "Best e1RM",
+      value: session.bestEstimatedStrength,
+      formatted: formatKg(session.bestEstimatedStrength),
+    };
+  }
+
+  if (Number.isFinite(session.totalVolume) && session.totalVolume > 0) {
+    return {
+      label: "Volume",
+      value: session.totalVolume,
+      formatted: formatVolume(session.totalVolume),
+    };
+  }
+
+  if (Number.isFinite(session.totalReps) && session.totalReps > 0) {
+    return {
+      label: "Total reps",
+      value: session.totalReps,
+      formatted: `${formatPlainNumber(session.totalReps)} reps`,
+    };
+  }
+
+  if (Number.isFinite(session.completedSetCount) && session.completedSetCount > 0) {
+    return {
+      label: "Completed sets",
+      value: session.completedSetCount,
+      formatted: `${session.completedSetCount} sets`,
+    };
+  }
+
+  return { label: "Performance", value: 0, formatted: "No data" };
+}
+
+function buildReadinessPerformanceNote({
+  linkedSessionCount,
+  lowReadinessRpe,
+  greenReadinessRpe,
+  highFatigueCount,
+  bestPerformance,
+}) {
+  if (linkedSessionCount < 2) {
+    return "Not enough readiness-linked sessions yet. Log readiness before training and session RPE after training.";
+  }
+
+  if (
+    Number.isFinite(lowReadinessRpe) &&
+    Number.isFinite(greenReadinessRpe) &&
+    lowReadinessRpe >= greenReadinessRpe + 0.5
+  ) {
+    return "Low readiness days tended to have higher RPE. Useful signal, not proof of causation.";
+  }
+
+  if (highFatigueCount > 0) {
+    return "Some lower-readiness days also hit very high session RPE. Watch fatigue before forcing progression.";
+  }
+
+  if (bestPerformance) {
+    return "Best performance day is shown with its readiness context. Keep collecting data before reading patterns too hard.";
+  }
+
+  return "Readiness-linked sessions exist, but no strong pattern is clear yet.";
+}
+
+function buildReadinessCoachNote({
+  linkedSessionCount,
+  lowReadinessRpe,
+  greenReadinessRpe,
+  highFatigueCount,
+}) {
+  if (linkedSessionCount < 2) {
+    return {
+      coachNoteTitle: "Not enough data",
+      coachNote: "Add readiness to more workouts before judging recovery patterns.",
+    };
+  }
+
+  if (highFatigueCount > 0) {
+    return {
+      coachNoteTitle: "Watch fatigue",
+      coachNote: "Low readiness plus RPE 9+ showed up. Keep hard days earned, not forced.",
+    };
+  }
+
+  if (
+    Number.isFinite(lowReadinessRpe) &&
+    Number.isFinite(greenReadinessRpe) &&
+    lowReadinessRpe >= greenReadinessRpe + 0.5
+  ) {
+    return {
+      coachNoteTitle: "Readiness matters",
+      coachNote: "Lower readiness is lining up with harder sessions. Use conservative jumps on those days.",
+    };
+  }
+
+  return {
+    coachNoteTitle: "Pattern stable",
+    coachNote: "Readiness and fatigue look manageable with the data available.",
+  };
 }
 
 function getBestRecentSet(completedSets, now, windowDays) {
