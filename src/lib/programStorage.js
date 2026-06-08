@@ -1,9 +1,14 @@
-import { workoutProgram } from "../config/workoutProgram.js";
+import {
+  athleticAestheticBasketballProgram,
+  workoutProgram,
+} from "../config/workoutProgram.js";
 import { exerciseLibraryContentBatches } from "../data/exerciseLibraryContent.js";
 import { readStorage, STORAGE_KEYS, writeStorage } from "./storage.js";
 
 export const PROGRAM_STORAGE_VERSION = 1;
 export const DEFAULT_PROGRAM_ID = "default-athletic-bodybuilding-rpe";
+export const ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID =
+  "default-athletic-aesthetic-basketball";
 
 function nowIso() {
   return new Date().toISOString();
@@ -165,10 +170,23 @@ function createLibraryExercise(exercise) {
 }
 
 function getLegacyExerciseConfig(exerciseId) {
-  for (const day of workoutProgram.days) {
-    const exercise = day.exercises.find((entry) => entry.id === exerciseId);
-    if (exercise) {
-      return exercise;
+  for (const program of [workoutProgram, athleticAestheticBasketballProgram]) {
+    for (const day of program.days) {
+      const exercise = day.exercises.find((entry) => entry.id === exerciseId);
+      if (exercise) {
+        return exercise;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getLegacyDayConfig(dayId) {
+  for (const program of [workoutProgram, athleticAestheticBasketballProgram]) {
+    const day = program.days.find((entry) => entry.id === dayId);
+    if (day) {
+      return day;
     }
   }
 
@@ -189,14 +207,56 @@ function getRepsLabel(targetReps = {}) {
   return "custom";
 }
 
-function buildDefaultProgramSeed(createdAt = nowIso()) {
+function normalizeWarmupItem(item, index) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const name = String(item.name ?? "").trim();
+  const prescription = String(item.prescription ?? "").trim();
+  const notes = String(item.notes ?? "").trim();
+  const videoUrl = String(item.videoUrl ?? item.video_url ?? "").trim();
+
+  if (!name && !prescription) {
+    return null;
+  }
+
+  return {
+    id: String(item.id ?? `warmup-${index + 1}`).trim() || `warmup-${index + 1}`,
+    name,
+    prescription,
+    notes,
+    videoUrl,
+  };
+}
+
+function normalizeWarmup(warmup) {
+  if (!warmup || typeof warmup !== "object") {
+    return null;
+  }
+
+  const items = asArray(warmup.items)
+    .map((item, index) => normalizeWarmupItem(item, index))
+    .filter(Boolean);
+
+  if (!items.length) {
+    return null;
+  }
+
+  return {
+    title: String(warmup.title ?? "").trim() || "Warm-up & Activation",
+    items,
+  };
+}
+
+function buildProgramSeedFromConfig(programConfig, options, createdAt = nowIso()) {
   const program = {
-    id: DEFAULT_PROGRAM_ID,
-    name: workoutProgram.name,
-    nickname: "Athletic Program",
-    description: "Default preloaded athletic bodybuilding program.",
-    goal: "Athletic bodybuilding with RPE-based progression",
-    isDefault: true,
+    id: options.programId,
+    name: programConfig.name,
+    nickname: options.nickname ?? programConfig.nickname ?? "",
+    description: options.description ?? programConfig.description ?? "",
+    goal: options.goal ?? programConfig.goal ?? "",
+    isDefault: Boolean(options.isDefault),
     isArchived: false,
     createdAt,
     updatedAt: createdAt,
@@ -209,7 +269,7 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
   const progressions = [];
   const seenExerciseIds = new Set();
 
-  workoutProgram.days.forEach((day, dayIndex) => {
+  programConfig.days.forEach((day, dayIndex) => {
     const programDay = {
       id: day.id,
       programId: program.id,
@@ -217,6 +277,20 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
       focus: day.focus,
       orderIndex: dayIndex,
     };
+    const warmup = normalizeWarmup(day.warmup);
+
+    if (warmup) {
+      programDay.warmup = warmup;
+    }
+
+    if (day.isOptional) {
+      programDay.isOptional = true;
+    }
+
+    if (day.notes) {
+      programDay.notes = day.notes;
+    }
+
     const section = {
       id: makeSectionId(program.id, day.id),
       programId: program.id,
@@ -249,9 +323,9 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
         targetWeight: exercise.recommendedWeight,
         targetRPE: exercise.targetRPE,
         restTime: exercise.restSeconds,
-        notes: "",
+        notes: exercise.notes ?? "",
         type: exercise.progressionType,
-        isOptional: false,
+        isOptional: Boolean(exercise.isOptional),
       });
 
       baselines.push({
@@ -283,7 +357,7 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
   const programState = {
     programId: program.id,
     lastCompletedDayId: null,
-    nextRecommendedDayId: workoutProgram.cycleOrder[0] ?? null,
+    nextRecommendedDayId: programConfig.cycleOrder[0] ?? programConfig.days[0]?.id ?? null,
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -300,6 +374,34 @@ function buildDefaultProgramSeed(createdAt = nowIso()) {
     programState,
     progressions,
   };
+}
+
+function buildDefaultProgramSeed(createdAt = nowIso()) {
+  return buildProgramSeedFromConfig(
+    workoutProgram,
+    {
+      programId: DEFAULT_PROGRAM_ID,
+      nickname: "Athletic Program",
+      description: "Default preloaded athletic bodybuilding program.",
+      goal: "Athletic bodybuilding with RPE-based progression",
+      isDefault: true,
+    },
+    createdAt,
+  );
+}
+
+function buildAthleticAestheticBasketballProgramSeed(createdAt = nowIso()) {
+  return buildProgramSeedFromConfig(
+    athleticAestheticBasketballProgram,
+    {
+      programId: ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID,
+      nickname: athleticAestheticBasketballProgram.nickname ?? "Athletic Aesthetic",
+      description: athleticAestheticBasketballProgram.description,
+      goal: athleticAestheticBasketballProgram.goal,
+      isDefault: true,
+    },
+    createdAt,
+  );
 }
 
 function ensureProgramStorageMeta(seedTime) {
@@ -337,12 +439,23 @@ function getProgramDisplayNickname(program) {
   }
 
   if (
+    program?.id === ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID ||
+    program?.name === athleticAestheticBasketballProgram.name ||
+    String(program?.name ?? "").includes("Athletic Aesthetic Basketball")
+  ) {
+    return "Athletic Aesthetic";
+  }
+
+  if (
     program?.id === DEFAULT_PROGRAM_ID ||
-    program?.isDefault ||
     program?.name === workoutProgram.name ||
     String(program?.name ?? "").includes("Athletic Bodybuilding")
   ) {
     return "Athletic Program";
+  }
+
+  if (program?.isDefault) {
+    return program?.name ?? "Default Program";
   }
 
   return program?.name ?? "Program";
@@ -426,42 +539,134 @@ function mergeExerciseLibraryContent(seedLibraryExercises) {
   return didChange;
 }
 
+function backfillDefaultProgramWarmups() {
+  const sourceWarmupsByDayId = new Map(
+    workoutProgram.days
+      .map((day) => [day.id, normalizeWarmup(day.warmup)])
+      .filter(([, warmup]) => warmup),
+  );
+
+  if (!sourceWarmupsByDayId.size) {
+    return false;
+  }
+
+  const programDays = asArray(readStorage(STORAGE_KEYS.programDays, []));
+  let didChange = false;
+  const nextProgramDays = programDays.map((day) => {
+    if (
+      day.programId !== DEFAULT_PROGRAM_ID ||
+      Object.prototype.hasOwnProperty.call(day, "warmup")
+    ) {
+      return day;
+    }
+
+    const sourceWarmup = sourceWarmupsByDayId.get(day.id);
+
+    if (!sourceWarmup) {
+      return day;
+    }
+
+    didChange = true;
+    return {
+      ...day,
+      warmup: sourceWarmup,
+    };
+  });
+
+  if (didChange) {
+    writeStorage(STORAGE_KEYS.programDays, nextProgramDays);
+  }
+
+  return didChange;
+}
+
+function seedProgramIfMissing(seed) {
+  const programs = getPrograms();
+
+  if (programs.some((program) => program.id === seed.program.id)) {
+    return false;
+  }
+
+  writeStorage(STORAGE_KEYS.programs, mergeById(programs, [seed.program]));
+  writeStorage(
+    STORAGE_KEYS.programDays,
+    mergeById(readStorage(STORAGE_KEYS.programDays, []), seed.days),
+  );
+  writeStorage(
+    STORAGE_KEYS.programSections,
+    mergeById(readStorage(STORAGE_KEYS.programSections, []), seed.sections),
+  );
+  writeStorage(
+    STORAGE_KEYS.exerciseLibrary,
+    mergeById(readStorage(STORAGE_KEYS.exerciseLibrary, []), seed.libraryExercises),
+  );
+  writeStorage(
+    STORAGE_KEYS.programExercises,
+    mergeById(readStorage(STORAGE_KEYS.programExercises, []), seed.programExercises),
+  );
+  writeStorage(
+    STORAGE_KEYS.baselines,
+    mergeById(readStorage(STORAGE_KEYS.baselines, []), seed.baselines),
+  );
+  writeStorage(
+    STORAGE_KEYS.programProgressions,
+    mergeById(readStorage(STORAGE_KEYS.programProgressions, []), seed.progressions),
+  );
+  writeProgramStates(mergeById(getProgramStates(), [seed.programState]));
+  mergeExerciseLibraryContent(seed.libraryExercises);
+
+  return true;
+}
+
 export function seedDefaultProgramIfNeeded() {
   const seedTime = nowIso();
   const existingPrograms = getPrograms();
   const seed = buildDefaultProgramSeed(seedTime);
+  const basketballSeed = buildAthleticAestheticBasketballProgramSeed(seedTime);
 
   ensureProgramStorageMeta(seedTime);
 
   if (!existingPrograms.length) {
-    writeStorage(STORAGE_KEYS.programs, mergeById(existingPrograms, [seed.program]));
+    writeStorage(STORAGE_KEYS.programs, mergeById(existingPrograms, [seed.program, basketballSeed.program]));
     writeStorage(
       STORAGE_KEYS.programDays,
-      mergeById(readStorage(STORAGE_KEYS.programDays, []), seed.days),
+      mergeById(readStorage(STORAGE_KEYS.programDays, []), [...seed.days, ...basketballSeed.days]),
     );
     writeStorage(
       STORAGE_KEYS.programSections,
-      mergeById(readStorage(STORAGE_KEYS.programSections, []), seed.sections),
+      mergeById(
+        readStorage(STORAGE_KEYS.programSections, []),
+        [...seed.sections, ...basketballSeed.sections],
+      ),
     );
     writeStorage(
       STORAGE_KEYS.exerciseLibrary,
-      mergeById(readStorage(STORAGE_KEYS.exerciseLibrary, []), seed.libraryExercises),
+      mergeById(
+        readStorage(STORAGE_KEYS.exerciseLibrary, []),
+        [...seed.libraryExercises, ...basketballSeed.libraryExercises],
+      ),
     );
     writeStorage(
       STORAGE_KEYS.programExercises,
-      mergeById(readStorage(STORAGE_KEYS.programExercises, []), seed.programExercises),
+      mergeById(
+        readStorage(STORAGE_KEYS.programExercises, []),
+        [...seed.programExercises, ...basketballSeed.programExercises],
+      ),
     );
     writeStorage(
       STORAGE_KEYS.baselines,
-      mergeById(readStorage(STORAGE_KEYS.baselines, []), seed.baselines),
+      mergeById(readStorage(STORAGE_KEYS.baselines, []), [...seed.baselines, ...basketballSeed.baselines]),
     );
     writeStorage(
       STORAGE_KEYS.programProgressions,
-      mergeById(readStorage(STORAGE_KEYS.programProgressions, []), seed.progressions),
+      mergeById(
+        readStorage(STORAGE_KEYS.programProgressions, []),
+        [...seed.progressions, ...basketballSeed.progressions],
+      ),
     );
-    writeProgramStates(mergeById(getProgramStates(), [seed.programState]));
+    writeProgramStates(mergeById(getProgramStates(), [seed.programState, basketballSeed.programState]));
     writeStorage(STORAGE_KEYS.activeProgramId, seed.program.id);
-    mergeExerciseLibraryContent(seed.libraryExercises);
+    mergeExerciseLibraryContent([...seed.libraryExercises, ...basketballSeed.libraryExercises]);
 
     return {
       seeded: true,
@@ -495,6 +700,8 @@ export function seedDefaultProgramIfNeeded() {
     writeStorage(STORAGE_KEYS.programs, nextPrograms);
   }
 
+  backfillDefaultProgramWarmups();
+  seedProgramIfMissing(basketballSeed);
   mergeExerciseLibraryContent(seed.libraryExercises);
 
   return {
@@ -853,13 +1060,21 @@ export function getProgramDayViewModels(programId) {
         isOptional: Boolean(programExercise.isOptional),
       };
     });
-    const legacyDay = workoutProgram.days.find((entry) => entry.id === day.id);
+    const legacyDay = getLegacyDayConfig(day.id);
+    const warmup =
+      normalizeWarmup(day.warmup) ??
+      ([DEFAULT_PROGRAM_ID, ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID].includes(day.programId)
+        ? normalizeWarmup(legacyDay?.warmup)
+        : null);
 
     return {
       ...day,
       shortName: legacyDay?.shortName ?? day.name,
       type: exercises.length ? "training" : "recovery",
       activities: legacyDay?.activities ?? [],
+      warmup,
+      notes: day.notes ?? legacyDay?.notes ?? "",
+      isOptional: Boolean(day.isOptional ?? legacyDay?.isOptional),
       sections,
       exercises,
     };

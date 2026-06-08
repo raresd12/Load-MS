@@ -933,6 +933,18 @@ function CheckVideoLink({ exercise, className = "", emptyLabel = "Check Video no
   );
 }
 
+function getWarmupItems(day) {
+  return (day?.warmup?.items ?? [])
+    .map((item, index) => ({
+      id: formatTechnicalValue(item?.id) || `warmup-${index + 1}`,
+      name: formatTechnicalValue(item?.name),
+      prescription: formatTechnicalValue(item?.prescription),
+      notes: formatTechnicalValue(item?.notes),
+      videoUrl: formatTechnicalValue(item?.videoUrl) || formatTechnicalValue(item?.video_url),
+    }))
+    .filter((item) => item.name || item.prescription);
+}
+
 export default function App() {
   const [sessions, setSessions] = useLocalStorageState(STORAGE_KEYS.sessions, []);
   const [nextPlans, setNextPlans] = useLocalStorageState(STORAGE_KEYS.nextPlans, {});
@@ -1884,6 +1896,7 @@ function WorkoutsPage({
               <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
               <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
             </div>
+            <WorkoutWarmupPanel day={day} />
 
             {sections.map((section) => {
               const sectionExercises = day.exercises.filter((exercise) =>
@@ -1927,6 +1940,57 @@ function WorkoutsPage({
   );
 }
 
+function WorkoutWarmupPanel({ day }) {
+  const warmupItems = getWarmupItems(day);
+
+  if (!warmupItems.length) {
+    return null;
+  }
+
+  return (
+    <details className="rounded-[8px] border border-zinc-800 bg-zinc-900">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 min-[430px]:px-4">
+        <span className="min-w-0">
+          <span className="block text-xs font-black uppercase tracking-[0.16em] text-lime-300">
+            {formatTechnicalValue(day.warmup?.title) || "Warm-up & Activation"}
+          </span>
+          <span className="mt-1 block text-sm font-semibold text-zinc-400">
+            {warmupItems.length} quick {warmupItems.length === 1 ? "item" : "items"} before training
+          </span>
+        </span>
+        <ChevronDown aria-hidden="true" size={18} className="shrink-0 text-zinc-500" />
+      </summary>
+      <div className="space-y-2 border-t border-zinc-800 p-3 min-[430px]:p-4">
+        {warmupItems.map((item) => (
+          <div key={item.id} className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+            <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-start min-[430px]:justify-between">
+              <div className="min-w-0">
+                <p className="font-black text-white">{item.name || "Warm-up item"}</p>
+                {item.prescription && (
+                  <p className="mt-1 text-sm font-black text-lime-100">{item.prescription}</p>
+                )}
+              </div>
+              {item.videoUrl && (
+                <a
+                  href={item.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="focus-ring inline-flex min-h-9 w-fit items-center rounded-[8px] text-sm font-black text-sky-300 underline underline-offset-4 hover:text-sky-200"
+                >
+                  Check Video
+                </a>
+              )}
+            </div>
+            {item.notes && (
+              <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">{item.notes}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelectDay }) {
   return (
     <section className="space-y-3">
@@ -1956,11 +2020,18 @@ function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelec
                   <p className="text-sm font-black text-white">{day.name}</p>
                   <p className="mt-1 text-xs font-semibold text-zinc-400">{day.focus}</p>
                 </div>
-                {isSelected && (
-                  <span className="rounded-[8px] bg-lime-300 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">
-                    Selected
-                  </span>
-                )}
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  {day.isOptional && (
+                    <span className="rounded-[8px] border border-amber-300/60 bg-amber-300/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-amber-100">
+                      Optional
+                    </span>
+                  )}
+                  {isSelected && (
+                    <span className="rounded-[8px] bg-lime-300 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">
+                      Selected
+                    </span>
+                  )}
+                </div>
               </div>
               {isNextRecommended && (
                 <p className="mt-2 text-xs font-black uppercase tracking-[0.08em] text-amber-200">
