@@ -4029,7 +4029,8 @@ function ExerciseProgressPanel({ exercise, stats }) {
 
   if (!stats.completedSets.length) {
     return (
-      <div className="mt-4">
+      <div className="mt-4 space-y-3">
+        <ExerciseDetailCard exercise={exercise} stats={stats} />
         <ProgressEmptyState
           title="No logged sets for this exercise yet."
           body="It can still appear here from the active program. Log sets to unlock trends."
@@ -4045,6 +4046,8 @@ function ExerciseProgressPanel({ exercise, stats }) {
 
   return (
     <div className="mt-4 space-y-4">
+      <ExerciseDetailCard exercise={exercise} stats={stats} />
+
       <div className="grid gap-3 min-[430px]:grid-cols-2 xl:grid-cols-3">
         <ProgressStatCard
           label="Latest logged session"
@@ -4118,6 +4121,66 @@ function ExerciseProgressPanel({ exercise, stats }) {
   );
 }
 
+function ExerciseDetailCard({ exercise, stats }) {
+  const trend = stats.trendInfo;
+  const latestSession = stats.latestSession;
+
+  return (
+    <article className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3 min-[430px]:p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-lime-300">
+            Exercise Detail
+          </p>
+          <h4 className="mt-1 break-words text-xl font-black text-white">{exercise.name}</h4>
+          <p className="mt-1 text-xs font-semibold leading-5 text-zinc-500">
+            {exercise.programName ?? "Logged exercise"}
+            {exercise.dayName ? ` | ${exercise.dayName}` : ""}
+          </p>
+        </div>
+        <span className={`w-fit rounded-[8px] px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] ${trend.toneClass}`}>
+          {trend.label}
+        </span>
+      </div>
+
+      <p className="mt-3 text-sm font-semibold leading-6 text-zinc-300">{trend.body}</p>
+
+      <div className="mt-3 grid gap-2 min-[430px]:grid-cols-2 xl:grid-cols-4">
+        <ExerciseDetailMetric
+          label="Latest"
+          value={latestSession ? formatProgressDate(latestSession.date) : "No data"}
+          detail={latestSession?.setSummary ?? "No logged session yet."}
+        />
+        <ExerciseDetailMetric
+          label="Best set"
+          value={stats.bestSet ? formatSetPerformance(stats.bestSet) : "No set yet"}
+          detail={stats.bestSet?.estimatedOneRepMax ? `e1RM ${formatKg(stats.bestSet.estimatedOneRepMax)}` : "No valid e1RM for BW/missing kg."}
+        />
+        <ExerciseDetailMetric
+          label="Recent reps"
+          value={stats.repsTrend.value}
+          detail={stats.repsTrend.detail}
+        />
+        <ExerciseDetailMetric
+          label="Avg set RPE"
+          value={formatAverage(stats.averageSetRpe)}
+          detail={stats.completedSets.length ? `${stats.completedSets.length} completed sets` : "No RPE data yet."}
+        />
+      </div>
+    </article>
+  );
+}
+
+function ExerciseDetailMetric({ label, value, detail }) {
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">{label}</p>
+      <p className="mt-1 break-words text-sm font-black text-white">{value}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">{detail}</p>
+    </div>
+  );
+}
+
 function ProgressStatCard({ label, value, detail }) {
   return (
     <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
@@ -4153,11 +4216,22 @@ function ExerciseTrendRow({ entry, maxValue }) {
 
   return (
     <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
-      <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
+      <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-start min-[430px]:justify-between">
         <p className="text-sm font-black text-white">{formatProgressDate(entry.date)}</p>
-        <p className="text-xs font-semibold text-zinc-400">
-          {entry.setSummary} | Avg RPE {formatAverage(entry.averageRpe)}
+        <p className="text-xs font-semibold leading-5 text-zinc-400 min-[430px]:text-right">
+          Total {entry.totalReps} reps | Avg RPE {formatAverage(entry.averageRpe)}
         </p>
+      </div>
+      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-300">{entry.setSummary}</p>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-2 py-1 text-[11px] font-black text-zinc-300">
+          Best: {formatBestWeightReps(entry.bestSet)}
+        </span>
+        {entry.totalVolume > 0 && (
+          <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-2 py-1 text-[11px] font-black text-zinc-300">
+            Volume {formatVolume(entry.totalVolume)}
+          </span>
+        )}
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
         <div
@@ -4997,6 +5071,7 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
   );
   const repsTrend = buildExerciseMetricTrend(recentSessions, "totalReps", formatPlainNumber, "reps");
   const volumeTrend = buildExerciseMetricTrend(recentSessions, "totalVolume", formatVolume);
+  const trendInfo = buildExerciseProgressTrend(recentSessions);
 
   return {
     completedSets,
@@ -5011,8 +5086,73 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
     recentSessions,
     repsTrend,
     volumeTrend,
+    trendInfo,
     trendMaxValue: Math.max(0, ...trendValues),
   };
+}
+
+function buildExerciseProgressTrend(recentSessions) {
+  const usefulSessions = recentSessions.filter((entry) => {
+    const metric = getExerciseTrendMetric(entry);
+    return Number.isFinite(metric.value) && metric.value > 0;
+  });
+
+  if (usefulSessions.length < 2) {
+    return {
+      label: "Not enough data",
+      body: "Log at least two useful sessions before reading the trend.",
+      status: "not_enough_data",
+      toneClass: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+    };
+  }
+
+  const latest = usefulSessions[0];
+  const previous = usefulSessions[1];
+  const latestMetric = getExerciseTrendMetric(latest);
+  const previousMetric = getExerciseTrendMetric(previous);
+  const change = latestMetric.value - previousMetric.value;
+  const threshold = Math.max(1, Math.abs(previousMetric.value) * 0.03);
+  const rpeIsHigh = Number.isFinite(latest.averageRpe) && latest.averageRpe >= 8.5;
+
+  if (change > threshold) {
+    return {
+      label: "Improving",
+      body: `${latestMetric.label} improved versus last time. Keep building without forcing jumps.`,
+      status: "improving",
+      toneClass: "border border-lime-300/30 bg-lime-300/10 text-lime-100",
+    };
+  }
+
+  if (change < -threshold && rpeIsHigh) {
+    return {
+      label: "Regressing",
+      body: "Performance dipped while RPE was high. Treat this as a fatigue warning, not a panic signal.",
+      status: "regressing",
+      toneClass: "border border-amber-300/30 bg-amber-300/10 text-amber-100",
+    };
+  }
+
+  return {
+    label: "Stable",
+    body:
+      change < -threshold
+        ? "Performance dipped, but RPE was not clearly high. Watch the next session before reacting."
+        : "Recent sessions look similar. Keep chasing clean reps or better control.",
+    status: "stable",
+    toneClass: "border border-sky-300/30 bg-sky-300/10 text-sky-100",
+  };
+}
+
+function getExerciseTrendMetric(entry) {
+  if (Number.isFinite(entry.bestEstimatedStrength) && entry.bestEstimatedStrength > 0) {
+    return { label: "Estimated strength", value: entry.bestEstimatedStrength };
+  }
+
+  if (Number.isFinite(entry.totalVolume) && entry.totalVolume > 0) {
+    return { label: "Volume", value: entry.totalVolume };
+  }
+
+  return { label: "Total reps", value: entry.totalReps };
 }
 
 function buildExerciseMetricTrend(recentSessions, field, formatter, suffix = "") {
@@ -5084,10 +5224,12 @@ function buildExerciseSessionSummaries(records) {
       const bestEstimatedStrength = weightedSets.length
         ? Math.max(...weightedSets.map((set) => set.estimatedOneRepMax ?? 0))
         : null;
+      const bestSet = [...sets].sort(compareBestSet)[0] ?? null;
 
       return {
         ...entry,
         sets,
+        bestSet,
         totalReps,
         totalVolume,
         bestEstimatedStrength,
@@ -5275,6 +5417,24 @@ function formatSetPerformance(set) {
   const rpeText = Number.isFinite(set.rpe) ? ` @ RPE ${set.rpe}` : "";
 
   return `${weightText} x ${repsText}${rpeText}`;
+}
+
+function formatBestWeightReps(set) {
+  if (!set) {
+    return "No set";
+  }
+
+  const repsText = Number.isFinite(set.reps) ? `${set.reps} reps` : "No reps";
+
+  if (typeof set.weight === "number") {
+    return `${formatKg(set.weight)} x ${repsText}`;
+  }
+
+  if (set.weight === "BW") {
+    return `BW x ${repsText}`;
+  }
+
+  return repsText;
 }
 
 function NextPlanPage({ selectedDay, selectedDayId, nextPlans, lastGeneratedPlan }) {
