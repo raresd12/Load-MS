@@ -2111,7 +2111,9 @@ function WorkoutExerciseCard({
             </span>
           )}
         </div>
-        <h3 className="text-base font-black text-white sm:mt-2 sm:text-lg">{exercise.name}</h3>
+        <h3 className="break-words text-xl font-black leading-tight text-white sm:mt-3 sm:text-2xl">
+          {exercise.name}
+        </h3>
         <p className="mt-1 hidden text-sm font-semibold text-zinc-400 sm:block">
           {exercise.muscleGroup || exercise.equipment}
         </p>
@@ -2662,6 +2664,7 @@ function WorkoutLogPage({
 function SettingsPage() {
   const fileInputRef = useRef(null);
   const [exportMessage, setExportMessage] = useState("");
+  const [exportError, setExportError] = useState("");
   const [importError, setImportError] = useState("");
   const [importMessage, setImportMessage] = useState("");
   const [pendingImport, setPendingImport] = useState(null);
@@ -2671,21 +2674,28 @@ function SettingsPage() {
   const trackedKeys = getTrackedStorageKeys();
 
   function handleExportData() {
-    const backup = createLocalBackup();
-    const fileName = `rpe-tracker-backup-${getLocalDateKey()}.json`;
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {
-      type: "application/json",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
+    setExportMessage("");
+    setExportError("");
 
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(url);
-    setExportMessage(`Exported ${Object.keys(backup.data).length} data groups.`);
+    try {
+      const backup = createLocalBackup();
+      const fileName = `rpe-tracker-backup-${getLocalDateKey()}.json`;
+      const blob = new Blob([JSON.stringify(backup, null, 2)], {
+        type: "application/json",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setExportMessage(`Exported ${Object.keys(backup.data).length} data groups.`);
+    } catch {
+      setExportError("Could not export local data. Try again after refreshing the app.");
+    }
   }
 
   async function handleImportFile(event) {
@@ -2743,7 +2753,13 @@ function SettingsPage() {
       return;
     }
 
-    resetLocalAppData();
+    const result = resetLocalAppData();
+
+    if (!result.ok) {
+      setResetMessage(result.error);
+      return;
+    }
+
     setResetMessage("Local app data reset. Reloading default program...");
     window.setTimeout(() => window.location.reload(), 700);
   }
@@ -2779,6 +2795,11 @@ function SettingsPage() {
         {exportMessage && (
           <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
             {exportMessage}
+          </p>
+        )}
+        {exportError && (
+          <p className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+            {exportError}
           </p>
         )}
       </section>

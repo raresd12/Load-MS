@@ -39,12 +39,47 @@ export function readStorage(key, fallbackValue) {
   }
 }
 
-export function writeStorage(key, value) {
-  if (typeof window === "undefined") {
-    return;
+function getStorageErrorMessage(error, fallbackMessage) {
+  if (error?.name === "QuotaExceededError") {
+    return "Browser storage is full. Export a backup, then free browser storage before saving more data.";
   }
 
-  window.localStorage.setItem(key, JSON.stringify(value));
+  return error?.message ? `${fallbackMessage} ${error.message}` : fallbackMessage;
+}
+
+function warnStorageError(message, error) {
+  console.warn(`[RPE Tracker storage] ${message}`, error);
+}
+
+function serializeStorageValue(value) {
+  try {
+    return { ok: true, serialized: JSON.stringify(value) };
+  } catch (error) {
+    const message = getStorageErrorMessage(error, "Could not prepare app data for local storage.");
+    warnStorageError(message, error);
+    return { ok: false, error: message };
+  }
+}
+
+export function writeStorage(key, value) {
+  if (typeof window === "undefined") {
+    return { ok: false, error: "Local storage is not available." };
+  }
+
+  const serialized = serializeStorageValue(value);
+
+  if (!serialized.ok) {
+    return serialized;
+  }
+
+  try {
+    window.localStorage.setItem(key, serialized.serialized);
+    return { ok: true };
+  } catch (error) {
+    const message = getStorageErrorMessage(error, `Could not save ${key} to local storage.`);
+    warnStorageError(message, error);
+    return { ok: false, error: message };
+  }
 }
 
 function readRawStorageValue(key) {
@@ -52,7 +87,14 @@ function readRawStorageValue(key) {
     return undefined;
   }
 
-  const stored = window.localStorage.getItem(key);
+  let stored;
+
+  try {
+    stored = window.localStorage.getItem(key);
+  } catch (error) {
+    warnStorageError(`Could not read ${key} from local storage.`, error);
+    return undefined;
+  }
 
   if (stored === null) {
     return undefined;
@@ -114,6 +156,36 @@ export function validateLocalBackup(backup) {
   };
 }
 
+function snapshotTrackedStorageValues(keys) {
+  return keys.map((key) => {
+    try {
+      return [key, window.localStorage.getItem(key)];
+    } catch (error) {
+      warnStorageError(`Could not snapshot ${key} before restore.`, error);
+      return [key, null];
+    }
+  });
+}
+
+function rollbackTrackedStorageValues(snapshot) {
+  try {
+    getTrackedStorageKeys().forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+
+    snapshot.forEach(([key, value]) => {
+      if (value !== null) {
+        window.localStorage.setItem(key, value);
+      }
+    });
+
+    return true;
+  } catch (error) {
+    warnStorageError("Could not fully roll back local storage after failed backup restore.", error);
+    return false;
+  }
+}
+
 export function restoreLocalBackup(backup) {
   if (typeof window === "undefined") {
     return { valid: false, error: "Local storage is not available." };
@@ -126,26 +198,70 @@ export function restoreLocalBackup(backup) {
   }
 
   const trackedKeys = getTrackedStorageKeys();
+  const serializedEntries = [];
 
-  trackedKeys.forEach((key) => {
-    window.localStorage.removeItem(key);
-  });
+  for (const key of validation.recognizedKeys) {
+    const serialized = serializeStorageValue(backup.data[key]);
 
-  validation.recognizedKeys.forEach((key) => {
-    window.localStorage.setItem(key, JSON.stringify(backup.data[key]));
-  });
+    if (!serialized.ok) {
+      return {
+        valid: false,
+        error: `Backup data for ${key} could not be prepared. Existing data was not changed.`,
+      };
+    }
 
-  return validation;
+    serializedEntries.push([key, serialized.serialized]);
+  }
+
+  const previousSnapshot = snapshotTrackedStorageValues(trackedKeys);
+
+  try {
+    trackedKeys.forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+
+    serializedEntries.forEach(([key, serialized]) => {
+      window.localStorage.setItem(key, serialized);
+    });
+  } catch (error) {
+    const rolledBack = rollbackTrackedStorageValues(previousSnapshot);
+    const message = getStorageErrorMessage(
+      error,
+      rolledBack
+        ? "Backup restore failed. Your previous local data was restored."
+        : "Backup restore failed and rollback could not fully complete. Use your latest export if anything looks wrong.",
+    );
+    warnStorageError(message, error);
+
+    return {
+      valid: false,
+      error: message,
+      rolledBack,
+    };
+  }
+
+  return {
+    ...validation,
+    restoredKeys: validation.recognizedKeys,
+  };
 }
 
 export function resetLocalAppData() {
   if (typeof window === "undefined") {
-    return;
+    return { ok: false, error: "Local storage is not available." };
   }
 
-  getTrackedStorageKeys().forEach((key) => {
-    window.localStorage.removeItem(key);
-  });
+  try {
+    getTrackedStorageKeys().forEach((key) => {
+      window.localStorage.removeItem(key);
+    });
+
+    return { ok: true };
+  } catch (error) {
+    const message = getStorageErrorMessage(error, "Could not reset local app data.");
+    warnStorageError(message, error);
+    return { ok: false, error: message };
+  }
 }
 
 export function useLocalStorageState(key, fallbackValue) {
