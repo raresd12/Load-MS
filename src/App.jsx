@@ -1113,7 +1113,7 @@ function getPostWorkoutSessionMetrics(session, day) {
 
 function buildPostWorkoutImprovementText(currentMetrics, previousMetrics) {
   if (!previousMetrics) {
-    return "Baseline saved for this training day.";
+    return "First log for this day saved - that's your baseline to beat.";
   }
 
   if (currentMetrics.totalVolume > 0 && previousMetrics.totalVolume > 0) {
@@ -1132,7 +1132,7 @@ function buildPostWorkoutImprovementText(currentMetrics, previousMetrics) {
     return `More working sets completed than last time: ${currentMetrics.setCount} vs ${previousMetrics.setCount}.`;
   }
 
-  return "Performance was logged. Compare the next repeat before changing the read.";
+  return "Logged and counted. The next repeat of this day will tell us more.";
 }
 
 function buildPostWorkoutWatchText(session, completedSets, day) {
@@ -1155,26 +1155,26 @@ function buildPostWorkoutWatchText(session, completedSets, day) {
     .length;
 
   if (Number.isFinite(sessionRpe) && sessionRpe >= 9) {
-    return "Session RPE was high. Keep the next push conservative if fatigue carries over.";
+    return "That one ran hot. If the fatigue carries into next session, take the conservative option.";
   }
 
   if (readiness?.status === "red" || readiness?.isPoor) {
-    return "Readiness was low. Judge this workout in context before reducing loads aggressively.";
+    return "You trained on low readiness - judge today's numbers in that context before changing anything.";
   }
 
   if (missedTargetSets > 0) {
-    return `${missedTargetSets} ${missedTargetSets === 1 ? "set was" : "sets were"} below the target range. Watch load selection next time.`;
+    return `${missedTargetSets} ${missedTargetSets === 1 ? "set landed" : "sets landed"} below the target range. Keep an eye on load selection next time.`;
   }
 
   if (highSetRpeCount > 0) {
-    return "Some sets were near limit. Progress only if reps stay clean next time.";
+    return "A few sets were near the limit. Progress only if the reps stay clean next time.";
   }
 
   if (day?.type === "recovery") {
-    return "Recovery work saved. Keep the next training day based on readiness.";
+    return "Recovery work saved. Let readiness pick the next training day.";
   }
 
-  return "No major red flags from the logged RPE/readiness.";
+  return "Nothing to worry about here - effort and readiness both look in range.";
 }
 
 function buildPostWorkoutNextText(generatedPlan) {

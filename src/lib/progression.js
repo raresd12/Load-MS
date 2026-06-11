@@ -1193,50 +1193,50 @@ function getConfidence({ performance, decision, mode }) {
 
 export function generateCoachReason(decision, { mode, performance, readinessModifier, sessionFatigue }) {
   if (readinessModifier.isRed && decision === "hold" && performance.belowMin) {
-    return "Performance was below target, but readiness was low today. Load was held rather than reduced aggressively.";
+    return "You came in under target, but recovery was low today - so the call is to repeat this load, not cut it.";
   }
 
   if (readinessModifier.isRed && decision === "hold" && performance.allAtTop) {
-    return "Performance was strong despite low readiness, so progression stayed conservative.";
+    return "Strong work on a rough day. The load stays put so you can cash that in when you're fresher.";
   }
 
   if (sessionFatigue.isVeryHigh && decision === "hold") {
-    return "Load held because session RPE was very high.";
+    return "That session cost a lot, so the load stays where it is for now.";
   }
 
   switch (decision) {
     case "increase_load":
       if (mode === "reps_first") {
-        return "Load increased because every set reached the top of the range with controlled RPE.";
+        return "Every set hit the top of the range with effort to spare - time for more weight.";
       }
       if (mode === "quality_first") {
-        return "Load increased slowly because available RPE and completion data support crisp athletic work.";
+        return "Execution looked crisp and effort stayed in check, so the load creeps up a touch.";
       }
       if (mode === "core_control") {
-        return "Core difficulty progressed carefully after controlled top-range work.";
+        return "Control held all the way to the top of the range, so the difficulty nudges up.";
       }
-      return "Load increased because all programmed sets reached the top of the rep range at manageable RPE.";
+      return "All sets reached the top of the rep range with effort in reserve - the weight goes up.";
     case "increase_reps":
-      return "Load kept stable; beat the last total reps before adding weight.";
+      return "Same weight next time. The goal is to beat your total reps before adding load.";
     case "reduce_load":
-      return "Load slightly reduced because reps fell below target with high RPE.";
+      return "Reps dropped under target at high effort, so the load comes down a touch to rebuild momentum.";
     case "reduce_volume":
-      return "Accessory volume reduced by 1 set because readiness was red and session RPE was very high.";
+      return "Recovery was low and the session ran hot, so one accessory set comes off to protect quality.";
     case "recovery_suggestion":
-      return "Recovery signals were low, so next time should stay conservative.";
+      return "Recovery signals are low - keep the next one easy.";
     case "deload_suggestion":
-      return "Fatigue signals were high enough to suggest a lighter session rather than forcing progression.";
+      return "Fatigue has been stacking up. A lighter session will do more for you than forcing progress.";
     case "insufficient_data":
-      return "Not enough completed workout data was available, so the plan stays conservative.";
+      return "Not enough logged data to make a call yet. Log the next session and the coach takes it from there.";
     case "hold":
     default:
       if (mode === "quality_first") {
-        return "Athletic work held steady so speed, quality, and crisp execution stay the priority.";
+        return "Holding steady - speed and crisp execution stay the priority over more load.";
       }
       if (mode === "core_control") {
-        return "Core plan held steady; add control before load or volume.";
+        return "Holding here. Earn the next step with stricter control before adding load or volume.";
       }
-      return "Load held while reps and RPE build inside the target range.";
+      return "The load stays put while you build reps and keep effort inside the target range.";
   }
 }
 
