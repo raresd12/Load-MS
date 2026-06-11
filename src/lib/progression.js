@@ -965,6 +965,7 @@ export function evaluateExercisePerformance({
     regressed,
     hasMeaningfulData,
     dataQuality,
+    painFlagged: Boolean(exerciseLog?.painFlag),
     warnings,
   };
 }
@@ -1455,6 +1456,9 @@ function applyHistoryContext({
   return recommendation;
 }
 
+export const PAIN_FLAG_WARNING =
+  "Pain or discomfort was flagged on this exercise. The coach is holding progression - if it keeps showing up, lower the load, swap the movement, or get it checked.";
+
 export function calculateNextRecommendation({
   exercise,
   classification,
@@ -1481,6 +1485,11 @@ export function calculateNextRecommendation({
         sessionFatigue,
       }),
     );
+
+    if (performance.painFlagged) {
+      recommendation.warnings.push(PAIN_FLAG_WARNING);
+    }
+
     return recommendation;
   }
 
@@ -1662,6 +1671,23 @@ export function calculateNextRecommendation({
     sessionFatigue,
     profile,
   });
+
+  if (performance.painFlagged) {
+    if (
+      recommendation.decision === "increase_load" ||
+      recommendation.decision === "increase_reps"
+    ) {
+      recommendation.decision = "hold";
+      recommendation.nextWeight = performance.workingWeight;
+    }
+
+    recommendation.conservative = true;
+    recommendation.repFocus = "Stay in a pain-free range and cut a set short the moment it flares up.";
+    recommendation.reasons.push(
+      "You flagged pain or discomfort here, so progression is on hold until a pain-free session is logged.",
+    );
+    recommendation.warnings.push(PAIN_FLAG_WARNING);
+  }
 
   const finalPrimaryReason = generateCoachReason(recommendation.decision, {
     mode,

@@ -267,6 +267,7 @@ function createDraft(day, plan, sessions = []) {
         exercise.id,
         {
           notes: "",
+          painFlag: false,
           sets: Array.from({ length: setCount }, () => ({
             reps: "",
             weight: "",
@@ -318,6 +319,7 @@ function mergeSavedDraft(baseDraft, savedDraft) {
           {
             ...baseExercise,
             notes: savedExercise.notes ?? baseExercise.notes,
+            painFlag: savedExercise.painFlag ?? baseExercise.painFlag ?? false,
             sets: baseExercise.sets.map((baseSet, index) => ({
               ...baseSet,
               ...(savedExercise.sets?.[index] ?? {}),
@@ -405,6 +407,7 @@ function normalizeExerciseLogs(day, draftExercises) {
           programExerciseId: exercise.programExerciseId ?? exercise.id,
           exerciseId: exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id,
           notes: draftExercise.notes.trim(),
+          painFlag: Boolean(draftExercise.painFlag),
           exerciseRPE,
           sets: draftExercise.sets.map((set) => ({
             reps: set.reps === "" ? null : numberValue(set.reps, 0),
@@ -1135,6 +1138,13 @@ function buildPostWorkoutImprovementText(currentMetrics, previousMetrics) {
 function buildPostWorkoutWatchText(session, completedSets, day) {
   const sessionRpe = numberValue(session.sessionRpe, NaN);
   const readiness = session.readiness ?? session.readinessSnapshot?.readiness ?? null;
+  const painFlaggedNames = (day?.exercises ?? [])
+    .filter((exercise) => getExerciseLog(session, exercise)?.painFlag)
+    .map((exercise) => exercise.name);
+
+  if (painFlaggedNames.length) {
+    return `You flagged pain on ${painFlaggedNames.join(", ")}. Good call logging it - the coach holds back there until a pain-free session. If it keeps coming back, get it looked at.`;
+  }
   const missedTargetSets = completedSets.filter(
     (set) =>
       Number.isFinite(set.targetRepsMin) &&
@@ -1464,6 +1474,20 @@ export default function App() {
     });
   }
 
+  function toggleExercisePainFlag(exerciseId, flagged) {
+    setPostWorkoutRecap(null);
+    commitDraft({
+      ...draft,
+      exercises: {
+        ...draft.exercises,
+        [exerciseId]: {
+          ...draft.exercises[exerciseId],
+          painFlag: Boolean(flagged),
+        },
+      },
+    });
+  }
+
   function updateExerciseNotes(exerciseId, notes) {
     commitDraft({
       ...draft,
@@ -1704,6 +1728,7 @@ export default function App() {
             onUpdateRecoveryActivity={updateRecoveryActivity}
             onUpdateSessionField={updateSessionField}
             onSaveSet={updateSetEntry}
+            onTogglePainFlag={toggleExercisePainFlag}
             onGoToReadiness={() => setActiveTab("readiness")}
             onGoToWorkouts={() => setActiveTab("workouts")}
             onGoToHistory={() => setActiveTab("history")}
@@ -3079,6 +3104,7 @@ function WorkoutLogPage({
   onUpdateRecoveryActivity,
   onUpdateSessionField,
   onSaveSet,
+  onTogglePainFlag,
   onGoToReadiness,
   onGoToWorkouts,
   onGoToHistory,
@@ -3167,6 +3193,7 @@ function WorkoutLogPage({
             exerciseRefs={exerciseRefs}
             highlightedExerciseId={highlightedExerciseId}
             onSaveSet={onSaveSet}
+            onTogglePainFlag={onTogglePainFlag}
           />
         </>
       )}
@@ -3923,6 +3950,7 @@ function CompletedWorkoutTable({
   exerciseRefs,
   highlightedExerciseId,
   onSaveSet,
+  onTogglePainFlag,
 }) {
   return (
     <SectionShell title="Log Completed Workout">
@@ -3971,12 +3999,32 @@ function CompletedWorkoutTable({
 
               <div className="mt-3 space-y-3">
                 <SavedSetsSummary exercise={exercise} sets={draftExercise.sets} />
-                <p className="inline-flex rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
-                  Auto Exercise RPE:{" "}
-                  <span className="ml-1">
-                    {autoExerciseRpe === null ? "--" : autoExerciseRpe.toFixed(1)}
-                  </span>
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="inline-flex rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
+                    Auto Exercise RPE:{" "}
+                    <span className="ml-1">
+                      {autoExerciseRpe === null ? "--" : autoExerciseRpe.toFixed(1)}
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onTogglePainFlag(exercise.id, !draftExercise.painFlag)}
+                    aria-pressed={Boolean(draftExercise.painFlag)}
+                    className={`focus-ring inline-flex min-h-9 items-center rounded-[8px] border px-3 text-xs font-black ${
+                      draftExercise.painFlag
+                        ? "border-red-400/60 bg-red-400/15 text-red-100"
+                        : "border-zinc-700 bg-[#111111] text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                    }`}
+                  >
+                    {draftExercise.painFlag ? "Pain flagged" : "Felt pain? Flag it"}
+                  </button>
+                </div>
+                {draftExercise.painFlag && (
+                  <p className="rounded-[8px] border border-red-400/30 bg-red-400/10 px-3 py-2 text-xs font-bold leading-5 text-red-100">
+                    Noted. The coach will hold progression here and keep the next session
+                    cautious. Stay in a pain-free range today.
+                  </p>
+                )}
                 <div className="md:hidden">
                   <UnifiedSetEntry
                     exercise={exercise}
