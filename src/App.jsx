@@ -35,6 +35,7 @@ import {
 } from "./lib/progression.js";
 import {
   duplicateProgram,
+  exportProgramShare,
   getActiveProgram,
   getActiveProgramId,
   getExerciseLibrary,
@@ -43,6 +44,7 @@ import {
   getProgramProgression,
   getProgramState,
   getPrograms,
+  importProgramShare,
   seedDefaultProgramIfNeeded,
   setActiveProgram,
   updateProgramExerciseTarget,
@@ -1427,6 +1429,16 @@ export default function App() {
     refreshProgramData();
   }
 
+  function handleImportProgramShare(share) {
+    const result = importProgramShare(share);
+
+    if (result.valid) {
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
   function handleUpdateProgramMetadata(programId, patch) {
     updateProgramMetadata(programId, patch);
     refreshProgramData();
@@ -1757,6 +1769,7 @@ export default function App() {
             onSetActiveProgram={handleSetActiveProgram}
             onUpdateProgramMetadata={handleUpdateProgramMetadata}
             onUpdateProgramExerciseTarget={handleUpdateProgramExerciseTarget}
+            onImportProgramShare={handleImportProgramShare}
           />
         )}
 
@@ -7180,6 +7193,30 @@ function filterLibraryExercises(exercises, searchQuery, filters) {
   });
 }
 
+function downloadProgramShareFile(program) {
+  const share = exportProgramShare(program.id);
+
+  if (!share) {
+    return false;
+  }
+
+  const safeName =
+    String(program.nickname || program.name || "program")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "program";
+  const blob = new Blob([JSON.stringify(share, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeName}-program-share.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
 function ProgramPage({
   programs,
   activeProgramId,
@@ -7187,9 +7224,52 @@ function ProgramPage({
   onSetActiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
+  onImportProgramShare,
 }) {
   const visiblePrograms = programs.filter((program) => !program.isArchived);
   const activeProgram = visiblePrograms.find((program) => program.id === activeProgramId);
+  const importInputRef = useRef(null);
+  const [importMessage, setImportMessage] = useState("");
+  const [importError, setImportError] = useState("");
+
+  function handleImportFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setImportMessage("");
+    setImportError("");
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      let share;
+
+      try {
+        share = JSON.parse(String(reader.result));
+      } catch {
+        setImportError("That file is not valid JSON.");
+        return;
+      }
+
+      const result = onImportProgramShare(share);
+
+      if (!result.valid) {
+        setImportError(result.error ?? "The program file could not be imported.");
+        return;
+      }
+
+      setImportMessage(
+        `Imported "${result.program.name}" with ${result.importedDayCount} ${result.importedDayCount === 1 ? "day" : "days"} and ${result.importedExerciseCount} exercises. It was added as a new program - your existing programs were not touched.`,
+      );
+    };
+    reader.onerror = () => {
+      setImportError("The file could not be read.");
+    };
+    reader.readAsText(file);
+  }
 
   return (
     <div className="space-y-5">
@@ -7214,6 +7294,33 @@ function ProgramPage({
         <p className="mt-3 text-sm leading-6 text-zinc-400">
           Manage local guest-mode programs. Full exercise editing and drag-and-drop ordering come later.
         </p>
+        <div className="mt-4">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={handleImportFile}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800 sm:w-auto"
+          >
+            <Upload aria-hidden="true" size={16} />
+            Import Program File
+          </button>
+          {importMessage && (
+            <p className="mt-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+              {importMessage}
+            </p>
+          )}
+          {importError && (
+            <p className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+              {importError}
+            </p>
+          )}
+        </div>
         <div className="mt-4 space-y-3">
           {visiblePrograms.map((program) => {
             const isActive = program.id === activeProgramId;
@@ -7321,6 +7428,14 @@ function ProgramCard({
             className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
           >
             {isEditing ? "Close Edit" : "Edit Details"}
+          </button>
+          <button
+            type="button"
+            onClick={() => downloadProgramShareFile(program)}
+            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          >
+            <Download aria-hidden="true" size={15} />
+            Share File
           </button>
         </div>
       </div>

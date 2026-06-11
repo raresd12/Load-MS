@@ -1089,6 +1089,177 @@ export function getProgramDayViewModel(programId, dayId) {
   );
 }
 
+export const PROGRAM_SHARE_TYPE = "rpe-tracker-program-share";
+export const PROGRAM_SHARE_SCHEMA_VERSION = 1;
+
+export function exportProgramShare(programId) {
+  const program = getPrograms().find((entry) => entry.id === programId);
+  if (!program) {
+    return null;
+  }
+
+  const days = getProgramDays(programId);
+  const sections = asArray(readStorage(STORAGE_KEYS.programSections, [])).filter(
+    (section) => section.programId === programId,
+  );
+  const programExercises = asArray(readStorage(STORAGE_KEYS.programExercises, [])).filter(
+    (exercise) => exercise.programId === programId,
+  );
+  const referencedExerciseIds = new Set(programExercises.map((exercise) => exercise.exerciseId));
+  const libraryExercises = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, [])).filter(
+    (exercise) => referencedExerciseIds.has(exercise.id),
+  );
+
+  return {
+    app: "rpe-workout-tracker",
+    type: PROGRAM_SHARE_TYPE,
+    schemaVersion: PROGRAM_SHARE_SCHEMA_VERSION,
+    exportedAt: nowIso(),
+    program: {
+      name: program.name,
+      nickname: program.nickname ?? "",
+      description: program.description ?? "",
+      goal: program.goal ?? "",
+    },
+    days,
+    sections,
+    programExercises,
+    libraryExercises,
+  };
+}
+
+export function validateProgramShare(share) {
+  if (!share || typeof share !== "object" || Array.isArray(share)) {
+    return { valid: false, error: "This file is not a valid program share." };
+  }
+
+  if (share.type !== PROGRAM_SHARE_TYPE) {
+    return { valid: false, error: "This file is not an RPE Tracker program share." };
+  }
+
+  if (!share.program || typeof share.program !== "object" || !String(share.program.name ?? "").trim()) {
+    return { valid: false, error: "The program share has no program name." };
+  }
+
+  const days = asArray(share.days);
+  if (!days.length) {
+    return { valid: false, error: "The program share contains no training days." };
+  }
+
+  if (days.some((day) => !day || typeof day !== "object" || !day.id)) {
+    return { valid: false, error: "The program share has invalid day entries." };
+  }
+
+  return { valid: true };
+}
+
+export function importProgramShare(share) {
+  const validation = validateProgramShare(share);
+  if (!validation.valid) {
+    return validation;
+  }
+
+  const createdAt = nowIso();
+  const newProgramId = makeCopyId("program-import");
+  const shareDays = asArray(share.days);
+  const dayIds = new Set(shareDays.map((day) => day.id));
+  const shareSections = asArray(share.sections).filter(
+    (section) => section && section.id && dayIds.has(section.dayId),
+  );
+  const sectionIds = new Set(shareSections.map((section) => section.id));
+  const shareProgramExercises = asArray(share.programExercises).filter(
+    (exercise) => exercise && exercise.id && exercise.exerciseId && dayIds.has(exercise.dayId),
+  );
+  const shareLibraryExercises = asArray(share.libraryExercises).filter(
+    (exercise) => exercise && exercise.id,
+  );
+
+  const dayIdMap = new Map(
+    shareDays.map((day, index) => [day.id, `${newProgramId}:day-${index + 1}`]),
+  );
+  const sectionIdMap = new Map(
+    shareSections.map((section, index) => [section.id, `${newProgramId}:section-${index + 1}`]),
+  );
+
+  const importedName = String(share.program.name).trim();
+  const program = {
+    id: newProgramId,
+    name: importedName,
+    nickname: String(share.program.nickname ?? "").trim() || importedName,
+    description: String(share.program.description ?? ""),
+    goal: String(share.program.goal ?? ""),
+    isDefault: false,
+    isArchived: false,
+    importedAt: createdAt,
+    createdAt,
+    updatedAt: createdAt,
+  };
+  const importedDays = shareDays.map((day, index) => ({
+    ...day,
+    id: dayIdMap.get(day.id),
+    programId: newProgramId,
+    orderIndex: day.orderIndex ?? index,
+  }));
+  const importedSections = shareSections.map((section) => ({
+    ...section,
+    id: sectionIdMap.get(section.id),
+    programId: newProgramId,
+    dayId: dayIdMap.get(section.dayId),
+  }));
+  const importedProgramExercises = shareProgramExercises.map((programExercise, index) => ({
+    ...programExercise,
+    id: `${newProgramId}:exercise-${index + 1}-${programExercise.exerciseId}`,
+    programId: newProgramId,
+    dayId: dayIdMap.get(programExercise.dayId),
+    sectionId: sectionIds.has(programExercise.sectionId)
+      ? sectionIdMap.get(programExercise.sectionId)
+      : importedSections.find((section) => section.dayId === dayIdMap.get(programExercise.dayId))
+          ?.id ?? null,
+  }));
+  const importedState = {
+    programId: newProgramId,
+    lastCompletedDayId: null,
+    nextRecommendedDayId: importedDays[0]?.id ?? null,
+    currentWeek: 1,
+    currentCycle: 1,
+    lastWorkoutDate: null,
+    updatedAt: createdAt,
+  };
+
+  // Only add library exercises that do not exist locally; never overwrite local content.
+  const existingLibrary = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, []));
+  const existingLibraryIds = new Set(existingLibrary.map((exercise) => exercise.id));
+  const newLibraryExercises = shareLibraryExercises.filter(
+    (exercise) => !existingLibraryIds.has(exercise.id),
+  );
+
+  writeStorage(STORAGE_KEYS.programs, [...getPrograms(), program]);
+  writeStorage(STORAGE_KEYS.programDays, [
+    ...asArray(readStorage(STORAGE_KEYS.programDays, [])),
+    ...importedDays,
+  ]);
+  writeStorage(STORAGE_KEYS.programSections, [
+    ...asArray(readStorage(STORAGE_KEYS.programSections, [])),
+    ...importedSections,
+  ]);
+  writeStorage(STORAGE_KEYS.programExercises, [
+    ...asArray(readStorage(STORAGE_KEYS.programExercises, [])),
+    ...importedProgramExercises,
+  ]);
+  if (newLibraryExercises.length) {
+    writeStorage(STORAGE_KEYS.exerciseLibrary, [...existingLibrary, ...newLibraryExercises]);
+  }
+  writeProgramStates([...getProgramStates(), importedState]);
+
+  return {
+    valid: true,
+    program,
+    importedDayCount: importedDays.length,
+    importedExerciseCount: importedProgramExercises.length,
+    addedLibraryExerciseCount: newLibraryExercises.length,
+  };
+}
+
 export function duplicateProgram(programId) {
   const sourceProgram = getPrograms().find((program) => program.id === programId);
   if (!sourceProgram) {
