@@ -2257,10 +2257,23 @@ function WorkoutsPage({
   onOpenWorkoutLog,
 }) {
   const readinessCopy = getReadinessCopy(todayReadinessSummary);
+  const [shortOnTime, setShortOnTime] = useState(false);
   const sections =
     day.sections?.length
       ? day.sections
       : [{ id: "main", name: day.type === "recovery" ? "Recovery" : "Main Work" }];
+  const essentialExerciseIds = useMemo(() => {
+    const highPriorityIds = day.exercises
+      .filter((exercise) => exercise.priority === "high")
+      .map((exercise) => exercise.id);
+
+    return new Set(highPriorityIds);
+  }, [day]);
+  const hasPriorityRanking = essentialExerciseIds.size > 0;
+  const trimmedExercises =
+    shortOnTime && hasPriorityRanking
+      ? day.exercises.filter((exercise) => !essentialExerciseIds.has(exercise.id))
+      : [];
 
   return (
     <div className="space-y-5">
@@ -2302,14 +2315,50 @@ function WorkoutsPage({
             {readinessCopy.summary}
           </p>
         )}
-        <button
-          type="button"
-          onClick={() => onOpenWorkoutLog(day.id)}
-          className="focus-ring mt-4 min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
-        >
-          Open in Workout Log
-        </button>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={() => onOpenWorkoutLog(day.id)}
+            className="focus-ring min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+          >
+            Open in Workout Log
+          </button>
+          {day.type !== "recovery" && (
+            <button
+              type="button"
+              onClick={() => setShortOnTime((current) => !current)}
+              aria-pressed={shortOnTime}
+              className={`focus-ring min-h-11 w-full rounded-[8px] border px-4 text-sm font-black sm:w-auto ${
+                shortOnTime
+                  ? "border-amber-300/70 bg-amber-300/15 text-amber-100"
+                  : "border-zinc-700 bg-[#171717] text-zinc-200 hover:bg-zinc-800"
+              }`}
+            >
+              {shortOnTime ? "Short on time: ON" : "Short on time?"}
+            </button>
+          )}
+        </div>
       </section>
+
+      {shortOnTime && day.type !== "recovery" && (
+        <section className="rounded-[8px] border border-amber-300/40 bg-amber-300/10 p-3 min-[430px]:p-4">
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+            Short on time mode
+          </p>
+          {hasPriorityRanking ? (
+            <p className="mt-1 text-sm font-semibold leading-6 text-amber-100">
+              Showing only the essentials. {trimmedExercises.length > 0
+                ? `${trimmedExercises.length} ${trimmedExercises.length === 1 ? "exercise is" : "exercises are"} hidden - skip ${trimmedExercises.length === 1 ? "it" : "them"} guilt-free today, the priority work still moves you forward.`
+                : "Everything on this day is priority work, so nothing was trimmed."}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm font-semibold leading-6 text-amber-100">
+              This day doesn't rank exercises, so nothing was trimmed. If you must cut, keep the
+              first exercises in each section and shorten rests on the rest.
+            </p>
+          )}
+        </section>
+      )}
 
       {!todayReadinessEntry && (
         <div className="hidden sm:block">
@@ -2346,12 +2395,35 @@ function WorkoutsPage({
             <WorkoutWarmupPanel day={day} />
 
             {sections.map((section) => {
-              const sectionExercises = day.exercises.filter((exercise) =>
+              const allSectionExercises = day.exercises.filter((exercise) =>
                 exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
               );
+              const sectionExercises =
+                shortOnTime && hasPriorityRanking
+                  ? allSectionExercises.filter((exercise) => essentialExerciseIds.has(exercise.id))
+                  : allSectionExercises;
+              const trimmedCount = allSectionExercises.length - sectionExercises.length;
+
+              if (!allSectionExercises.length) {
+                return null;
+              }
 
               if (!sectionExercises.length) {
-                return null;
+                return (
+                  <div key={section.id} className="space-y-3">
+                    <div className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-2">
+                      <h3 className="text-sm font-black uppercase tracking-[0.14em] text-lime-300">
+                        {section.name}
+                      </h3>
+                      <span className="text-xs font-bold text-zinc-500">
+                        skipped today
+                      </span>
+                    </div>
+                    <p className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-400">
+                      All {allSectionExercises.length} exercises here are optional when time is tight.
+                    </p>
+                  </div>
+                );
               }
 
               return (
@@ -2362,6 +2434,7 @@ function WorkoutsPage({
                     </h3>
                     <span className="text-xs font-bold text-zinc-500">
                       {sectionExercises.length} exercises
+                      {trimmedCount > 0 ? ` (${trimmedCount} skipped)` : ""}
                     </span>
                   </div>
                   {sectionExercises.map((exercise) => (
