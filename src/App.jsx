@@ -945,6 +945,251 @@ function getWarmupItems(day) {
     .filter((item) => item.name || item.prescription);
 }
 
+function buildPostWorkoutCoachRecap(session, previousSessions, day, generatedPlan) {
+  const completedSets = getPostWorkoutCompletedSets(session, day);
+  const exerciseCount = new Set(completedSets.map((set) => set.exerciseKey).filter(Boolean)).size;
+  const totalVolume = completedSets.reduce(
+    (total, set) =>
+      typeof set.weight === "number" && Number.isFinite(set.reps)
+        ? total + set.weight * set.reps
+        : total,
+    0,
+  );
+  const bestSet = getPostWorkoutBestSet(completedSets);
+  const previousSession = getPreviousComparableSession(session, previousSessions);
+  const previousMetrics = previousSession
+    ? getPostWorkoutSessionMetrics(previousSession, day)
+    : null;
+  const currentMetrics = {
+    setCount: completedSets.length,
+    totalReps: completedSets.reduce(
+      (total, set) => total + (Number.isFinite(set.reps) ? set.reps : 0),
+      0,
+    ),
+    totalVolume,
+  };
+
+  return {
+    id: `recap-${session.id ?? Date.now()}`,
+    savedAt: session.date,
+    programName: session.programName ?? "Program",
+    dayName: session.dayName ?? day?.name ?? "Workout",
+    exerciseCount,
+    setCount: completedSets.length,
+    totalVolume,
+    bestSetText: bestSet
+      ? `${bestSet.exerciseName}: ${formatSetPerformance(bestSet)}`
+      : "No complete working set found.",
+    improvedText: buildPostWorkoutImprovementText(currentMetrics, previousMetrics),
+    watchText: buildPostWorkoutWatchText(session, completedSets, day),
+    nextText: buildPostWorkoutNextText(generatedPlan),
+  };
+}
+
+function getPostWorkoutCompletedSets(session, day) {
+  const exerciseByProgramExerciseId = new Map(
+    (day?.exercises ?? []).map((exercise) => [exercise.programExerciseId ?? exercise.id, exercise]),
+  );
+  const exerciseByExerciseId = new Map(
+    (day?.exercises ?? []).map((exercise) => [
+      exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id,
+      exercise,
+    ]),
+  );
+
+  if (Array.isArray(session?.workoutSets) && session.workoutSets.length) {
+    return session.workoutSets
+      .map((set) => {
+        const exercise =
+          exerciseByProgramExerciseId.get(set.programExerciseId) ??
+          exerciseByExerciseId.get(set.exerciseId);
+        const reps = numberValue(set.actualReps ?? set.reps, NaN);
+        const weight = normalizeWeight(set.actualWeight ?? set.weight ?? set.kg);
+        const rpe = numberValue(set.actualRPE ?? set.rpe, NaN);
+
+        return {
+          exerciseKey: set.programExerciseId ?? set.exerciseId ?? exercise?.id,
+          exerciseName: exercise?.name ?? "Exercise",
+          setNumber: set.setNumber,
+          reps,
+          weight,
+          rpe,
+          completed: Boolean(set.completed) && Number.isFinite(reps) && weight !== null,
+          targetRepsMin: exercise?.repsMin ?? null,
+        };
+      })
+      .filter((set) => set.completed);
+  }
+
+  const legacyExercises = Array.isArray(session?.exercises)
+    ? session.exercises.map((exerciseLog, index) => [
+        exerciseLog?.programExerciseId ??
+          exerciseLog?.exerciseId ??
+          exerciseLog?.id ??
+          exerciseLog?.name ??
+          `exercise-${index + 1}`,
+        exerciseLog,
+      ])
+    : Object.entries(session?.exercises ?? {});
+
+  return legacyExercises.flatMap(([exerciseKey, exerciseLog]) => {
+    const sets = Array.isArray(exerciseLog?.sets) ? exerciseLog.sets : [];
+    const exercise =
+      exerciseByProgramExerciseId.get(exerciseLog?.programExerciseId ?? exerciseKey) ??
+      exerciseByExerciseId.get(exerciseLog?.exerciseId);
+
+    return sets
+      .map((set, index) => {
+        const reps = numberValue(set?.reps ?? set?.actualReps, NaN);
+        const weight = normalizeWeight(set?.weight ?? set?.kg ?? set?.actualWeight);
+        const rpe = numberValue(set?.rpe ?? set?.actualRPE ?? exerciseLog?.exerciseRPE, NaN);
+
+        return {
+          exerciseKey,
+          exerciseName: exercise?.name ?? exerciseLog?.name ?? exerciseLog?.exerciseName ?? "Exercise",
+          setNumber: index + 1,
+          reps,
+          weight,
+          rpe,
+          completed: Number.isFinite(reps) && weight !== null,
+          targetRepsMin: exercise?.repsMin ?? null,
+        };
+      })
+      .filter((set) => set.completed);
+  });
+}
+
+function getPostWorkoutBestSet(completedSets) {
+  return [...completedSets].sort((left, right) => {
+    const leftStrength = calculateEstimatedOneRepMax(left.weight, left.reps) ?? -1;
+    const rightStrength = calculateEstimatedOneRepMax(right.weight, right.reps) ?? -1;
+
+    if (leftStrength !== rightStrength) {
+      return rightStrength - leftStrength;
+    }
+
+    const leftVolume = typeof left.weight === "number" ? left.weight * left.reps : left.reps;
+    const rightVolume = typeof right.weight === "number" ? right.weight * right.reps : right.reps;
+    return rightVolume - leftVolume;
+  })[0] ?? null;
+}
+
+function getPreviousComparableSession(session, previousSessions) {
+  return (previousSessions ?? []).find((previousSession) => {
+    if (previousSession.id === session.id) {
+      return false;
+    }
+
+    const sameDay = previousSession.dayId === session.dayId;
+    const sameProgram = session.programId
+      ? previousSession.programId === session.programId
+      : true;
+
+    return sameDay && sameProgram;
+  }) ?? null;
+}
+
+function getPostWorkoutSessionMetrics(session, day) {
+  const completedSets = getPostWorkoutCompletedSets(session, day);
+
+  return {
+    setCount: completedSets.length,
+    totalReps: completedSets.reduce(
+      (total, set) => total + (Number.isFinite(set.reps) ? set.reps : 0),
+      0,
+    ),
+    totalVolume: completedSets.reduce(
+      (total, set) =>
+        typeof set.weight === "number" && Number.isFinite(set.reps)
+          ? total + set.weight * set.reps
+          : total,
+      0,
+    ),
+  };
+}
+
+function buildPostWorkoutImprovementText(currentMetrics, previousMetrics) {
+  if (!previousMetrics) {
+    return "Baseline saved for this training day.";
+  }
+
+  if (currentMetrics.totalVolume > 0 && previousMetrics.totalVolume > 0) {
+    const difference = currentMetrics.totalVolume - previousMetrics.totalVolume;
+
+    if (difference > Math.max(5, previousMetrics.totalVolume * 0.02)) {
+      return `Volume improved from ${formatVolume(previousMetrics.totalVolume)} to ${formatVolume(currentMetrics.totalVolume)}.`;
+    }
+  }
+
+  if (currentMetrics.totalReps > previousMetrics.totalReps) {
+    return `Total reps improved from ${previousMetrics.totalReps} to ${currentMetrics.totalReps}.`;
+  }
+
+  if (currentMetrics.setCount > previousMetrics.setCount) {
+    return `More working sets completed than last time: ${currentMetrics.setCount} vs ${previousMetrics.setCount}.`;
+  }
+
+  return "Performance was logged. Compare the next repeat before changing the read.";
+}
+
+function buildPostWorkoutWatchText(session, completedSets, day) {
+  const sessionRpe = numberValue(session.sessionRpe, NaN);
+  const readiness = session.readiness ?? session.readinessSnapshot?.readiness ?? null;
+  const missedTargetSets = completedSets.filter(
+    (set) =>
+      Number.isFinite(set.targetRepsMin) &&
+      Number.isFinite(set.reps) &&
+      set.reps < set.targetRepsMin,
+  ).length;
+  const highSetRpeCount = completedSets.filter((set) => Number.isFinite(set.rpe) && set.rpe >= 9.5)
+    .length;
+
+  if (Number.isFinite(sessionRpe) && sessionRpe >= 9) {
+    return "Session RPE was high. Keep the next push conservative if fatigue carries over.";
+  }
+
+  if (readiness?.status === "red" || readiness?.isPoor) {
+    return "Readiness was low. Judge this workout in context before reducing loads aggressively.";
+  }
+
+  if (missedTargetSets > 0) {
+    return `${missedTargetSets} ${missedTargetSets === 1 ? "set was" : "sets were"} below the target range. Watch load selection next time.`;
+  }
+
+  if (highSetRpeCount > 0) {
+    return "Some sets were near limit. Progress only if reps stay clean next time.";
+  }
+
+  if (day?.type === "recovery") {
+    return "Recovery work saved. Keep the next training day based on readiness.";
+  }
+
+  return "No major red flags from the logged RPE/readiness.";
+}
+
+function buildPostWorkoutNextText(generatedPlan) {
+  const exerciseNote = generatedPlan?.exercises
+    ?.map((exercise) => {
+      const reason =
+        exercise.reasons?.find((entry) => String(entry ?? "").trim()) ??
+        exercise.repFocus ??
+        exercise.recommendationNote;
+
+      return reason ? `${exercise.name}: ${reason}` : "";
+    })
+    .find(Boolean);
+
+  if (exerciseNote) {
+    return exerciseNote;
+  }
+
+  if (generatedPlan?.status || generatedPlan?.generatedAt) {
+    return "Next session recommendation was generated from this log.";
+  }
+
+  return "Save more complete sets to sharpen the next recommendation.";
+}
+
 export default function App() {
   const [sessions, setSessions] = useLocalStorageState(STORAGE_KEYS.sessions, []);
   const [nextPlans, setNextPlans] = useLocalStorageState(STORAGE_KEYS.nextPlans, {});
@@ -989,6 +1234,7 @@ export default function App() {
   const [lastGeneratedPlan, setLastGeneratedPlan] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
   const [workoutLogTarget, setWorkoutLogTarget] = useState(null);
+  const [postWorkoutRecap, setPostWorkoutRecap] = useState(null);
   const [todayDateKey] = useState(() => getLocalDateKey());
   const [readinessDraft, setReadinessDraft] = useState(() =>
     normalizeWellness(readinessByDate[getLocalDateKey()]?.wellness ?? createDefaultWellness()),
@@ -1101,6 +1347,7 @@ export default function App() {
     setSelectedDayId(dayId);
     setDraft(createDraftFromStorage(nextDay, nextPlan, sessions, workoutDrafts, nextDraftKey));
     setValidationErrors([]);
+    setPostWorkoutRecap(null);
   }
 
   function persistWorkoutDraft(nextDraft, status = "in_progress") {
@@ -1186,10 +1433,12 @@ export default function App() {
   }
 
   function updateSessionField(field, value) {
+    setPostWorkoutRecap(null);
     commitDraft({ ...draft, [field]: value });
   }
 
   function updateRecoveryActivity(activity, checked) {
+    setPostWorkoutRecap(null);
     commitDraft({
       ...draft,
       recoveryActivities: {
@@ -1200,6 +1449,7 @@ export default function App() {
   }
 
   function updateSetEntry(exerciseId, setIndex, values) {
+    setPostWorkoutRecap(null);
     commitDraft({
       ...draft,
       exercises: {
@@ -1352,9 +1602,10 @@ export default function App() {
       [selectedDay.id]: generatedPlan,
     }));
     setLastGeneratedPlan(generatedPlan);
+    setPostWorkoutRecap(buildPostWorkoutCoachRecap(session, sessions, selectedDay, generatedPlan));
     clearWorkoutDraft();
     setDraft(createDraft(selectedDay, generatedPlan, [session, ...sessions]));
-    setActiveTab("progress");
+    setActiveTab("workout-log");
   }
 
   return (
@@ -1444,10 +1695,14 @@ export default function App() {
             todayReadinessSummary={todayReadinessSummary}
             validationErrors={validationErrors}
             scrollTarget={workoutLogTarget}
+            recap={postWorkoutRecap}
             onUpdateRecoveryActivity={updateRecoveryActivity}
             onUpdateSessionField={updateSessionField}
             onSaveSet={updateSetEntry}
             onGoToReadiness={() => setActiveTab("readiness")}
+            onGoToWorkouts={() => setActiveTab("workouts")}
+            onGoToHistory={() => setActiveTab("history")}
+            onDismissRecap={() => setPostWorkoutRecap(null)}
             onScrollTargetHandled={() => setWorkoutLogTarget(null)}
             onSave={saveWorkout}
           />
@@ -2555,10 +2810,14 @@ function WorkoutLogPage({
   todayReadinessSummary,
   validationErrors,
   scrollTarget,
+  recap,
   onUpdateRecoveryActivity,
   onUpdateSessionField,
   onSaveSet,
   onGoToReadiness,
+  onGoToWorkouts,
+  onGoToHistory,
+  onDismissRecap,
   onScrollTargetHandled,
   onSave,
 }) {
@@ -2649,6 +2908,13 @@ function WorkoutLogPage({
 
       <SessionFeedback draft={draft} onUpdateSessionField={onUpdateSessionField} />
 
+      <PostWorkoutCoachRecap
+        recap={recap}
+        onDismiss={onDismissRecap}
+        onGoToWorkouts={onGoToWorkouts}
+        onGoToHistory={onGoToHistory}
+      />
+
       <button
         type="button"
         onClick={onSave}
@@ -2658,6 +2924,79 @@ function WorkoutLogPage({
         Save workout / Generate next recommendation
       </button>
     </form>
+  );
+}
+
+function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts, onGoToHistory }) {
+  if (!recap) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-[8px] border border-lime-300/50 bg-lime-300/10 p-3 min-[430px]:p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-lime-200">
+            Workout saved
+          </p>
+          <h2 className="mt-1 break-words text-xl font-black text-white">{recap.dayName}</h2>
+          <p className="mt-1 text-sm font-semibold text-lime-100/80">{recap.programName}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="focus-ring min-h-10 shrink-0 rounded-[8px] border border-lime-300/50 px-3 text-xs font-black uppercase tracking-[0.08em] text-lime-100 hover:bg-lime-300/10"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-center min-[430px]:grid-cols-4">
+        <Metric label="Exercises" value={recap.exerciseCount} />
+        <Metric label="Sets" value={recap.setCount} />
+        <Metric label="Volume" value={formatVolume(recap.totalVolume)} />
+        <Metric
+          label="Saved"
+          value={recap.savedAt ? new Date(recap.savedAt).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }) : "Now"}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <RecapNote label="Top set" text={recap.bestSetText} />
+        <RecapNote label="Improved" text={recap.improvedText} />
+        <RecapNote label="Watch" text={recap.watchText} />
+        <RecapNote label="Next" text={recap.nextText} />
+      </div>
+
+      <div className="mt-3 grid gap-2 min-[430px]:grid-cols-2">
+        <button
+          type="button"
+          onClick={onGoToWorkouts}
+          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+        >
+          Go to Workouts
+        </button>
+        <button
+          type="button"
+          onClick={onGoToHistory}
+          className="focus-ring min-h-11 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+        >
+          View History
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RecapNote({ label, text }) {
+  return (
+    <div className="rounded-[8px] border border-lime-300/20 bg-[#111111]/80 px-3 py-2">
+      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-lime-300">{label}</p>
+      <p className="mt-1 text-sm font-semibold leading-5 text-zinc-100">{text}</p>
+    </div>
   );
 }
 
