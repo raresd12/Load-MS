@@ -4484,6 +4484,198 @@ function SessionFeedback({ draft, onUpdateSessionField }) {
 
 const recentWorkoutWindowDays = 30;
 
+function summarizeWeeklyReviewWindow(sessionSummaries, startMs, endMs) {
+  const windowSessions = (sessionSummaries ?? []).filter((session) => {
+    const time = getDateTime(session.date);
+    return time && time > startMs && time <= endMs;
+  });
+
+  return {
+    workouts: windowSessions.length,
+    setCount: windowSessions.reduce(
+      (total, session) => total + numberValue(session.completedSetCount, 0),
+      0,
+    ),
+    totalVolume: windowSessions.reduce(
+      (total, session) => total + numberValue(session.totalVolume, 0),
+      0,
+    ),
+    averageRpe: average(
+      windowSessions.map((session) => session.sessionRpe).filter(Number.isFinite),
+    ),
+    averageReadiness: average(
+      windowSessions
+        .map((session) => session.readiness?.averageScore)
+        .filter(Number.isFinite),
+    ),
+  };
+}
+
+function buildWeeklyReviewNotes(current, previous, bestSet) {
+  const notes = [];
+
+  if (current.workouts === 0) {
+    notes.push(
+      "Nothing logged in the last 7 days. No guilt needed - just pick the next workout and log the first exercise. The rest tends to follow.",
+    );
+    if (previous.workouts > 0) {
+      notes.push(
+        `The week before had ${previous.workouts} ${previous.workouts === 1 ? "session" : "sessions"}, so the habit is there. Get one in early this week.`,
+      );
+    }
+    return notes;
+  }
+
+  if (current.workouts >= 3) {
+    notes.push(
+      `${current.workouts} sessions banked this week. Consistency like that is what actually moves the numbers.`,
+    );
+  } else if (previous.workouts > current.workouts) {
+    notes.push(
+      `${current.workouts} ${current.workouts === 1 ? "session" : "sessions"} this week, down from ${previous.workouts}. One extra session next week puts you back on track.`,
+    );
+  } else {
+    notes.push(
+      `${current.workouts} ${current.workouts === 1 ? "session" : "sessions"} logged this week.`,
+    );
+  }
+
+  if (current.totalVolume > 0 && previous.totalVolume > 0) {
+    const change = current.totalVolume - previous.totalVolume;
+    const threshold = Math.max(50, previous.totalVolume * 0.05);
+
+    if (change > threshold) {
+      notes.push(
+        `Training volume climbed from ${formatVolume(previous.totalVolume)} to ${formatVolume(current.totalVolume)}. Nice work - just keep the jumps gradual.`,
+      );
+    } else if (change < -threshold) {
+      notes.push(
+        `Volume came down from ${formatVolume(previous.totalVolume)} to ${formatVolume(current.totalVolume)}. Fine if it was planned or recovery-driven - worth a look if it wasn't.`,
+      );
+    } else {
+      notes.push(`Volume held steady around ${formatVolume(current.totalVolume)}.`);
+    }
+  }
+
+  if (Number.isFinite(current.averageRpe) && current.averageRpe >= 8.5) {
+    notes.push(
+      `Average session effort ran hot at ${current.averageRpe.toFixed(1)}/10. If that continues, expect the coach to keep recommendations conservative.`,
+    );
+  }
+
+  if (Number.isFinite(current.averageReadiness) && Number.isFinite(previous.averageReadiness)) {
+    const readinessChange = current.averageReadiness - previous.averageReadiness;
+
+    if (readinessChange <= -0.4) {
+      notes.push(
+        `Readiness slipped from ${previous.averageReadiness.toFixed(1)} to ${current.averageReadiness.toFixed(1)} out of 5. Prioritize sleep before chasing new loads.`,
+      );
+    } else if (readinessChange >= 0.4) {
+      notes.push(
+        `Readiness improved to ${current.averageReadiness.toFixed(1)}/5. Good window to push the main lifts.`,
+      );
+    }
+  }
+
+  if (bestSet) {
+    notes.push(`Set of the week: ${bestSet.exerciseName ?? "Top set"} - ${formatSetPerformance(bestSet)}.`);
+  }
+
+  return notes;
+}
+
+function buildWeeklyReview(sessionSummaries, setRecords) {
+  const now = Date.now();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  const current = summarizeWeeklyReviewWindow(sessionSummaries, now - weekMs, now);
+  const previous = summarizeWeeklyReviewWindow(sessionSummaries, now - 2 * weekMs, now - weekMs);
+  const weekSets = (setRecords ?? []).filter((record) => {
+    if (!record.completed) {
+      return false;
+    }
+
+    const time = getDateTime(record.date);
+    return time && now - time <= weekMs;
+  });
+  const bestSet = [...weekSets].sort(compareBestSet)[0] ?? null;
+
+  return {
+    current,
+    previous,
+    bestSet,
+    notes: buildWeeklyReviewNotes(current, previous, bestSet),
+  };
+}
+
+function WeeklyReviewDelta({ label, value, previousValue, formatter }) {
+  const hasComparison = Number.isFinite(previousValue) && previousValue > 0;
+  const detail = hasComparison ? `Last week: ${formatter(previousValue)}` : "No data last week";
+
+  return (
+    <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-500">{label}</p>
+      <p className="mt-1 break-words text-lg font-black text-white">
+        {Number.isFinite(value) && value > 0 ? formatter(value) : value === 0 ? formatter(0) : "--"}
+      </p>
+      <p className="mt-1 text-xs font-semibold text-zinc-400">{detail}</p>
+    </div>
+  );
+}
+
+function WeeklyReviewSection({ sessionSummaries, setRecords }) {
+  const review = useMemo(
+    () => buildWeeklyReview(sessionSummaries, setRecords),
+    [sessionSummaries, setRecords],
+  );
+
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        Weekly review
+      </p>
+      <h3 className="mt-1 text-xl font-black text-white">Last 7 days vs the week before</h3>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <WeeklyReviewDelta
+          label="Workouts"
+          value={review.current.workouts}
+          previousValue={review.previous.workouts}
+          formatter={formatPlainNumber}
+        />
+        <WeeklyReviewDelta
+          label="Sets"
+          value={review.current.setCount}
+          previousValue={review.previous.setCount}
+          formatter={formatPlainNumber}
+        />
+        <WeeklyReviewDelta
+          label="Volume"
+          value={review.current.totalVolume}
+          previousValue={review.previous.totalVolume}
+          formatter={formatVolume}
+        />
+        <WeeklyReviewDelta
+          label="Avg session RPE"
+          value={review.current.averageRpe}
+          previousValue={review.previous.averageRpe}
+          formatter={(value) => Number(value).toFixed(1)}
+        />
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {review.notes.map((note) => (
+          <p
+            key={note}
+            className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-semibold leading-6 text-zinc-200"
+          >
+            {note}
+          </p>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProgressPage({
   sessions,
   readinessByDate,
@@ -4545,6 +4737,11 @@ function ProgressPage({
           </span>
         </div>
       </section>
+
+      <WeeklyReviewSection
+        sessionSummaries={analytics.sessionSummaries}
+        setRecords={analytics.setRecords}
+      />
 
       <section className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
         <ProgressStatCard
@@ -4702,6 +4899,11 @@ function ExerciseProgressPanel({ exercise, stats }) {
           label="Recent volume"
           value={stats.volumeTrend.value}
           detail={stats.volumeTrend.detail}
+        />
+        <ProgressStatCard
+          label="Est. strength trend"
+          value={stats.strengthTrend.value}
+          detail={stats.strengthTrend.detail}
         />
         <ProgressStatCard
           label="Average set RPE"
@@ -6070,6 +6272,7 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
   );
   const repsTrend = buildExerciseMetricTrend(recentSessions, "totalReps", formatPlainNumber, "reps");
   const volumeTrend = buildExerciseMetricTrend(recentSessions, "totalVolume", formatVolume);
+  const strengthTrend = buildExerciseMetricTrend(recentSessions, "bestEstimatedStrength", formatKg);
   const trendInfo = buildExerciseProgressTrend(recentSessions);
 
   return {
@@ -6085,6 +6288,7 @@ function buildSelectedExerciseAnalytics(exercise, setRecords) {
     recentSessions,
     repsTrend,
     volumeTrend,
+    strengthTrend,
     trendInfo,
     trendMaxValue: Math.max(0, ...trendValues),
   };
