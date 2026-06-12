@@ -4224,11 +4224,17 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
   );
   const [errors, setErrors] = useState([]);
   const [saveMessage, setSaveMessage] = useState("");
+  const justSavedRef = useRef(false);
 
   useEffect(() => {
     setValues(getSetEntryValues(set ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)));
     setErrors([]);
-    setSaveMessage("");
+    // The save itself updates `set`; keep the confirmation visible in that case.
+    if (justSavedRef.current) {
+      justSavedRef.current = false;
+    } else {
+      setSaveMessage("");
+    }
   }, [exercise, planExercise, set]);
 
   function updateValue(field, value) {
@@ -4246,6 +4252,7 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
       return;
     }
 
+    justSavedRef.current = true;
     onSave(setIndex, values);
     setErrors([]);
     setSaveMessage(`Set ${setIndex + 1} saved.`);
@@ -4496,6 +4503,7 @@ function UnifiedSetEntry({
   );
   const [errors, setErrors] = useState([]);
   const [saveMessage, setSaveMessage] = useState("");
+  const justSavedRef = useRef(false);
 
   useEffect(() => {
     setValues(
@@ -4505,7 +4513,12 @@ function UnifiedSetEntry({
       ),
     );
     setErrors([]);
-    setSaveMessage("");
+    // The save itself updates `sets`; keep the confirmation visible in that case.
+    if (justSavedRef.current) {
+      justSavedRef.current = false;
+    } else {
+      setSaveMessage("");
+    }
   }, [exercise, planExercise, selectedSetIndex, sets]);
 
   function updateValue(field, value) {
@@ -4523,6 +4536,7 @@ function UnifiedSetEntry({
       return;
     }
 
+    justSavedRef.current = true;
     onSave(selectedSetIndex, values);
     setErrors([]);
     setSaveMessage(`Set ${selectedSetIndex + 1} saved.`);
