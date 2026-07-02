@@ -22,6 +22,8 @@ import {
   Smile,
   Zap,
 } from "lucide-react";
+import AiProgramGenerator from "./components/AiProgramGenerator.jsx";
+import { clearGeminiApiKey } from "./lib/aiProgram.js";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
 import {
   formatRest,
@@ -1796,7 +1798,10 @@ export default function App() {
         )}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-[#121212]/95 px-2 py-2 backdrop-blur sm:px-3 sm:py-3">
+      <nav
+        aria-label="Main navigation"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-[#121212]/95 px-2 py-2 backdrop-blur sm:px-3 sm:py-3"
+      >
         <div className="mx-auto grid max-w-md grid-cols-5 gap-1.5 sm:hidden">
           {mobilePrimaryTabs.map((tab) => {
             const Icon = tab.icon;
@@ -3544,6 +3549,9 @@ function SettingsPage() {
       return;
     }
 
+    // The Gemini key lives outside the tracked keys; a full reset should
+    // still remove credentials from the device.
+    clearGeminiApiKey();
     setResetMessage("Local app data reset. Reloading default program...");
     window.setTimeout(() => window.location.reload(), 700);
   }
@@ -3577,12 +3585,12 @@ function SettingsPage() {
           Export Data
         </button>
         {exportMessage && (
-          <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+          <p role="status" className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
             {exportMessage}
           </p>
         )}
         {exportError && (
-          <p className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
             {exportError}
           </p>
         )}
@@ -3610,13 +3618,13 @@ function SettingsPage() {
         </button>
 
         {importError && (
-          <p className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
             {importError}
           </p>
         )}
 
         {importMessage && (
-          <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+          <p role="status" className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
             {importMessage}
           </p>
         )}
@@ -3716,7 +3724,7 @@ function SettingsPage() {
           </div>
         )}
         {resetMessage && (
-          <p className="mt-3 rounded-[8px] bg-red-300/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-[8px] bg-red-300/10 px-3 py-2 text-sm font-bold text-red-100">
             {resetMessage}
           </p>
         )}
@@ -7465,12 +7473,18 @@ function ProgramPage({
             Import Program File
           </button>
           {importMessage && (
-            <p className="mt-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+            <p
+              role="status"
+              className="mt-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100"
+            >
               {importMessage}
             </p>
           )}
           {importError && (
-            <p className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+            <p
+              role="alert"
+              className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+            >
               {importError}
             </p>
           )}
@@ -7492,6 +7506,8 @@ function ProgramPage({
           })}
         </div>
       </section>
+
+      <AiProgramGenerator onImportProgramShare={onImportProgramShare} />
     </div>
   );
 }
