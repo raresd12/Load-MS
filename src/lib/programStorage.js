@@ -230,7 +230,7 @@ function normalizeWarmupItem(item, index) {
   };
 }
 
-function normalizeWarmup(warmup) {
+export function normalizeWarmup(warmup) {
   if (!warmup || typeof warmup !== "object") {
     return null;
   }
