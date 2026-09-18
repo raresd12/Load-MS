@@ -22,7 +22,7 @@ import {
   Smile,
   Zap,
 } from "lucide-react";
-import AiProgramGenerator from "./components/AiProgramGenerator.jsx";
+import AiProgramImportAssistant from "./components/AiProgramImportAssistant.jsx";
 import { clearGeminiApiKey } from "./lib/aiProgram.js";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
 import {
@@ -7507,7 +7507,7 @@ function ProgramPage({
         </div>
       </section>
 
-      <AiProgramGenerator onImportProgramShare={onImportProgramShare} />
+      <AiProgramImportAssistant onImportProgramShare={onImportProgramShare} />
     </div>
   );
 }
