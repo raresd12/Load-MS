@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Archive,
   Info,
   BarChart3,
   BatteryMedium,
@@ -15,9 +16,11 @@ import {
   History,
   MoreHorizontal,
   Moon,
+  Pencil,
   Save,
   Settings,
   Trash2,
+  TriangleAlert,
   Upload,
   Smile,
   Zap,
@@ -25,6 +28,14 @@ import {
 import AiProgramImportAssistant from "./components/AiProgramImportAssistant.jsx";
 import { clearGeminiApiKey } from "./lib/aiProgram.js";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
+import { getPrescriptionSourceLabel, resolvePrescription } from "./lib/prescription.js";
+import { getBestComparablePerformance } from "./lib/readinessPerformance.js";
+import {
+  formatRestClock,
+  formatRestEditorValue,
+  parseRestEditorValue,
+  resolveRestSeconds,
+} from "./lib/rest.js";
 import {
   formatRest,
   formatSetsReps,
@@ -36,6 +47,7 @@ import {
   wellnessMetrics,
 } from "./lib/progression.js";
 import {
+  deriveProgramStatePatchFromSessions,
   duplicateProgram,
   exportProgramShare,
   getActiveProgram,
@@ -47,22 +59,41 @@ import {
   getProgramState,
   getPrograms,
   importProgramShare,
+  MAX_TARGET_SETS,
+  persistWorkoutSave,
+  removeExerciseFromNextPlans,
   seedDefaultProgramIfNeeded,
-  setActiveProgram,
-  updateProgramExerciseTarget,
-  updateProgramMetadata,
-  updateProgramState,
-  upsertProgramProgressionsFromPlan,
+  setActiveProgramChecked,
+  setProgramArchived,
+  updateProgramExerciseTargetChecked,
+  updateProgramMetadataChecked,
 } from "./lib/programStorage.js";
 import {
+  getAverageNumericWeight,
+  getLoggedReps,
+  isBodyweightText,
+  isRecoverySession,
+  normalizeWeight,
+} from "./lib/sessionLog.js";
+import {
+  clearStorageIssue,
   createLocalBackup,
+  discardCorruptStorageValue,
+  getStorageIssues,
   getTrackedStorageKeys,
   resetLocalAppData,
   restoreLocalBackup,
+  STORAGE_ISSUE_KINDS,
   STORAGE_KEYS,
+  subscribeStorageIssues,
   useLocalStorageState,
   validateLocalBackup,
 } from "./lib/storage.js";
+import {
+  getPlanSlotSignature,
+  getWorkoutDraftKey,
+  resolveWorkoutDraftKey,
+} from "./lib/workoutDraft.js";
 
 const tabs = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -116,8 +147,6 @@ const readinessStyles = {
   yellow: "border-amber-300/40 bg-amber-300/10 text-amber-100",
   green: "border-lime-300/40 bg-lime-300/10 text-lime-100",
 };
-
-const baseRecommendationNote = "Base program prescription.";
 
 const readinessCopy = {
   green: {
@@ -202,7 +231,7 @@ function numberValue(value, fallback = 0) {
 }
 
 function getPlanExercise(plan, exerciseId) {
-  return plan.exercises.find((entry) => entry.exerciseId === exerciseId);
+  return plan?.exercises?.find((entry) => entry.exerciseId === exerciseId);
 }
 
 function getExerciseStorageIds(exerciseOrId) {
@@ -226,9 +255,20 @@ function getExerciseLog(session, exerciseOrId) {
     return session.exercises[matchedId];
   }
 
-  const workoutSets = session?.workoutSets?.filter(
-    (set) => ids.includes(set.programExerciseId) || ids.includes(set.exerciseId),
-  );
+  // Identity is programId + programExerciseId (handoff 3.1 / review finding F1):
+  // a set that carries a different programExerciseId is a conflict, never a
+  // Library-id fallback. Library/legacy ids only match sets without a program id.
+  const programExerciseId =
+    typeof exerciseOrId === "string"
+      ? exerciseOrId
+      : (exerciseOrId?.programExerciseId ?? exerciseOrId?.id ?? null);
+  const workoutSets = session?.workoutSets?.filter((set) => {
+    if (set.programExerciseId) {
+      return set.programExerciseId === programExerciseId;
+    }
+
+    return ids.includes(set.exerciseId);
+  });
 
   if (!workoutSets?.length) {
     return null;
@@ -296,10 +336,6 @@ function createDraft(day, plan, sessions = []) {
   };
 }
 
-function getWorkoutDraftKey(programId, dayId, dateKey) {
-  return [programId ?? "no-program", dayId ?? "no-day", dateKey].join("::");
-}
-
 function mergeSavedDraft(baseDraft, savedDraft) {
   if (!savedDraft) {
     return baseDraft;
@@ -365,22 +401,6 @@ function normalizeWellness(wellness) {
   );
 }
 
-function normalizeWeight(value) {
-  if (typeof value === "string") {
-    const cleanValue = value.trim();
-    if (!cleanValue) {
-      return null;
-    }
-
-    if (isBodyweightText(cleanValue)) {
-      return "BW";
-    }
-  }
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function getSetRpe(set) {
   const rpe = numberValue(set?.rpe, NaN);
   return isValidRpeValue(rpe) ? rpe : null;
@@ -435,11 +455,6 @@ function normalizeManualWeight(value) {
 
 function isBlank(value) {
   return value === "" || value === null || value === undefined;
-}
-
-function isBodyweightText(value) {
-  const cleanValue = String(value ?? "").trim().toLowerCase();
-  return cleanValue === "bw" || cleanValue === "bodyweight" || cleanValue === "body weight";
 }
 
 function isHalfStep(value) {
@@ -604,8 +619,14 @@ function createWorkoutSetLogs({ sessionId, programId, day, plan, draft }) {
 }
 
 function getLastExerciseSession(dayId, exerciseOrId, sessions) {
+  const programId = typeof exerciseOrId === "string" ? null : (exerciseOrId?.programId ?? null);
+
   return sessions.find(
-    (session) => session.dayId === dayId && getExerciseLog(session, exerciseOrId),
+    (session) =>
+      session.dayId === dayId &&
+      // Sessions of another program are never "last time" for this exercise (F1).
+      (!programId || !session.programId || session.programId === programId) &&
+      getExerciseLog(session, exerciseOrId),
   );
 }
 
@@ -619,32 +640,19 @@ function getExerciseTotalReps(session, exerciseOrId) {
   return sets.reduce((total, set) => total + numberValue(set.reps, 0), 0);
 }
 
+// Empty set slots (weight null) never count as 0 kg here: src/lib/sessionLog.js.
 function formatLoggedWeight(session, exercise, exerciseOrId) {
-  const sets = getExerciseLog(session, exerciseOrId)?.sets ?? [];
-  const numericWeights = sets
-    .map((set) => normalizeWeight(set.weight))
-    .filter((weight) => typeof weight === "number");
+  const averageWeight = getAverageLoggedWeight(session, exerciseOrId);
 
-  if (!numericWeights.length) {
+  if (averageWeight === null) {
     return exercise.loadType === "bodyweight" ? "BW" : "BW / untracked load";
   }
 
-  const averageWeight =
-    numericWeights.reduce((total, weight) => total + weight, 0) / numericWeights.length;
   return formatWeight(averageWeight, exercise);
 }
 
 function getAverageLoggedWeight(session, exerciseOrId) {
-  const sets = getExerciseLog(session, exerciseOrId)?.sets ?? [];
-  const numericWeights = sets
-    .map((set) => normalizeWeight(set.weight))
-    .filter((weight) => typeof weight === "number");
-
-  if (!numericWeights.length) {
-    return null;
-  }
-
-  return numericWeights.reduce((total, weight) => total + weight, 0) / numericWeights.length;
+  return getAverageNumericWeight(getExerciseLog(session, exerciseOrId)?.sets ?? []);
 }
 
 function getBeatLastCue(dayId, exercise, sessions, planExercise) {
@@ -661,8 +669,19 @@ function getBeatLastCue(dayId, exercise, sessions, planExercise) {
   }
 
   const previousSets = getExerciseLog(previousSession, exercise)?.sets ?? [];
-  const previousReps = previousSets.map((set) => numberValue(set.reps, 0));
-  const previousTotalReps = getExerciseTotalReps(previousSession, exercise);
+  // Only logged sets: an untouched slot is not "0 reps at 0 kg".
+  const previousReps = getLoggedReps(previousSets);
+  const previousTotalReps = previousReps.reduce((total, reps) => total + reps, 0);
+
+  if (!previousReps.length) {
+    // The session exists but this exercise was skipped in it: nothing to beat.
+    return {
+      summary: "No logged sets for this exercise yet - establish your baseline today.",
+      target: isAthletic
+        ? "Prioritize speed and crisp execution over more volume."
+        : "Log honest reps and kg so next time has a target.",
+    };
+  }
   const previousWeight = formatLoggedWeight(previousSession, exercise, exercise);
   const previousAverageWeight = getAverageLoggedWeight(previousSession, exercise);
   const plannedWeight = normalizeWeight(planExercise.recommendedWeight);
@@ -692,26 +711,6 @@ function getBeatLastCue(dayId, exercise, sessions, planExercise) {
   };
 }
 
-function isRealProgramProgression(progression) {
-  return Boolean(
-    progression?.recommendationNote &&
-      progression.recommendationNote !== baseRecommendationNote &&
-      progression.sourcePlanGeneratedAt,
-  );
-}
-
-function repsLabelFromRange(reps, fallbackLabel) {
-  if (reps?.label) {
-    return reps.label;
-  }
-
-  if (reps?.min !== null && reps?.min !== undefined && reps?.max !== null && reps?.max !== undefined) {
-    return reps.min === reps.max ? String(reps.min) : `${reps.min}-${reps.max}`;
-  }
-
-  return fallbackLabel ?? "custom";
-}
-
 function normalizeCoachWarnings(value) {
   if (!value) {
     return [];
@@ -725,99 +724,58 @@ function normalizeCoachWarnings(value) {
 
 function getWorkoutExerciseRecommendation(programId, exercise, planExercise, planStatus) {
   const programExerciseId = exercise.programExerciseId ?? exercise.id;
-  const progression = programId
-    ? getProgramProgression(programId, programExerciseId)
-    : null;
+  const progression = programId ? getProgramProgression(programId, programExerciseId) : null;
   const baseline = programId ? getProgramBaseline(programId, programExerciseId) : null;
-  const hasStoredProgression = isRealProgramProgression(progression);
-  const hasGeneratedPlan = planStatus === "generated" && planExercise?.reasons?.length;
-  const source = hasStoredProgression ? "progression" : hasGeneratedPlan ? "next-plan" : "program";
-  const storedReps = hasStoredProgression ? progression.lastRecommendedReps : null;
-  const baselineReps = baseline?.startingReps;
-  const decision =
-    (hasStoredProgression ? progression.decision : null) ??
-    (hasGeneratedPlan ? planExercise?.decision : null) ??
-    null;
-  const confidence =
-    (hasStoredProgression ? progression.confidence : null) ??
-    (hasGeneratedPlan ? planExercise?.confidence : null) ??
-    null;
-  const warnings = normalizeCoachWarnings(
-    (hasStoredProgression ? progression.warnings : null) ??
-      (hasGeneratedPlan ? planExercise?.warnings : null),
-  );
-  const historyTrend =
-    (hasStoredProgression ? progression.historyTrend : null) ??
-    planExercise?.historyTrend ??
-    null;
-  const historySampleSize =
-    (hasStoredProgression ? progression.historySampleSize : null) ??
-    planExercise?.historySampleSize ??
-    null;
-  const progressionMode =
-    (hasStoredProgression ? progression.progressionMode : null) ??
-    planExercise?.progressionMode ??
-    null;
-  const exerciseProfile =
-    (hasStoredProgression ? progression.exerciseProfile : null) ??
-    planExercise?.exerciseProfile ??
-    null;
+  const resolved = resolvePrescription({
+    programExercise: exercise,
+    progression,
+    planExercise,
+    baseline,
+    planStatus,
+  });
 
   return {
-    source,
-    sets:
-      (hasStoredProgression ? progression.lastRecommendedSets : null) ??
-      planExercise?.sets ??
-      exercise.sets ??
-      baseline?.startingSets,
-    repsMin:
-      storedReps?.min ??
-      planExercise?.repsMin ??
-      exercise.repsMin ??
-      baselineReps?.min,
-    repsMax:
-      storedReps?.max ??
-      planExercise?.repsMax ??
-      exercise.repsMax ??
-      baselineReps?.max,
-    repsLabel:
-      repsLabelFromRange(storedReps, null) !== "custom"
-        ? repsLabelFromRange(storedReps, null)
-        : planExercise?.repsLabel ??
-          exercise.repsLabel ??
-          (repsLabelFromRange(baselineReps, null) !== "custom"
-            ? repsLabelFromRange(baselineReps, null)
-            : "custom"),
-    recommendedWeight:
-      (hasStoredProgression ? progression.lastRecommendedWeight : null) ??
-      planExercise?.recommendedWeight ??
-      exercise.recommendedWeight ??
-      baseline?.startingWeight,
-    targetRPE:
-      (hasStoredProgression ? progression.lastTargetRPE : null) ??
-      planExercise?.targetRPE ??
-      exercise.targetRPE ??
-      baseline?.startingRPE,
-    restSeconds: planExercise?.restSeconds ?? exercise.restSeconds ?? baseline?.restTime,
-    recommendationNote: hasStoredProgression
-      ? progression.recommendationNote
-      : hasGeneratedPlan
-        ? planExercise.reasons[0]
-        : "Starting recommendation based on current program target.",
-    repFocus:
-      (hasStoredProgression ? progression.repFocus : null) ??
-      planExercise?.repFocus ??
-      null,
-    conservative:
-      Boolean(hasStoredProgression ? progression.conservative : planExercise?.conservative),
-    decision,
-    confidence,
-    warnings,
-    historyTrend,
-    historySampleSize,
-    progressionMode,
-    exerciseProfile,
+    source: resolved.source,
+    sourceDetail: resolved.sourceDetail,
+    sourceLabel: getPrescriptionSourceLabel(resolved.source),
+    fieldSources: resolved.fieldSources,
+    sets: resolved.sets,
+    repsMin: resolved.repsMin,
+    repsMax: resolved.repsMax,
+    repsLabel: resolved.repsLabel,
+    recommendedWeight: resolved.weight,
+    targetRPE: resolved.targetRPE,
+    restSeconds: resolved.restSeconds,
+    recommendationNote: resolved.coach.recommendationNote,
+    repFocus: resolved.coach.repFocus,
+    conservative: resolved.coach.conservative,
+    decision: resolved.coach.decision,
+    confidence: resolved.coach.confidence,
+    warnings: resolved.coach.warnings,
+    historyTrend: resolved.coach.historyTrend,
+    historySampleSize: resolved.coach.historySampleSize,
+    progressionMode: resolved.coach.progressionMode,
+    exerciseProfile: resolved.coach.exerciseProfile,
   };
+}
+
+/**
+ * Resolves the prescription of every exercise of a day through the shared
+ * resolver (decision 19.4-2) so Workouts, Workout Log and the saved planned
+ * snapshot always agree. Returns a map keyed by exercise.id (programExerciseId).
+ */
+function resolveDayPrescriptions(programId, day, plan) {
+  return Object.fromEntries(
+    (day?.exercises ?? []).map((exercise) => [
+      exercise.id,
+      getWorkoutExerciseRecommendation(
+        programId,
+        exercise,
+        getPlanExercise(plan, exercise.id),
+        plan?.status,
+      ),
+    ]),
+  );
 }
 
 function getCoachDecisionLabel(decision) {
@@ -1204,21 +1162,355 @@ function buildPostWorkoutNextText(generatedPlan) {
   return "Save more complete sets to sharpen the next recommendation.";
 }
 
+/**
+ * Plan for a day with every exercise replaced by its resolved prescription
+ * (decision 19.4-2). Keeps the coach fields of the underlying plan entry.
+ */
+function buildResolvedPlan(programId, day, plan) {
+  const resolved = resolveDayPrescriptions(programId, day, plan);
+
+  return {
+    ...(plan ?? {}),
+    exercises: (day?.exercises ?? []).map((exercise) => {
+      const planExercise = getPlanExercise(plan, exercise.id) ?? {};
+      const prescription = resolved[exercise.id];
+
+      return {
+        ...planExercise,
+        exerciseId: exercise.id,
+        name: exercise.name,
+        sets: prescription.sets,
+        repsMin: prescription.repsMin,
+        repsMax: prescription.repsMax,
+        repsLabel: prescription.repsLabel,
+        targetRPE: prescription.targetRPE,
+        restSeconds: prescription.restSeconds,
+        recommendedWeight: prescription.recommendedWeight,
+        prescriptionSource: prescription.source,
+      };
+    }),
+  };
+}
+
+function buildPlannedExercisesSnapshot(day, resolvedPlan) {
+  return Object.fromEntries(
+    (day?.exercises ?? []).map((exercise) => {
+      const planExercise = getPlanExercise(resolvedPlan, exercise.id);
+
+      return [
+        exercise.id,
+        {
+          sets: planExercise?.sets ?? exercise.sets,
+          repsMin: planExercise?.repsMin ?? exercise.repsMin,
+          repsMax: planExercise?.repsMax ?? exercise.repsMax,
+          repsLabel: planExercise?.repsLabel ?? exercise.repsLabel,
+          targetRPE: planExercise?.targetRPE ?? exercise.targetRPE,
+          recommendedWeight: planExercise?.recommendedWeight ?? exercise.recommendedWeight,
+          restSeconds: planExercise?.restSeconds ?? exercise.restSeconds ?? null,
+          prescriptionSource: planExercise?.prescriptionSource ?? null,
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * The plan a saved session was logged against, rebuilt from its own
+ * plannedExercises snapshot (falls back to the current targets only for
+ * exercises the snapshot does not know).
+ */
+function buildPlanFromSessionSnapshot(session, day) {
+  const planned = session?.plannedExercises ?? {};
+
+  return {
+    status: "snapshot",
+    exercises: (day?.exercises ?? []).map((exercise) => ({
+      exerciseId: exercise.id,
+      sets: exercise.sets,
+      repsMin: exercise.repsMin,
+      repsMax: exercise.repsMax,
+      repsLabel: exercise.repsLabel,
+      targetRPE: exercise.targetRPE,
+      restSeconds: exercise.restSeconds,
+      recommendedWeight: exercise.recommendedWeight,
+      ...(planned[exercise.id] ?? {}),
+    })),
+  };
+}
+
+function stringifyDraftValue(value) {
+  return isBlank(value) ? "" : String(value);
+}
+
+/**
+ * Draft-shaped view of a saved session (what the History editor edits).
+ * Sets come from the session's own log so the edit never invents rows.
+ */
+function buildDraftFromSession(session, day) {
+  const exercises = Object.fromEntries(
+    (day?.exercises ?? []).map((exercise) => {
+      const log = getExerciseLog(session, exercise);
+      const plannedSets = numberValue(session?.plannedExercises?.[exercise.id]?.sets, null);
+      const loggedSets = Array.isArray(log?.sets) ? log.sets : [];
+      const setCount = loggedSets.length || plannedSets || exercise.sets || 0;
+      const sets = Array.from({ length: setCount }, (_, index) => ({
+        reps: stringifyDraftValue(loggedSets[index]?.reps),
+        weight: stringifyDraftValue(loggedSets[index]?.weight),
+        rpe: stringifyDraftValue(loggedSets[index]?.rpe),
+      }));
+
+      return [
+        exercise.id,
+        {
+          notes: log?.notes ?? "",
+          painFlag: Boolean(log?.painFlag),
+          sets,
+        },
+      ];
+    }),
+  );
+
+  return {
+    exercises,
+    wellness: session?.wellness ?? createDefaultWellness(),
+    recoveryActivities: session?.recoveryActivities ?? {},
+    recoveryNotes: session?.recoveryNotes ?? "",
+    sessionRpe: stringifyDraftValue(session?.sessionRpe),
+    sessionNotes: session?.sessionNotes ?? "",
+  };
+}
+
+/**
+ * Decision new-E: rebuilds exercises / workoutSets / analytics of a saved
+ * session from edited draft values with the same normalisation as the save
+ * path. The id, date and program/day identity are kept; updatedAt is bumped.
+ */
+function rebuildSessionFromEdits(session, day, edits) {
+  const baseDraft = buildDraftFromSession(session, day);
+  const draft = {
+    ...baseDraft,
+    sessionRpe: edits?.sessionRpe ?? baseDraft.sessionRpe,
+    sessionNotes: edits?.sessionNotes ?? baseDraft.sessionNotes,
+    exercises: Object.fromEntries(
+      Object.entries(baseDraft.exercises).map(([exerciseId, baseExercise]) => {
+        const edited = edits?.exercises?.[exerciseId];
+
+        if (!edited) {
+          return [exerciseId, baseExercise];
+        }
+
+        return [
+          exerciseId,
+          {
+            ...baseExercise,
+            notes: edited.notes ?? baseExercise.notes,
+            painFlag: edited.painFlag ?? baseExercise.painFlag,
+            sets: (edited.sets ?? baseExercise.sets).map((set) => ({
+              reps: stringifyDraftValue(set?.reps),
+              weight: stringifyDraftValue(set?.weight),
+              rpe: stringifyDraftValue(set?.rpe),
+            })),
+          },
+        ];
+      }),
+    ),
+  };
+  const errors = validateDraft(day, draft);
+
+  if (errors.length) {
+    return { ok: false, error: errors[0], errors };
+  }
+
+  const plan = buildPlanFromSessionSnapshot(session, day);
+  const rebuiltSession = {
+    ...session,
+    exercises: normalizeExerciseLogs(day, draft.exercises),
+    workoutSets: createWorkoutSetLogs({
+      sessionId: session.id,
+      programId: session.programId ?? null,
+      day,
+      plan,
+      draft,
+    }),
+    sessionRpe: numberValue(draft.sessionRpe, null),
+    sessionNotes: String(draft.sessionNotes ?? "").trim(),
+    analytics: getSessionAnalytics(day, draft),
+    updatedAt: new Date().toISOString(),
+  };
+
+  return { ok: true, session: rebuiltSession, errors: [] };
+}
+
+function buildSaveErrorMessage(result) {
+  const detail = String(result?.error ?? "").trim();
+
+  if (result?.code === "quota") {
+    return {
+      code: "quota",
+      title: "Workout not saved - storage is full.",
+      message:
+        "Your draft is kept. Export a backup in Settings, delete old data, then press Save Workout again.",
+      detail,
+    };
+  }
+
+  if (result?.code === "corrupt") {
+    // Decision new-U: saving would replace stored data the app could not read.
+    return {
+      code: "corrupt",
+      title: "Workout not saved - stored data could not be read.",
+      message: `Your draft is kept. Saving would overwrite the unreadable data under "${
+        result?.failedKey ?? "a storage key"
+      }". Use the storage warning at the top to restore a backup or discard that data, then press Save Workout again.`,
+      detail,
+    };
+  }
+
+  return {
+    code: result?.code ?? "write",
+    title: "Workout not saved.",
+    message: `The browser refused the write${detail ? ` (${detail})` : ""}. Your draft is kept - try again, and export a backup in Settings if this repeats.`,
+    detail,
+  };
+}
+
+/**
+ * Persistent storage warnings (decision new-G / review finding F2): storage
+ * issues recorded by src/lib/storage.js plus failed writes reported by the
+ * localStorage hooks. Each entry has a stable id used for dismissal.
+ */
+function buildStorageWarnings({ storageIssues, hookStatuses }) {
+  const warnings = (storageIssues ?? []).map((issue) => {
+    const isCorrupt = issue.kind === STORAGE_ISSUE_KINDS.readCorrupt;
+    const isQuota = issue.kind === STORAGE_ISSUE_KINDS.quota;
+
+    return {
+      id: `issue|${issue.key}|${issue.kind}|${issue.at}`,
+      key: issue.key,
+      kind: issue.kind,
+      fromIssue: true,
+      corruptCopyKey: issue.corruptCopyKey ?? null,
+      title: isCorrupt
+        ? "Stored data could not be read"
+        : isQuota
+          ? "Browser storage is full"
+          : "A save failed",
+      canDiscard: isCorrupt,
+      message: isCorrupt
+        ? `The data under "${issue.key}" is not valid JSON, so the app is using defaults for it.${
+            issue.corruptCopyKey ? ` The original was kept as "${issue.corruptCopyKey}".` : ""
+          } Nothing was overwritten, and nothing will be saved over it until you restore a backup or discard it.`
+        : isQuota
+          ? `Saving "${issue.key}" failed because storage is full. Export a backup in Settings and delete old data before logging more.`
+          : `Saving "${issue.key}" failed${issue.message ? `: ${issue.message}` : "."} Recent changes may not be on disk - export a backup in Settings.`,
+    };
+  });
+  // A hook write refused because the key is unreadable (decision new-U) is
+  // already explained by the read-corrupt warning of that key.
+  const coveredKeys = new Set(warnings.map((warning) => warning.key));
+
+  (hookStatuses ?? []).forEach(({ key, status }) => {
+    if (!status || status.lastWriteOk !== false || coveredKeys.has(key)) {
+      return;
+    }
+
+    warnings.push({
+      id: `hook|${key}|${status.lastWriteError ?? ""}`,
+      key,
+      kind: STORAGE_ISSUE_KINDS.writeFailed,
+      fromIssue: false,
+      corruptCopyKey: null,
+      title: "A save failed",
+      message: `The latest change to "${key}" was not written${
+        status.lastWriteError ? `: ${status.lastWriteError}` : "."
+      } Export a backup in Settings before continuing.`,
+    });
+  });
+
+  return warnings;
+}
+
+function StorageWarningBanner({ warnings, onDismiss, onDiscard, onOpenSettings }) {
+  if (!warnings?.length) {
+    return null;
+  }
+
+  return (
+    <div className="mb-4 space-y-2" role="alert">
+      {warnings.map((warning) => (
+        <div
+          key={warning.id}
+          className="rounded-[8px] border border-amber-300/50 bg-amber-300/10 p-3"
+        >
+          <div className="flex items-start gap-2">
+            <TriangleAlert aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-amber-200" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-black text-amber-100">{warning.title}</p>
+              <p className="mt-1 break-words text-xs font-semibold leading-5 text-amber-100/90">
+                {warning.message}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="focus-ring min-h-9 rounded-[8px] bg-amber-300 px-3 text-xs font-black text-zinc-950 hover:bg-amber-200"
+            >
+              Open Settings
+            </button>
+            {warning.canDiscard && onDiscard && (
+              <button
+                type="button"
+                onClick={() => onDiscard(warning)}
+                className="focus-ring min-h-9 rounded-[8px] border border-amber-300/50 px-3 text-xs font-black text-amber-100 hover:bg-amber-300/10"
+              >
+                Discard unreadable data
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onDismiss(warning)}
+              className="focus-ring min-h-9 rounded-[8px] border border-amber-300/50 px-3 text-xs font-black text-amber-100 hover:bg-amber-300/10"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
-  const [sessions, setSessions] = useLocalStorageState(STORAGE_KEYS.sessions, []);
-  const [nextPlans, setNextPlans] = useLocalStorageState(STORAGE_KEYS.nextPlans, {});
+  const [sessions, setSessions, sessionsStorageStatus] = useLocalStorageState(
+    STORAGE_KEYS.sessions,
+    [],
+  );
+  const [nextPlans, setNextPlans, nextPlansStorageStatus] = useLocalStorageState(
+    STORAGE_KEYS.nextPlans,
+    {},
+  );
   const [setupCues, setSetupCues] = useLocalStorageState(STORAGE_KEYS.setupCues, {});
   const [readinessByDate, setReadinessByDate] = useLocalStorageState(
     STORAGE_KEYS.readinessByDate,
     {},
   );
-  const [workoutDrafts, setWorkoutDrafts] = useLocalStorageState(STORAGE_KEYS.workoutDrafts, {});
+  const [workoutDrafts, setWorkoutDrafts, workoutDraftsStorageStatus] = useLocalStorageState(
+    STORAGE_KEYS.workoutDrafts,
+    {},
+  );
   const [appUiState, setAppUiState] = useLocalStorageState(STORAGE_KEYS.appUiState, {});
   const [programRevision, setProgramRevision] = useState(() => {
     seedDefaultProgramIfNeeded();
     return 0;
   });
   const programs = useMemo(() => getPrograms(), [programRevision]);
+  const allPrograms = useMemo(() => getPrograms({ includeArchived: true }), [programRevision]);
+  const archivedPrograms = useMemo(
+    () => allPrograms.filter((program) => Boolean(program.isArchived)),
+    [allPrograms],
+  );
   const activeProgramId = useMemo(() => getActiveProgramId(), [programRevision]);
   const activeProgram = useMemo(
     () => getActiveProgram() ?? programs.find((program) => !program.isArchived) ?? null,
@@ -1249,11 +1541,108 @@ export default function App() {
   const [validationErrors, setValidationErrors] = useState([]);
   const [workoutLogTarget, setWorkoutLogTarget] = useState(null);
   const [postWorkoutRecap, setPostWorkoutRecap] = useState(null);
-  const [todayDateKey] = useState(() => getLocalDateKey());
+  const [saveError, setSaveError] = useState(null);
+  const [todayDateKey, setTodayDateKey] = useState(() => getLocalDateKey());
   const [readinessDraft, setReadinessDraft] = useState(() =>
     normalizeWellness(readinessByDate[getLocalDateKey()]?.wellness ?? createDefaultWellness()),
   );
   const [readinessSaveMessage, setReadinessSaveMessage] = useState("");
+  const [storageIssues, setStorageIssues] = useState(() => getStorageIssues());
+  const [dismissedStorageIssueIds, setDismissedStorageIssueIds] = useState(() => new Set());
+
+  // Midnight rollover (handoff F13): the local date key follows the clock while
+  // the app stays mounted. Readiness follows the new date immediately; the
+  // Workout Log keeps working on a draft that already has logged data (see
+  // resolveWorkoutDraftKey) so a session that crosses midnight is not replaced
+  // by a blank draft mid-workout.
+  useEffect(() => {
+    function syncTodayDateKey() {
+      const currentKey = getLocalDateKey();
+      setTodayDateKey((previousKey) => (previousKey === currentKey ? previousKey : currentKey));
+    }
+
+    const intervalId = window.setInterval(syncTodayDateKey, 60000);
+    window.addEventListener("focus", syncTodayDateKey);
+    document.addEventListener("visibilitychange", syncTodayDateKey);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", syncTodayDateKey);
+      document.removeEventListener("visibilitychange", syncTodayDateKey);
+    };
+  }, []);
+
+  const previousDateKeyRef = useRef(todayDateKey);
+  useEffect(() => {
+    if (previousDateKeyRef.current === todayDateKey) {
+      return;
+    }
+
+    previousDateKeyRef.current = todayDateKey;
+    setReadinessDraft(
+      normalizeWellness(readinessByDate[todayDateKey]?.wellness ?? createDefaultWellness()),
+    );
+    setReadinessSaveMessage("");
+    setPostWorkoutRecap(null);
+  }, [todayDateKey, readinessByDate]);
+
+  useEffect(() => subscribeStorageIssues(setStorageIssues), []);
+
+  const storageWarnings = useMemo(
+    () =>
+      buildStorageWarnings({
+        storageIssues,
+        hookStatuses: [
+          { key: STORAGE_KEYS.sessions, status: sessionsStorageStatus },
+          { key: STORAGE_KEYS.nextPlans, status: nextPlansStorageStatus },
+          { key: STORAGE_KEYS.workoutDrafts, status: workoutDraftsStorageStatus },
+        ],
+      }).filter((warning) => !dismissedStorageIssueIds.has(warning.id)),
+    [
+      storageIssues,
+      sessionsStorageStatus,
+      nextPlansStorageStatus,
+      workoutDraftsStorageStatus,
+      dismissedStorageIssueIds,
+    ],
+  );
+
+  function dismissStorageWarning(warning) {
+    setDismissedStorageIssueIds((current) => new Set([...current, warning.id]));
+
+    if (warning.fromIssue) {
+      clearStorageIssue(warning.key, warning.kind);
+    }
+  }
+
+  /**
+   * Decision new-U: the explicit way out of an unreadable key. The raw text
+   * stays under its `.corrupt-<n>` copy; the key itself is removed so the
+   * defaults the app already shows can be saved again, and the default
+   * programs are re-seeded when a program key was discarded.
+   */
+  function discardCorruptStorage(warning) {
+    const confirmed = window.confirm(
+      `Discard the unreadable data under "${warning.key}"? A copy stays in browser storage${
+        warning.corruptCopyKey ? ` as "${warning.corruptCopyKey}"` : ""
+      }, but the app will save its current defaults over this key from now on.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const result = discardCorruptStorageValue(warning.key);
+
+    if (!result.ok) {
+      window.alert(result.error);
+      return;
+    }
+
+    setDismissedStorageIssueIds((current) => new Set([...current, warning.id]));
+    seedDefaultProgramIfNeeded();
+    refreshProgramData();
+  }
 
   const selectedDay = useMemo(
     () =>
@@ -1262,17 +1651,39 @@ export default function App() {
       getProgramDay(selectedDayId),
     [activeProgramDays, selectedDayId],
   );
-  const activePlan = useMemo(
+  const basePlan = useMemo(
     () => getPlanForDay(selectedDay, nextPlans[selectedDayId]),
     [selectedDay, nextPlans, selectedDayId],
   );
-  const draftKey = useMemo(
-    () => getWorkoutDraftKey(activeProgramId, selectedDayId, todayDateKey),
-    [activeProgramId, selectedDayId, todayDateKey],
+  // Decision 19.4-2: the plan Workout Log logs against is resolved through the
+  // shared prescription resolver (progression > plan > target > baseline), the
+  // same one every Workouts card uses, so both views show the same numbers.
+  // programRevision is a dependency because progressions/baselines live in storage.
+  const activePlan = useMemo(
+    () => buildResolvedPlan(activeProgram?.id ?? null, selectedDay, basePlan),
+    [activeProgram?.id, selectedDay, basePlan, programRevision],
   );
+  // The draft key normally carries today's date. When today's draft is empty
+  // and an in-progress draft of this day from an earlier date still has logged
+  // data (a workout crossing midnight), that draft is resumed instead.
+  const resolvedDraftKey = useMemo(
+    () =>
+      resolveWorkoutDraftKey({
+        workoutDrafts,
+        programId: activeProgramId,
+        dayId: selectedDayId,
+        todayDateKey,
+      }),
+    [workoutDrafts, activeProgramId, selectedDayId, todayDateKey],
+  );
+  const draftKey = resolvedDraftKey.key;
+  const draftDateKey = resolvedDraftKey.dateKey;
   const [draft, setDraft] = useState(() =>
     createDraftFromStorage(selectedDay, activePlan, sessions, workoutDrafts, draftKey),
   );
+  // Set slots per exercise (decision 19.4-2): a target edit can change the set
+  // count of one exercise while the day plan keeps its generatedAt.
+  const activePlanSlotSignature = useMemo(() => getPlanSlotSignature(activePlan), [activePlan]);
   const readinessDraftSummary = useMemo(
     () => interpretWellness(readinessDraft),
     [readinessDraft],
@@ -1295,7 +1706,7 @@ export default function App() {
   useEffect(() => {
     setDraft(createDraftFromStorage(selectedDay, activePlan, sessions, workoutDrafts, draftKey));
     setValidationErrors([]);
-  }, [selectedDayId, activePlan.generatedAt, draftKey]);
+  }, [selectedDayId, activePlan.generatedAt, activePlanSlotSignature, draftKey]);
 
   useEffect(() => {
     setAppUiState((currentState) => {
@@ -1356,7 +1767,12 @@ export default function App() {
       activeProgramDays[0] ??
       getProgramDay(dayId);
     const nextPlan = getPlanForDay(nextDay, nextPlans[dayId]);
-    const nextDraftKey = getWorkoutDraftKey(activeProgramId, dayId, todayDateKey);
+    const nextDraftKey = resolveWorkoutDraftKey({
+      workoutDrafts,
+      programId: activeProgramId,
+      dayId,
+      todayDateKey,
+    }).key;
 
     setSelectedDayId(dayId);
     setDraft(createDraftFromStorage(nextDay, nextPlan, sessions, workoutDrafts, nextDraftKey));
@@ -1373,7 +1789,7 @@ export default function App() {
         status,
         programId: activeProgramId,
         dayId: selectedDayId,
-        date: todayDateKey,
+        date: draftDateKey,
         updatedAt: new Date().toISOString(),
         draft: nextDraft,
       },
@@ -1414,27 +1830,37 @@ export default function App() {
   }
 
   function handleSetActiveProgram(programId) {
-    const nextActiveProgramId = setActiveProgram(programId);
-    if (!nextActiveProgramId) {
-      return;
+    // Success UI only after the write succeeded (fix round 2): a refused write
+    // leaves the day selection and the program list on the current program.
+    const result = setActiveProgramChecked(programId);
+
+    if (!result.ok) {
+      return result;
     }
 
-    const nextDays = getProgramDayViewModels(nextActiveProgramId);
+    const nextDays = getProgramDayViewModels(result.programId);
     setSelectedDayId(nextDays[0]?.id ?? workoutProgram.cycleOrder[0]);
     setLastGeneratedPlan(null);
     setValidationErrors([]);
     refreshProgramData();
+
+    return result;
   }
 
   function handleDuplicateProgram(programId) {
-    duplicateProgram(programId);
-    refreshProgramData();
+    const result = duplicateProgram(programId);
+
+    if (result?.ok) {
+      refreshProgramData();
+    }
+
+    return result;
   }
 
   function handleImportProgramShare(share) {
     const result = importProgramShare(share);
 
-    if (result.valid) {
+    if (result.ok ?? result.valid) {
       refreshProgramData();
     }
 
@@ -1442,18 +1868,147 @@ export default function App() {
   }
 
   function handleUpdateProgramMetadata(programId, patch) {
-    updateProgramMetadata(programId, patch);
-    refreshProgramData();
-  }
+    const result = updateProgramMetadataChecked(programId, patch);
 
-  function handleUpdateProgramExerciseTarget(programId, programExerciseId, patch) {
-    const updatedExercise = updateProgramExerciseTarget(programId, programExerciseId, patch);
-
-    if (updatedExercise) {
+    if (result.ok) {
       refreshProgramData();
     }
 
-    return updatedExercise;
+    return result;
+  }
+
+  function handleUpdateProgramExerciseTarget(programId, programExerciseId, patch) {
+    const result = updateProgramExerciseTargetChecked(programId, programExerciseId, patch);
+
+    if (result.ok) {
+      // Decision 19.4-2: the pending plan entry for this exercise is dropped so
+      // the next session starts from the new target (the stored progression was
+      // deleted in the same batch by updateProgramExerciseTargetChecked).
+      setNextPlans((currentPlans) => removeExerciseFromNextPlans(currentPlans, programExerciseId));
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  function handleArchiveProgram(programId, archived) {
+    const result = setProgramArchived(programId, archived);
+
+    if (result.ok) {
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  /**
+   * Decision new-E: after a session is edited or deleted, the next plan and
+   * progression for that program + day are regenerated from the most recent
+   * remaining session of the same program + day, or cleared when none is left.
+   * Everything is written through persistWorkoutSave (one batch); React state
+   * is only updated when the write succeeded.
+   */
+  function applyHistoryChange(remainingSessions, programId, dayId) {
+    const sortedRemaining = [...remainingSessions].sort(
+      (left, right) => getDateTime(right.date) - getDateTime(left.date),
+    );
+    const programDays = programId ? getProgramDayViewModels(programId) : [];
+    const day = programDays.find((candidate) => candidate.id === dayId) ?? null;
+    const latestSession =
+      sortedRemaining.find(
+        (candidate) =>
+          candidate.dayId === dayId && (candidate.programId ?? null) === (programId ?? null),
+      ) ?? null;
+    // Next plans are keyed by day id only (handoff 6.3), so only the active
+    // program's plan entry is touched; progressions are keyed by program.
+    const touchesActivePlan = (programId ?? null) === (activeProgramId ?? null);
+    let nextPlansValue = nextPlans;
+    let regeneratedPlan = null;
+
+    if (day && latestSession) {
+      const otherSessions = sortedRemaining.filter((candidate) => candidate.id !== latestSession.id);
+      regeneratedPlan = generateNextPlan(day, latestSession, otherSessions);
+
+      if (touchesActivePlan) {
+        nextPlansValue = { ...nextPlans, [dayId]: regeneratedPlan };
+      }
+    } else if (touchesActivePlan && nextPlans[dayId]) {
+      nextPlansValue = { ...nextPlans };
+      delete nextPlansValue[dayId];
+    }
+
+    // No session left for this program + day: its stored progressions are
+    // cleared in the same batch as the sessions, so a failed write leaves
+    // storage and React state consistent (nothing is committed).
+    const clearsDayProgressions = !regeneratedPlan && Boolean(programId && day);
+    // The program's last/next day and last workout date follow the most
+    // recent remaining session of that program (fix round 2), in the same batch.
+    const programStatePatch =
+      programId && programDays.length
+        ? deriveProgramStatePatchFromSessions(programId, remainingSessions, programDays)
+        : undefined;
+    const result = persistWorkoutSave({
+      sessions: remainingSessions,
+      nextPlans: nextPlansValue === nextPlans ? undefined : nextPlansValue,
+      programId: regeneratedPlan || clearsDayProgressions || programStatePatch ? programId : null,
+      plan: regeneratedPlan ?? undefined,
+      programStatePatch,
+      deleteProgressionsForDayId: clearsDayProgressions ? dayId : null,
+    });
+
+    if (!result.ok) {
+      return result;
+    }
+
+    setSessions(remainingSessions);
+
+    if (nextPlansValue !== nextPlans) {
+      setNextPlans(nextPlansValue);
+    }
+
+    setPostWorkoutRecap(null);
+    setLastGeneratedPlan(null);
+    refreshProgramData();
+
+    return result;
+  }
+
+  function handleDeleteSession(sessionId) {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+
+    if (!session) {
+      return { ok: false, error: "Session not found." };
+    }
+
+    const remainingSessions = sessions.filter((candidate) => candidate.id !== sessionId);
+    return applyHistoryChange(remainingSessions, session.programId ?? null, session.dayId ?? null);
+  }
+
+  function handleUpdateSession(sessionId, edits) {
+    const session = sessions.find((candidate) => candidate.id === sessionId);
+
+    if (!session) {
+      return { ok: false, error: "Session not found." };
+    }
+
+    const day = session.programId
+      ? getProgramDayViewModels(session.programId).find((candidate) => candidate.id === session.dayId)
+      : null;
+
+    if (!day) {
+      return { ok: false, error: "This session's program or day no longer exists, so it can only be deleted." };
+    }
+
+    const rebuilt = rebuildSessionFromEdits(session, day, edits);
+
+    if (!rebuilt.ok) {
+      return rebuilt;
+    }
+
+    const remainingSessions = sessions.map((candidate) =>
+      candidate.id === sessionId ? rebuilt.session : candidate,
+    );
+    return applyHistoryChange(remainingSessions, session.programId ?? null, session.dayId ?? null);
   }
 
   function updateSessionField(field, value) {
@@ -1536,6 +2091,9 @@ export default function App() {
             ? {
                 ...exercisePlan,
                 recommendedWeight: nextWeight,
+                // Keeps the manual weight usable even when this entry was
+                // refilled from the base plan inside a generated day plan.
+                manuallyAdjusted: true,
               }
             : exercisePlan,
         ),
@@ -1553,6 +2111,7 @@ export default function App() {
     }
 
     setValidationErrors([]);
+    setSaveError(null);
     const readinessSnapshot = todayReadinessEntry
       ? {
           ...todayReadinessEntry,
@@ -1563,23 +2122,11 @@ export default function App() {
     const normalizedWellness = readinessSnapshot?.wellness ?? null;
     const readinessSummary = readinessSnapshot?.readiness ?? createNeutralReadiness();
 
-    const plannedExercises = Object.fromEntries(
-      selectedDay.exercises.map((exercise) => {
-        const planExercise = getPlanExercise(activePlan, exercise.id);
-        return [
-          exercise.id,
-          {
-            sets: planExercise?.sets ?? exercise.sets,
-            repsMin: planExercise?.repsMin ?? exercise.repsMin,
-            repsMax: planExercise?.repsMax ?? exercise.repsMax,
-            repsLabel: planExercise?.repsLabel ?? exercise.repsLabel,
-            targetRPE: planExercise?.targetRPE ?? exercise.targetRPE,
-            recommendedWeight:
-              planExercise?.recommendedWeight ?? exercise.recommendedWeight,
-          },
-        ];
-      }),
-    );
+    // The planned snapshot uses the same resolver as Workouts / Workout Log so
+    // history compares against what was actually shown (decision 19.4-2).
+    // activePlan is already the resolved plan of the selected day.
+    const resolvedPlan = activePlan;
+    const plannedExercises = buildPlannedExercisesSnapshot(selectedDay, resolvedPlan);
 
     const sessionId = createId();
     const normalizedExerciseLogs = normalizeExerciseLogs(selectedDay, draft.exercises);
@@ -1587,7 +2134,7 @@ export default function App() {
       sessionId,
       programId: activeProgram?.id ?? null,
       day: selectedDay,
-      plan: activePlan,
+      plan: resolvedPlan,
       draft,
     });
 
@@ -1618,31 +2165,51 @@ export default function App() {
     };
 
     const generatedPlan = generateNextPlan(selectedDay, session, sessions);
-    if (activeProgram?.id) {
-      upsertProgramProgressionsFromPlan(activeProgram.id, generatedPlan);
+    const nextSessions = [session, ...sessions];
+    const nextPlansValue = { ...nextPlans, [selectedDay.id]: generatedPlan };
+    const nextWorkoutDrafts = { ...workoutDrafts };
+    delete nextWorkoutDrafts[draftKey];
 
+    let programStatePatch;
+    if (activeProgram?.id) {
       const dayIndex = activeProgramDays.findIndex((day) => day.id === selectedDay.id);
       const nextRecommendedDay =
         dayIndex >= 0
           ? activeProgramDays[(dayIndex + 1) % activeProgramDays.length]
           : activeProgramDays[0];
 
-      updateProgramState(activeProgram.id, {
+      programStatePatch = {
         lastCompletedDayId: selectedDay.id,
         nextRecommendedDayId: nextRecommendedDay?.id ?? selectedDay.id,
         lastWorkoutDate: session.date,
-      });
+      };
+    }
+
+    // Review finding F2: one checked batch write. Success UI only after it succeeded;
+    // on failure the draft stays as it is and no recap is shown.
+    const result = persistWorkoutSave({
+      sessions: nextSessions,
+      nextPlans: nextPlansValue,
+      workoutDrafts: nextWorkoutDrafts,
+      programId: activeProgram?.id ?? null,
+      plan: generatedPlan,
+      programStatePatch,
+    });
+
+    if (!result.ok) {
+      setSaveError(buildSaveErrorMessage(result));
+      return;
+    }
+
+    if (activeProgram?.id) {
       refreshProgramData();
     }
-    setSessions((currentSessions) => [session, ...currentSessions]);
-    setNextPlans((currentPlans) => ({
-      ...currentPlans,
-      [selectedDay.id]: generatedPlan,
-    }));
+    setSessions(nextSessions);
+    setNextPlans(nextPlansValue);
+    setWorkoutDrafts(nextWorkoutDrafts);
     setLastGeneratedPlan(generatedPlan);
     setPostWorkoutRecap(buildPostWorkoutCoachRecap(session, sessions, selectedDay, generatedPlan));
-    clearWorkoutDraft();
-    setDraft(createDraft(selectedDay, generatedPlan, [session, ...sessions]));
+    setDraft(createDraft(selectedDay, generatedPlan, nextSessions));
     setActiveTab("workout-log");
   }
 
@@ -1673,6 +2240,13 @@ export default function App() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl overflow-x-hidden px-3 pb-44 min-[390px]:px-4 sm:px-6 sm:pb-36 lg:px-8">
+        <StorageWarningBanner
+          warnings={storageWarnings}
+          onDismiss={dismissStorageWarning}
+          onDiscard={discardCorruptStorage}
+          onOpenSettings={() => setActiveTab("settings")}
+        />
+
         {activeTab === "dashboard" && (
           <DashboardPage
             selectedDay={selectedDay}
@@ -1717,7 +2291,7 @@ export default function App() {
             activeProgram={activeProgram}
             programState={activeProgramState}
             nextRecommendedDay={nextRecommendedDay}
-            plan={activePlan}
+            plan={basePlan}
             todayReadinessEntry={todayReadinessEntry}
             todayReadinessSummary={todayReadinessSummary}
             setupCues={setupCues}
@@ -1737,6 +2311,7 @@ export default function App() {
             todayReadinessEntry={todayReadinessEntry}
             todayReadinessSummary={todayReadinessSummary}
             validationErrors={validationErrors}
+            saveError={saveError}
             scrollTarget={workoutLogTarget}
             recap={postWorkoutRecap}
             onUpdateRecoveryActivity={updateRecoveryActivity}
@@ -1756,7 +2331,7 @@ export default function App() {
           <ProgressPage
             sessions={sessions}
             readinessByDate={readinessByDate}
-            programs={programs}
+            programs={allPrograms}
             activeProgram={activeProgram}
             activeProgramDays={activeProgramDays}
             exerciseLibrary={exerciseLibrary}
@@ -1766,9 +2341,11 @@ export default function App() {
         {activeTab === "program" && (
           <ProgramPage
             programs={programs}
+            archivedPrograms={archivedPrograms}
             activeProgramId={activeProgramId}
             onDuplicateProgram={handleDuplicateProgram}
             onSetActiveProgram={handleSetActiveProgram}
+            onArchiveProgram={handleArchiveProgram}
             onUpdateProgramMetadata={handleUpdateProgramMetadata}
             onUpdateProgramExerciseTarget={handleUpdateProgramExerciseTarget}
             onImportProgramShare={handleImportProgramShare}
@@ -1782,10 +2359,12 @@ export default function App() {
         {activeTab === "history" && (
           <HistoryPage
             sessions={sessions}
-            programs={programs}
+            programs={allPrograms}
             activeProgram={activeProgram}
             activeProgramDays={activeProgramDays}
             exerciseLibrary={exerciseLibrary}
+            onDeleteSession={handleDeleteSession}
+            onUpdateSession={handleUpdateSession}
           />
         )}
 
@@ -2648,11 +3227,11 @@ function WorkoutExerciseCard({
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const planExercise = getPlanExercise(plan, exercise.id);
-  const displayPlan = getWorkoutExerciseRecommendation(
-    activeProgramId,
-    exercise,
-    planExercise,
-    plan.status,
+  // Memoised: the resolver reads progression/baseline storage, and a storage
+  // read must not happen on every re-render of the card.
+  const displayPlan = useMemo(
+    () => getWorkoutExerciseRecommendation(activeProgramId, exercise, planExercise, plan.status),
+    [activeProgramId, exercise, planExercise, plan.status],
   );
   const setupCue = getStoredSetupCue(setupCues, exercise);
   const primaryCue = formatTechnicalValue(exercise.mainCue || setupCue || exercise.notes);
@@ -2869,6 +3448,16 @@ function CoachRecommendationDetails({ displayPlan }) {
           <CoachDetailRow label="Volume" value={volumePolicy} />
           <CoachDetailRow label="Context" value={conservativeContext} />
         </div>
+
+        {displayPlan.sourceLabel && (
+          <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+            {displayPlan.sourceLabel}
+            {displayPlan.sourceDetail &&
+            (displayPlan.source === "progression" || displayPlan.source === "plan")
+              ? ` | ${displayPlan.sourceDetail}`
+              : ""}
+          </p>
+        )}
 
         {warnings.length > 0 && (
           <div className="mt-2 rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-3 py-2">
@@ -3117,6 +3706,7 @@ function WorkoutLogPage({
   todayReadinessEntry,
   todayReadinessSummary,
   validationErrors,
+  saveError,
   scrollTarget,
   recap,
   onUpdateRecoveryActivity,
@@ -3139,16 +3729,36 @@ function WorkoutLogPage({
 
     const exercise = day.exercises.find((dayExercise) => dayExercise.id === exerciseId);
     const planExercise = getPlanExercise(plan, exerciseId);
-    const restSeconds = numberValue(planExercise?.restSeconds ?? exercise?.restSeconds, 0);
+    // Decision 19.4-3: a [min, max] rest range starts the timer at max (F6).
+    const rest = resolveRestSeconds(planExercise?.restSeconds ?? exercise?.restSeconds);
 
-    if (restSeconds > 0) {
+    if (rest.seconds > 0) {
+      const startedAt = Date.now();
       setRestTimer({
-        key: Date.now(),
+        key: startedAt,
+        startedAt,
         exerciseName: exercise?.name ?? "Rest",
-        restSeconds,
-        endsAt: Date.now() + restSeconds * 1000,
+        restSeconds: rest.seconds,
+        restMin: rest.min,
+        isRange: rest.isRange,
+        endsAt: startedAt + rest.seconds * 1000,
       });
     }
+  }
+
+  function useMinimumRest() {
+    setRestTimer((currentTimer) => {
+      if (!currentTimer?.isRange || !(currentTimer.restMin > 0)) {
+        return currentTimer;
+      }
+
+      return {
+        ...currentTimer,
+        isRange: false,
+        restSeconds: currentTimer.restMin,
+        endsAt: currentTimer.startedAt + currentTimer.restMin * 1000,
+      };
+    });
   }
 
   useEffect(() => {
@@ -3237,6 +3847,7 @@ function WorkoutLogPage({
       <RestTimerBar
         timer={restTimer}
         onDismiss={() => setRestTimer(null)}
+        onUseMin={useMinimumRest}
         onExtend={() =>
           setRestTimer((currentTimer) =>
             currentTimer
@@ -3255,6 +3866,8 @@ function WorkoutLogPage({
         onGoToHistory={onGoToHistory}
       />
 
+      <WorkoutSaveErrorNotice saveError={saveError} />
+
       <button
         type="button"
         onClick={onSave}
@@ -3268,13 +3881,33 @@ function WorkoutLogPage({
 }
 
 function formatRestTimerSeconds(totalSeconds) {
-  const safeSeconds = Math.max(0, totalSeconds);
-  const minutes = Math.floor(safeSeconds / 60);
-  const seconds = safeSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  return formatRestClock(totalSeconds);
 }
 
-function RestTimerBar({ timer, onDismiss, onExtend }) {
+/**
+ * Inline failure notice next to Save Workout (review finding F2): shown only
+ * when the batch write failed. The draft is kept, no recap is shown.
+ */
+function WorkoutSaveErrorNotice({ saveError }) {
+  if (!saveError) {
+    return null;
+  }
+
+  return (
+    <section
+      role="alert"
+      className="rounded-[8px] border border-red-400/50 bg-red-400/10 p-4"
+    >
+      <p className="font-black text-red-100">{saveError.title}</p>
+      <p className="mt-1 text-sm font-semibold leading-6 text-red-100">{saveError.message}</p>
+      {saveError.detail && saveError.code === "quota" && (
+        <p className="mt-1 break-words text-xs font-semibold text-red-200/80">{saveError.detail}</p>
+      )}
+    </section>
+  );
+}
+
+function RestTimerBar({ timer, onDismiss, onExtend, onUseMin }) {
   const [now, setNow] = useState(() => Date.now());
   const hasVibratedRef = useRef(false);
 
@@ -3342,6 +3975,15 @@ function RestTimerBar({ timer, onDismiss, onExtend }) {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {!isDone && timer.isRange && timer.restMin > 0 && (
+              <button
+                type="button"
+                onClick={onUseMin}
+                className="focus-ring min-h-10 rounded-[8px] border border-lime-300/60 px-3 text-xs font-black text-lime-200 hover:bg-lime-300/10"
+              >
+                Use {formatRestClock(timer.restMin)}
+              </button>
+            )}
             {!isDone && (
               <button
                 type="button"
@@ -5845,65 +6487,41 @@ function buildReadinessRpeGroups(linkedSessions) {
   }, {});
 }
 
+/**
+ * Review finding F7: the "best performance day" is ranked within ONE metric
+ * type only (e1RM across the sessions that have it, otherwise volume) via
+ * src/lib/readinessPerformance.js. Total reps / set counts are never ranked
+ * against kg values. Fewer than two comparable sessions yields a
+ * "Not enough comparable data" entry instead of a winner.
+ */
 function getBestReadinessPerformanceDay(linkedSessions) {
-  const candidates = linkedSessions
-    .map((session) => {
-      const metric = getSessionPerformanceMetric(session);
-      return metric.value > 0 ? { session, metric } : null;
-    })
-    .filter(Boolean)
-    .sort((left, right) => right.metric.value - left.metric.value);
-  const best = candidates[0];
-
-  if (!best) {
+  if (!linkedSessions?.length) {
     return null;
+  }
+
+  const best = getBestComparablePerformance(linkedSessions);
+
+  if (!best.comparable) {
+    return {
+      comparable: false,
+      metricId: null,
+      label: "Not enough comparable data",
+      detail: "Needs at least 2 readiness-linked sessions with the same metric (e1RM or volume).",
+    };
   }
 
   const copy = getReadinessCopy(best.session.readiness);
   const readinessAverage = Number.isFinite(best.session.readiness?.averageScore)
     ? ` ${best.session.readiness.averageScore.toFixed(1)}/5`
     : "";
+  const formattedValue = best.metricId === "e1rm" ? formatKg(best.value) : formatVolume(best.value);
 
   return {
+    comparable: true,
+    metricId: best.metricId,
     label: formatProgressDate(best.session.date),
-    detail: `${best.metric.label}: ${best.metric.formatted} | ${copy.label}${readinessAverage}`,
+    detail: `${best.metricLabel}: ${formattedValue} | ${copy.label}${readinessAverage} | ranked across ${best.rankedCount} sessions with ${best.metricLabel.toLowerCase()}`,
   };
-}
-
-function getSessionPerformanceMetric(session) {
-  if (Number.isFinite(session.bestEstimatedStrength) && session.bestEstimatedStrength > 0) {
-    return {
-      label: "Best e1RM",
-      value: session.bestEstimatedStrength,
-      formatted: formatKg(session.bestEstimatedStrength),
-    };
-  }
-
-  if (Number.isFinite(session.totalVolume) && session.totalVolume > 0) {
-    return {
-      label: "Volume",
-      value: session.totalVolume,
-      formatted: formatVolume(session.totalVolume),
-    };
-  }
-
-  if (Number.isFinite(session.totalReps) && session.totalReps > 0) {
-    return {
-      label: "Total reps",
-      value: session.totalReps,
-      formatted: `${formatPlainNumber(session.totalReps)} reps`,
-    };
-  }
-
-  if (Number.isFinite(session.completedSetCount) && session.completedSetCount > 0) {
-    return {
-      label: "Completed sets",
-      value: session.completedSetCount,
-      formatted: `${session.completedSetCount} sets`,
-    };
-  }
-
-  return { label: "Performance", value: 0, formatted: "No data" };
 }
 
 function buildReadinessPerformanceNote({
@@ -5929,7 +6547,7 @@ function buildReadinessPerformanceNote({
     return "Some lower-readiness days also hit very high session RPE. Watch fatigue before forcing progression.";
   }
 
-  if (bestPerformance) {
+  if (bestPerformance?.comparable) {
     return "Best performance day is shown with its readiness context. Keep collecting data before reading patterns too hard.";
   }
 
@@ -7381,9 +7999,11 @@ function downloadProgramShareFile(program) {
 
 function ProgramPage({
   programs,
+  archivedPrograms = [],
   activeProgramId,
   onDuplicateProgram,
   onSetActiveProgram,
+  onArchiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
   onImportProgramShare,
@@ -7393,6 +8013,18 @@ function ProgramPage({
   const importInputRef = useRef(null);
   const [importMessage, setImportMessage] = useState("");
   const [importError, setImportError] = useState("");
+  const [archiveError, setArchiveError] = useState("");
+
+  function handleRestoreProgram(programId) {
+    const result = onArchiveProgram?.(programId, false);
+
+    if (result && !result.ok) {
+      setArchiveError(result.error ?? "The program could not be restored.");
+      return;
+    }
+
+    setArchiveError("");
+  }
 
   function handleImportFile(event) {
     const file = event.target.files?.[0];
@@ -7499,12 +8131,60 @@ function ProgramPage({
                 isActive={isActive}
                 onDuplicateProgram={onDuplicateProgram}
                 onSetActiveProgram={onSetActiveProgram}
+                onArchiveProgram={onArchiveProgram}
                 onUpdateProgramMetadata={onUpdateProgramMetadata}
                 onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
               />
             );
           })}
         </div>
+
+        {archivedPrograms.length > 0 && (
+          <details className="mt-4 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+              <span className="flex items-center gap-2">
+                <Archive aria-hidden="true" size={16} className="text-zinc-500" />
+                Archived programs ({archivedPrograms.length})
+              </span>
+              <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-500" />
+            </summary>
+            <div className="space-y-2 border-t border-zinc-800 pt-3">
+              <p className="text-xs font-semibold leading-5 text-zinc-500">
+                Archived programs keep their days, targets and history. They are hidden from the
+                program list and cannot be set active until restored.
+              </p>
+              {archivedPrograms.map((program) => (
+                <div
+                  key={program.id}
+                  className="flex flex-col gap-2 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-black text-white">{program.name}</p>
+                    <p className="mt-1 text-xs font-semibold text-zinc-500">
+                      {program.nickname ? `${program.nickname} | ` : ""}
+                      Updated {formatProgramDate(program.updatedAt)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRestoreProgram(program.id)}
+                    className="focus-ring min-h-10 shrink-0 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+                  >
+                    Restore
+                  </button>
+                </div>
+              ))}
+              {archiveError && (
+                <p
+                  role="alert"
+                  className="rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+                >
+                  {archiveError}
+                </p>
+              )}
+            </div>
+          </details>
+        )}
       </section>
 
       <AiProgramImportAssistant onImportProgramShare={onImportProgramShare} />
@@ -7517,16 +8197,21 @@ function ProgramCard({
   isActive,
   onDuplicateProgram,
   onSetActiveProgram,
+  onArchiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  // One card-level error line: archive, set-active and metadata-save failures.
+  const [archiveError, setArchiveError] = useState("");
   const [form, setForm] = useState(() => createProgramMetadataForm(program));
-  const days = getProgramDayViewModels(program.id);
+  // Memoised on the program record (a new object per programRevision): these
+  // read program storage and must not run on every re-render of the card.
+  const days = useMemo(() => getProgramDayViewModels(program.id), [program]);
   const exerciseCount = days.reduce((total, day) => total + day.exercises.length, 0);
-  const programState = getProgramState(program.id);
+  const programState = useMemo(() => getProgramState(program.id), [program]);
   const isDefaultProgram = Boolean(program.isDefault);
 
   useEffect(() => {
@@ -7540,8 +8225,40 @@ function ProgramCard({
   }
 
   function saveMetadata() {
-    onUpdateProgramMetadata(program.id, form);
+    // The editor closes only after the write succeeded (fix round 2).
+    const result = onUpdateProgramMetadata(program.id, form);
+
+    if (result && !result.ok) {
+      setArchiveError(result.error ?? "The program details could not be saved.");
+      return;
+    }
+
+    setArchiveError("");
     setIsEditing(false);
+  }
+
+  function setActive() {
+    const result = onSetActiveProgram(program.id);
+
+    if (result && !result.ok) {
+      setArchiveError(result.error ?? "The active program could not be switched.");
+      return;
+    }
+
+    setArchiveError("");
+  }
+
+  const canArchive = Boolean(onArchiveProgram) && !isActive && !isDefaultProgram;
+
+  function archiveProgram() {
+    const result = onArchiveProgram(program.id, true);
+
+    if (!result?.ok) {
+      setArchiveError(result?.error ?? "The program could not be archived.");
+      return;
+    }
+
+    setArchiveError("");
   }
 
   return (
@@ -7576,7 +8293,7 @@ function ProgramCard({
           <button
             type="button"
             disabled={isActive}
-            onClick={() => onSetActiveProgram(program.id)}
+            onClick={setActive}
             className={`focus-ring min-h-11 w-full rounded-[8px] px-3 text-sm font-black ${
               isActive
                 ? "cursor-not-allowed bg-zinc-800 text-zinc-500"
@@ -7607,8 +8324,27 @@ function ProgramCard({
             <Download aria-hidden="true" size={15} />
             Share File
           </button>
+          {canArchive && (
+            <button
+              type="button"
+              onClick={archiveProgram}
+              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-300 hover:bg-zinc-800"
+            >
+              <Archive aria-hidden="true" size={15} />
+              Archive
+            </button>
+          )}
         </div>
       </div>
+
+      {archiveError && (
+        <p
+          role="alert"
+          className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+        >
+          {archiveError}
+        </p>
+      )}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <Metric label="Days" value={days.length} />
@@ -7860,9 +8596,10 @@ function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExercis
   const prescriptionText = `${exercise.sets}x ${exercise.repsLabel} | ${formatWeight(exercise.recommendedWeight, exercise)} | RPE ${exercise.targetRPE} | ${formatRest(exercise.restSeconds)}`;
 
   useEffect(() => {
+    // Re-sync the form when the stored target changes (including right after our
+    // own save); the "Saved target." message is kept so the user sees it.
     setForm(createProgramExerciseTargetForm(exercise));
     setErrors([]);
-    setSaveMessage("");
   }, [
     exercise.programExerciseId,
     exercise.sets,
@@ -7890,20 +8627,27 @@ function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExercis
       return;
     }
 
-    const updatedExercise = onUpdateProgramExerciseTarget(
+    const saveResult = onUpdateProgramExerciseTarget(
       program.id,
       exercise.programExerciseId ?? exercise.id,
       result.patch,
     );
 
-    if (!updatedExercise) {
-      setErrors(["This program target could not be saved. Duplicate the default program first."]);
+    if (!saveResult?.ok) {
+      setErrors([
+        saveResult?.error ??
+          "This program target could not be saved. Duplicate the default program first.",
+      ]);
       setSaveMessage("");
       return;
     }
 
     setErrors([]);
-    setSaveMessage("Saved target.");
+    setSaveMessage(
+      saveResult.deletedProgression
+        ? "Saved target. The earned progression and pending plan for this exercise were reset, so the next session starts from the new target."
+        : "Saved target.",
+    );
   }
 
   return (
@@ -7963,10 +8707,11 @@ function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExercis
             inputMode="decimal"
           />
           <ProgramEditorField
-            label="Rest Seconds"
+            label="Rest (sec or min-max)"
             value={form.restTime}
             onChange={(value) => updateField("restTime", value)}
-            inputMode="numeric"
+            placeholder="90 or 150-180"
+            inputMode="text"
           />
         </div>
         <ProgramTextArea
@@ -8026,7 +8771,8 @@ function createProgramExerciseTargetForm(exercise) {
     repsLabel: getCustomRepsLabelForEditor(exercise),
     targetWeight: stringifyProgramWeightForEditor(exercise.recommendedWeight, exercise),
     targetRPE: stringifyProgramEditorValue(exercise.targetRPE),
-    restTime: stringifyProgramEditorValue(getRestSecondsForEditor(exercise.restSeconds)),
+    // Decision 19.4-3: a stored range is shown and preserved as "min-max".
+    restTime: formatRestEditorValue(exercise.restSeconds),
     notes: exercise.notes ?? "",
   };
 }
@@ -8045,14 +8791,6 @@ function stringifyProgramWeightForEditor(value, exercise) {
   }
 
   return String(value);
-}
-
-function getRestSecondsForEditor(restSeconds) {
-  if (Array.isArray(restSeconds)) {
-    return restSeconds[1] ?? restSeconds[0] ?? "";
-  }
-
-  return restSeconds;
 }
 
 function getCustomRepsLabelForEditor(exercise) {
@@ -8090,10 +8828,11 @@ function validateProgramExerciseTargetForm(form, exercise) {
   const repsLabel = form.repsLabel.trim();
   const targetWeight = parseProgramTargetWeight(form.targetWeight, exercise);
   const targetRPE = parseRpeValue(form.targetRPE);
-  const restTime = parsePositiveNumber(form.restTime);
+  // A single number ("90") or a range ("150-180"); ranges are stored as [min, max].
+  const restTime = parseRestEditorValue(form.restTime);
 
-  if (targetSets === null) {
-    errors.push("Sets must be a positive whole number.");
+  if (targetSets === null || targetSets > MAX_TARGET_SETS) {
+    errors.push(`Sets must be a whole number from 1 to ${MAX_TARGET_SETS}.`);
   }
 
   if (form.repsMin.trim() && repsMin === null) {
@@ -8120,8 +8859,8 @@ function validateProgramExerciseTargetForm(form, exercise) {
     errors.push("Target RPE must be 1-10 and can use .5 steps.");
   }
 
-  if (restTime === null) {
-    errors.push("Rest seconds must be a positive number.");
+  if (!restTime.valid) {
+    errors.push(restTime.error ?? "Rest must be seconds (e.g. 90) or a range like 150-180.");
   }
 
   if (errors.length) {
@@ -8140,7 +8879,7 @@ function validateProgramExerciseTargetForm(form, exercise) {
       },
       targetWeight: targetWeight.value,
       targetRPE,
-      restTime,
+      restTime: restTime.value,
       notes: form.notes,
     },
   };
@@ -8273,6 +9012,8 @@ function HistoryPage({
   activeProgram,
   activeProgramDays,
   exerciseLibrary,
+  onDeleteSession,
+  onUpdateSession,
 }) {
   const exerciseLookup = useMemo(
     () =>
@@ -8328,6 +9069,8 @@ function HistoryPage({
             key={session.id ?? `${session.date}-${index}`}
             session={session}
             exerciseLookup={exerciseLookup}
+            onDeleteSession={onDeleteSession}
+            onUpdateSession={onUpdateSession}
           />
         ))}
       </section>
@@ -8335,11 +9078,50 @@ function HistoryPage({
   );
 }
 
-function HistorySessionCard({ session, exerciseLookup }) {
+function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdateSession }) {
   const summary = useMemo(
     () => buildHistorySessionSummary(session, exerciseLookup),
     [session, exerciseLookup],
   );
+  const [isEditing, setIsEditing] = useState(false);
+  const [actionError, setActionError] = useState("");
+  // Decision new-E: editing needs the day view model of the session's own
+  // program. When that program/day no longer exists only delete is offered.
+  const editDay = useMemo(() => {
+    if (!session.programId || !session.dayId) {
+      return null;
+    }
+
+    return (
+      getProgramDayViewModels(session.programId).find((day) => day.id === session.dayId) ?? null
+    );
+  }, [session.programId, session.dayId]);
+  // Sessions carry `dayType` (saveWorkout); `type` is only a legacy fallback.
+  const canEdit = Boolean(session.id && editDay && onUpdateSession && !isRecoverySession(session));
+  const canDelete = Boolean(session.id && onDeleteSession);
+
+  function handleDelete() {
+    if (!canDelete) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete the "${summary.dayName}" session from ${formatHistoryDateTime(session.date)}? This cannot be undone. The next plan for that day will be rebuilt from the previous remaining session.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const result = onDeleteSession(session.id);
+
+    if (!result?.ok) {
+      setActionError(result?.error ?? "The session could not be deleted.");
+      return;
+    }
+
+    setActionError("");
+  }
 
   return (
     <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
@@ -8371,6 +9153,67 @@ function HistorySessionCard({ session, exerciseLookup }) {
           <Metric label="Schema" value={summary.schemaLabel} />
         </div>
       </div>
+
+      {(canEdit || canDelete) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                setActionError("");
+                setIsEditing((current) => !current);
+              }}
+              className="focus-ring flex min-h-10 items-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+            >
+              <Pencil aria-hidden="true" size={14} />
+              {isEditing ? "Close Edit" : "Edit"}
+            </button>
+          )}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="focus-ring flex min-h-10 items-center gap-2 rounded-[8px] border border-red-400/40 px-3 text-xs font-black text-red-100 hover:bg-red-400/10"
+            >
+              <Trash2 aria-hidden="true" size={14} />
+              Delete
+            </button>
+          )}
+          {!canEdit && canDelete && (
+            <p className="text-xs font-semibold leading-5 text-zinc-500">
+              {isRecoverySession(session)
+                ? "Recovery sessions can only be deleted."
+                : "This session's program or day no longer exists, so it can only be deleted."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {actionError && (
+        <p
+          role="alert"
+          className="mt-2 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+        >
+          {actionError}
+        </p>
+      )}
+
+      {isEditing && canEdit && (
+        <HistorySessionEditor
+          session={session}
+          day={editDay}
+          onCancel={() => setIsEditing(false)}
+          onSave={(edits) => {
+            const result = onUpdateSession(session.id, edits);
+
+            if (result?.ok) {
+              setIsEditing(false);
+            }
+
+            return result;
+          }}
+        />
+      )}
 
       <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
         <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
@@ -8409,6 +9252,214 @@ function HistorySessionCard({ session, exerciseLookup }) {
         )}
       </details>
     </article>
+  );
+}
+
+/**
+ * Decision new-E: inline editor for a saved session. Set reps / kg / RPE use
+ * the same StepperInput pattern as Workout Log; session RPE and notes are
+ * edited alongside. Saving rebuilds the session with the save-path
+ * normalisation (rebuildSessionFromEdits) and regenerates the day's plan.
+ */
+function HistorySessionEditor({ session, day, onCancel, onSave }) {
+  const [form, setForm] = useState(() => buildDraftFromSession(session, day));
+  const [errors, setErrors] = useState([]);
+
+  function updateSet(exerciseId, setIndex, field, value) {
+    setErrors([]);
+    setForm((currentForm) => {
+      const exercise = currentForm.exercises[exerciseId];
+
+      if (!exercise) {
+        return currentForm;
+      }
+
+      return {
+        ...currentForm,
+        exercises: {
+          ...currentForm.exercises,
+          [exerciseId]: {
+            ...exercise,
+            sets: exercise.sets.map((set, index) =>
+              index === setIndex ? { ...set, [field]: value } : set,
+            ),
+          },
+        },
+      };
+    });
+  }
+
+  function updateField(field, value) {
+    setErrors([]);
+    setForm((currentForm) => ({ ...currentForm, [field]: value }));
+  }
+
+  function save() {
+    const result = onSave({
+      exercises: form.exercises,
+      sessionRpe: form.sessionRpe,
+      sessionNotes: form.sessionNotes,
+    });
+
+    if (!result?.ok) {
+      setErrors(
+        result?.errors?.length ? result.errors : [result?.error ?? "The session could not be saved."],
+      );
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-3 rounded-[8px] border border-lime-300/30 bg-[#111111] p-3">
+      <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+        Edit session
+      </p>
+      <p className="text-xs font-semibold leading-5 text-zinc-500">
+        Date, program and day stay as saved. After saving, the next plan for this day is rebuilt
+        from the most recent remaining session.
+      </p>
+
+      {day.exercises.map((exercise) => {
+        const draftExercise = form.exercises[exercise.id];
+
+        if (!draftExercise) {
+          return null;
+        }
+
+        const isBodyweight =
+          exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal";
+
+        return (
+          <div key={exercise.id} className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+            <p className="break-words text-sm font-black text-white">{exercise.name}</p>
+            <div className="mt-2 space-y-2">
+              {draftExercise.sets.map((set, setIndex) => (
+                <div
+                  key={setIndex}
+                  className="rounded-[8px] border border-zinc-800 bg-[#111111] p-2"
+                >
+                  <p className="mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                    Set {setIndex + 1}
+                  </p>
+                  <div className="grid gap-2">
+                    <StepperInput
+                      label="Reps"
+                      value={set.reps}
+                      onChange={(value) => updateSet(exercise.id, setIndex, "reps", value)}
+                      onStep={(delta) =>
+                        updateSet(
+                          exercise.id,
+                          setIndex,
+                          "reps",
+                          adjustInputValue(set.reps, delta, { min: 0 }),
+                        )
+                      }
+                      stepAmount={1}
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="reps"
+                    />
+                    <StepperInput
+                      label="Kg"
+                      value={set.weight}
+                      onChange={(value) => updateSet(exercise.id, setIndex, "weight", value)}
+                      onStep={(delta) =>
+                        updateSet(
+                          exercise.id,
+                          setIndex,
+                          "weight",
+                          adjustInputValue(set.weight, delta, { min: 0 }),
+                        )
+                      }
+                      stepAmount={1}
+                      type={isBodyweight ? "text" : "number"}
+                      inputMode={isBodyweight ? "text" : "decimal"}
+                      placeholder={isBodyweight ? "BW" : "kg"}
+                    />
+                    <StepperInput
+                      label="RPE"
+                      value={set.rpe}
+                      onChange={(value) => updateSet(exercise.id, setIndex, "rpe", value)}
+                      onStep={(delta) =>
+                        updateSet(
+                          exercise.id,
+                          setIndex,
+                          "rpe",
+                          adjustInputValue(set.rpe, delta, { min: 1, max: 10 }),
+                        )
+                      }
+                      stepAmount={0.5}
+                      type="number"
+                      inputMode="decimal"
+                      min="1"
+                      max="10"
+                      step="0.5"
+                      placeholder="8"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+        <StepperInput
+          label="Session RPE"
+          value={form.sessionRpe}
+          onChange={(value) => updateField("sessionRpe", value)}
+          onStep={(delta) =>
+            updateField("sessionRpe", adjustInputValue(form.sessionRpe, delta, { min: 1, max: 10 }))
+          }
+          stepAmount={0.5}
+          type="number"
+          inputMode="decimal"
+          min="1"
+          max="10"
+          step="0.5"
+          placeholder="8"
+        />
+        <label className="mt-3 block">
+          <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">
+            Session notes
+          </span>
+          <textarea
+            value={form.sessionNotes}
+            onChange={(event) => updateField("sessionNotes", event.target.value)}
+            rows={3}
+            className="focus-ring w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-semibold text-white"
+          />
+        </label>
+      </div>
+
+      {errors.length > 0 && (
+        <div
+          role="alert"
+          className="rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100"
+        >
+          {errors.slice(0, 6).map((error) => (
+            <p key={error}>{error}</p>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={save}
+          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+        >
+          Save Changes
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -8579,7 +9630,10 @@ function resolveHistoryProgramName(session, setRecords) {
     return null;
   }
 
-  const program = getPrograms().find((candidate) => candidate.id === programId);
+  // Archived programs keep their name in history (decision new-F).
+  const program = getPrograms({ includeArchived: true }).find(
+    (candidate) => candidate.id === programId,
+  );
   return program?.nickname || program?.name || null;
 }
 
