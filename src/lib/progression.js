@@ -57,8 +57,14 @@ function getNumericWeight(value, exercise) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Only set objects are logs. A null / primitive entry inside a stored
+// session's sets (hand-edited storage, a restored backup) is skipped instead
+// of throwing from every `set.reps` read (handoff 3.5: old sessions stay
+// readable wherever their data is sufficient).
 function getSetLogs(exerciseLog) {
-  return Array.isArray(exerciseLog?.sets) ? exerciseLog.sets : [];
+  return Array.isArray(exerciseLog?.sets)
+    ? exerciseLog.sets.filter((set) => set && typeof set === "object")
+    : [];
 }
 
 function getLoggedReps(setLogs) {
@@ -77,6 +83,22 @@ function getWorkingWeight(setLogs, plannedWeight, exercise) {
   }
 
   return getNumericWeight(plannedWeight, exercise);
+}
+
+// Decision new-A: the working weight is the heaviest logged set (top set).
+// Only sets with at least one completed rep count: a failed attempt logged as
+// "130 kg x 0" is not a weight the athlete worked with, so it never becomes
+// the next prescription or the load the next session is compared against.
+function getTopSetWeight(setLogs, exercise) {
+  const loggedWeights = setLogs
+    .filter((set) => {
+      const reps = toNumber(set.reps ?? set.actualReps, NaN);
+      return Number.isFinite(reps) && reps >= 1;
+    })
+    .map((set) => getNumericWeight(set.weight ?? set.actualWeight ?? set.kg, exercise))
+    .filter((value) => value !== null);
+
+  return loggedWeights.length ? Math.max(...loggedWeights) : null;
 }
 
 function getLoadJump(exercise) {
@@ -195,33 +217,413 @@ function getExerciseLog(container, exerciseOrId) {
   };
 }
 
-function getPreviousExerciseSession(dayId, exercise, sessions = []) {
-  return getPreviousExerciseSessions(dayId, exercise, null, sessions)[0] ?? null;
+// ---------------------------------------------------------------------------
+// Session timing and history recency (decision new-B)
+// ---------------------------------------------------------------------------
+
+export const HISTORY_RECENCY_DAYS = 42;
+const HISTORY_SAMPLE_LIMIT = 5;
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const LEGACY_HISTORY_SKIPPED_WARNING = "Older sessions without exercise ids were skipped.";
+
+function toTimestamp(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const time =
+    value instanceof Date
+      ? value.getTime()
+      : typeof value === "number"
+        ? value
+        : new Date(value).getTime();
+
+  return Number.isFinite(time) ? time : null;
+}
+
+function getSessionTimestamp(session) {
+  return (
+    toTimestamp(session?.date) ??
+    toTimestamp(session?.savedAt) ??
+    toTimestamp(session?.completedAt) ??
+    toTimestamp(session?.createdAt)
+  );
 }
 
 function getSessionTime(session) {
-  const date = new Date(session?.date ?? session?.completedAt ?? session?.createdAt ?? 0);
-  const time = date.getTime();
-  return Number.isFinite(time) ? time : 0;
+  return getSessionTimestamp(session) ?? 0;
 }
 
-function getPreviousExerciseSessions(dayId, exercise, currentSession, sessions = []) {
-  return [...(sessions ?? [])]
-    .filter((session) => {
-      if (!session || session.id === currentSession?.id) {
-        return false;
+/**
+ * Whole days between a session's own timestamp (date, savedAt, completedAt or
+ * createdAt) and `referenceDate` (Date, ISO string or epoch ms). Returns null
+ * when either side has no usable timestamp. Negative when the session is
+ * dated after the reference.
+ */
+export function getSessionAgeDays(session, referenceDate = new Date()) {
+  const sessionTime = getSessionTimestamp(session);
+  const referenceTime = toTimestamp(referenceDate);
+
+  if (sessionTime === null || referenceTime === null) {
+    return null;
+  }
+
+  return Math.floor((referenceTime - sessionTime) / DAY_IN_MS);
+}
+
+// ---------------------------------------------------------------------------
+// Strict progression identity (handoff F1, CLAUDE.md hard rule)
+//
+// Identity is programId + programExerciseId. Known ids that conflict exclude a
+// candidate. Library id / key / name matching is a legacy fallback used only
+// when the candidate carries no ids at all, and an ambiguous legacy match is
+// skipped with a single warning instead of being guessed.
+// ---------------------------------------------------------------------------
+
+function uniqueIds(values) {
+  return values.filter(
+    (value, index, all) =>
+      value !== null && value !== undefined && value !== "" && all.indexOf(value) === index,
+  );
+}
+
+function normalizeIdentityText(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getIdentityContext(exercise, currentSession, dayId) {
+  const programExerciseId = exercise?.programExerciseId ?? exercise?.id ?? null;
+  const libraryIds = uniqueIds([exercise?.libraryExerciseId, exercise?.legacyExerciseId]);
+
+  return {
+    programId: exercise?.programId ?? currentSession?.programId ?? null,
+    programExerciseId,
+    libraryIds,
+    // Ids a legacy (id-less) log may be keyed by: the Library/config id or the
+    // occurrence id itself.
+    legacyIds: uniqueIds([...libraryIds, programExerciseId]),
+    name: normalizeIdentityText(exercise?.name),
+    dayId: dayId ?? exercise?.dayId ?? currentSession?.dayId ?? null,
+    dayName: normalizeIdentityText(currentSession?.dayName),
+  };
+}
+
+/**
+ * Per-day ambiguity info: Library ids and names that occur more than once in
+ * the day, so a legacy log keyed by them cannot be attributed to a single
+ * program exercise.
+ */
+function getDayIdentityOptions(day) {
+  const libraryCounts = new Map();
+  const nameCounts = new Map();
+
+  for (const exercise of day?.exercises ?? []) {
+    for (const id of uniqueIds([exercise?.libraryExerciseId, exercise?.legacyExerciseId])) {
+      libraryCounts.set(id, (libraryCounts.get(id) ?? 0) + 1);
+    }
+
+    const name = normalizeIdentityText(exercise?.name);
+    if (name) {
+      nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1);
+    }
+  }
+
+  return {
+    ambiguousLibraryIds: new Set([...libraryCounts].filter(([, count]) => count > 1).map(([id]) => id)),
+    ambiguousNames: new Set([...nameCounts].filter(([, count]) => count > 1).map(([name]) => name)),
+  };
+}
+
+function classifyLogCandidate(candidate, context) {
+  if (candidate.programExerciseId && context.programExerciseId) {
+    return candidate.programExerciseId === context.programExerciseId
+      ? { status: "exact" }
+      : { status: "conflict" };
+  }
+
+  if (candidate.libraryIds.length) {
+    const matched = candidate.libraryIds.find((id) => context.legacyIds.includes(id));
+    return matched ? { status: "legacy", via: matched, byName: false } : { status: "conflict" };
+  }
+
+  if (candidate.key) {
+    return context.legacyIds.includes(candidate.key)
+      ? { status: "legacy", via: candidate.key, byName: false }
+      : { status: "conflict" };
+  }
+
+  const name = normalizeIdentityText(candidate.name);
+  if (name && context.name && name === context.name) {
+    return { status: "legacy", via: name, byName: true };
+  }
+
+  return { status: "none" };
+}
+
+function isAmbiguousLegacyMatch(match, identity) {
+  if (match.byName) {
+    return Boolean(identity?.ambiguousNames?.has(match.via));
+  }
+
+  return Boolean(identity?.ambiguousLibraryIds?.has(match.via));
+}
+
+function pickLogCandidate(candidates, context, identity) {
+  const classified = candidates.map((candidate) => ({
+    ...candidate,
+    match: classifyLogCandidate(candidate, context),
+  }));
+  const exact = classified.find((candidate) => candidate.match.status === "exact");
+
+  if (exact) {
+    return { log: exact.log, status: "exact" };
+  }
+
+  const legacy = classified.filter((candidate) => candidate.match.status === "legacy");
+
+  if (!legacy.length) {
+    const status = classified.some((candidate) => candidate.match.status === "conflict")
+      ? "conflict"
+      : "none";
+    return { log: null, status };
+  }
+
+  if (legacy.length > 1 || legacy.some((candidate) => isAmbiguousLegacyMatch(candidate.match, identity))) {
+    return { log: null, status: "ambiguous" };
+  }
+
+  return { log: legacy[0].log, status: "legacy" };
+}
+
+function describeLogIdentity(log) {
+  return {
+    programExerciseId: log?.programExerciseId ?? null,
+    libraryIds: uniqueIds([log?.exerciseId, log?.libraryExerciseId, log?.legacyExerciseId]),
+    name: log?.name ?? log?.exerciseName ?? null,
+  };
+}
+
+function buildLogFromWorkoutSets(workoutSets) {
+  const setRpes = workoutSets
+    .map((set) => Number(set.actualRPE ?? set.rpe))
+    .filter(Number.isFinite);
+  const exerciseRPE = setRpes.length
+    ? Number((setRpes.reduce((total, rpe) => total + rpe, 0) / setRpes.length).toFixed(1))
+    : null;
+
+  return {
+    exerciseRPE,
+    painFlag: workoutSets.some((set) => Boolean(set.painFlag)),
+    sets: workoutSets
+      .slice()
+      .sort((left, right) => toNumber(left.setNumber) - toNumber(right.setNumber))
+      .map((set) => ({
+        reps: set.actualReps ?? set.reps,
+        weight: set.actualWeight ?? set.weight ?? set.kg,
+        rpe: set.actualRPE ?? set.rpe,
+      })),
+  };
+}
+
+/**
+ * Strict replacement for getExerciseLog on the v2 path. Returns
+ * { log, status } where status is exact | legacy | ambiguous | conflict | none.
+ * Only exact and legacy carry a log.
+ */
+function resolveExerciseLog(container, exercise, options = {}) {
+  if (!container) {
+    return { log: null, status: "none" };
+  }
+
+  const context = options.context ?? getIdentityContext(exercise, container, options.dayId);
+  const identity = options.identity ?? {};
+  const logs = container.exercises;
+  const logCandidates = [];
+
+  if (Array.isArray(logs)) {
+    for (const log of logs) {
+      if (log) {
+        logCandidates.push({ key: log.id ?? null, log, ...describeLogIdentity(log) });
       }
+    }
+  } else if (logs && typeof logs === "object") {
+    for (const [key, log] of Object.entries(logs)) {
+      if (log) {
+        logCandidates.push({ key, log, ...describeLogIdentity(log) });
+      }
+    }
+  }
 
-      const sameDay =
-        !dayId ||
-        !session.dayId ||
-        session.dayId === dayId ||
-        session.dayName === currentSession?.dayName;
+  const fromLogs = pickLogCandidate(logCandidates, context, identity);
+  if (fromLogs.status === "exact" || fromLogs.status === "legacy" || fromLogs.status === "ambiguous") {
+    return fromLogs;
+  }
 
-      return sameDay && Boolean(getExerciseLog(session, exercise));
-    })
-    .sort((left, right) => getSessionTime(right) - getSessionTime(left))
-    .slice(0, 5);
+  const summaryCandidates = (container.analytics?.exerciseSummaries ?? [])
+    .filter(Boolean)
+    .map((summary) => ({
+      key: null,
+      programExerciseId: summary.programExerciseId ?? null,
+      libraryIds: uniqueIds([summary.exerciseId, summary.libraryExerciseId]),
+      name: summary.exerciseName ?? summary.name ?? null,
+      log: {
+        exerciseRPE: summary.exerciseRPE,
+        totalReps: summary.totalReps,
+        setCount: summary.setCount,
+        averageWeight: summary.averageWeight,
+        sets: [],
+      },
+    }));
+  const fromSummaries = pickLogCandidate(summaryCandidates, context, identity);
+  if (fromSummaries.status === "exact" || fromSummaries.status === "legacy" || fromSummaries.status === "ambiguous") {
+    return fromSummaries;
+  }
+
+  const groups = new Map();
+  for (const set of Array.isArray(container.workoutSets) ? container.workoutSets : []) {
+    if (!set) {
+      continue;
+    }
+
+    if (set.programId && context.programId && set.programId !== context.programId) {
+      continue;
+    }
+
+    const groupKey = set.programExerciseId ?? set.exerciseId ?? null;
+    if (!groupKey) {
+      continue;
+    }
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey).push(set);
+  }
+
+  const setCandidates = [...groups.values()].map((sets) => ({
+    key: null,
+    programExerciseId: sets[0].programExerciseId ?? null,
+    libraryIds: uniqueIds(sets.map((set) => set.exerciseId)),
+    name: sets[0].exerciseName ?? null,
+    log: buildLogFromWorkoutSets(sets),
+  }));
+  const fromSets = pickLogCandidate(setCandidates, context, identity);
+  if (fromSets.status === "exact" || fromSets.status === "legacy" || fromSets.status === "ambiguous") {
+    return fromSets;
+  }
+
+  const hadConflict = [fromLogs, fromSummaries, fromSets].some((result) => result.status === "conflict");
+  return { log: null, status: hadConflict ? "conflict" : "none" };
+}
+
+function getPlannedExerciseSnapshot(session, exercise) {
+  const planned = session?.plannedExercises;
+  if (!planned) {
+    return null;
+  }
+
+  const map = planned.exercises ?? planned;
+  if (map && typeof map === "object" && !Array.isArray(map)) {
+    for (const id of getExerciseIds(exercise)) {
+      if (map[id] && typeof map[id] === "object") {
+        return map[id];
+      }
+    }
+  }
+
+  return getExerciseLog(planned, exercise);
+}
+
+function hasUsableExerciseLog(log) {
+  const setLogs = getSetLogs(log);
+  const loggedReps = getLoggedReps(setLogs);
+
+  if (loggedReps.length) {
+    return true;
+  }
+
+  const aggregateReps = getAggregateTotalReps(log, loggedReps);
+  return aggregateReps !== null && aggregateReps > 0;
+}
+
+function isCompatibleHistorySession(session, context) {
+  if (session.programId && context.programId && session.programId !== context.programId) {
+    return false;
+  }
+
+  if (context.dayId && session.dayId) {
+    return session.dayId === context.dayId;
+  }
+
+  if (context.dayName && session.dayName) {
+    return normalizeIdentityText(session.dayName) === context.dayName;
+  }
+
+  return true;
+}
+
+/**
+ * Selects the same-exercise history for `exercise` from `sessions`.
+ *
+ * - `qualifying`: every compatible session with a usable log, newest first.
+ * - `sessions`: the fresh subset (within HISTORY_RECENCY_DAYS of the current
+ *   session's own date), capped at HISTORY_SAMPLE_LIMIT. Sessions without a
+ *   usable timestamp are treated as fresh but never trigger a long break.
+ * - `longBreak`: the most recent qualifying session is older than the window.
+ */
+function selectExerciseHistory(dayId, exercise, currentSession, sessions = [], identity = {}) {
+  const context = getIdentityContext(exercise, currentSession, dayId);
+  const referenceTime = getSessionTimestamp(currentSession) ?? Date.now();
+  let skippedAmbiguous = 0;
+  const qualifying = [];
+
+  for (const session of sessions ?? []) {
+    if (!session || (currentSession?.id && session.id === currentSession.id)) {
+      continue;
+    }
+
+    if (!isCompatibleHistorySession(session, context)) {
+      continue;
+    }
+
+    const match = resolveExerciseLog(session, exercise, { context, identity });
+
+    if (match.status === "ambiguous") {
+      skippedAmbiguous += 1;
+      continue;
+    }
+
+    if (!match.log || !hasUsableExerciseLog(match.log)) {
+      continue;
+    }
+
+    qualifying.push(session);
+  }
+
+  qualifying.sort((left, right) => getSessionTime(right) - getSessionTime(left));
+
+  const aged = qualifying.map((session) => ({
+    session,
+    ageDays: getSessionAgeDays(session, referenceTime),
+  }));
+  const fresh = aged
+    .filter((entry) => entry.ageDays === null || entry.ageDays <= HISTORY_RECENCY_DAYS)
+    .slice(0, HISTORY_SAMPLE_LIMIT)
+    .map((entry) => entry.session);
+  const mostRecentAgeDays = aged[0]?.ageDays ?? null;
+  const longBreak = mostRecentAgeDays !== null && mostRecentAgeDays > HISTORY_RECENCY_DAYS;
+  const warnings = skippedAmbiguous ? [LEGACY_HISTORY_SKIPPED_WARNING] : [];
+
+  return {
+    context,
+    sessions: fresh,
+    qualifying,
+    mostRecentAgeDays,
+    longBreak,
+    staleCount: qualifying.length - fresh.length,
+    skippedAmbiguous,
+    warnings,
+  };
 }
 
 function isAccessoryReductionCandidate(exercise) {
@@ -432,6 +834,8 @@ export function generateNextPlan(day, session, previousSessions = []) {
     readinessNotes.push("Readiness was strong today, so normal progression rules can work fully.");
   }
 
+  const identity = getDayIdentityOptions(day);
+
   return {
     schemaVersion: 2,
     dayId: day.id,
@@ -443,22 +847,16 @@ export function generateNextPlan(day, session, previousSessions = []) {
     lighterSession: wellnessSummary.isPoor,
     wellnessSummary,
     readinessNotes,
-    exercises: day.exercises.map((exercise) => {
-      const previousExerciseSessions = getPreviousExerciseSessions(
-        day.id,
+    exercises: day.exercises.map((exercise) =>
+      calculateExerciseRecommendationV2(
         exercise,
         session,
         previousSessions,
-      );
-
-      return calculateExerciseRecommendationV2(
-        exercise,
-        session,
-        previousExerciseSessions,
         wellnessSummary,
         day.id,
-      );
-    }),
+        identity,
+      ),
+    ),
   };
 }
 
@@ -508,14 +906,27 @@ function getLoggedSetCount(exerciseLog, loggedReps) {
   );
 }
 
-function getExerciseAverageWeight(exerciseLog, setLogs, plannedWeight, exercise) {
-  const aggregateWeight = getFiniteNumber(exerciseLog?.averageWeight ?? exerciseLog?.actualWeight);
+// v2 working weight (decision new-A): top logged set, then any aggregate
+// weight field, then the planned weight. BW handling lives in getNumericWeight.
+function getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise) {
+  const topSetWeight = getTopSetWeight(setLogs, exercise);
+
+  if (topSetWeight !== null) {
+    return topSetWeight;
+  }
+
+  const aggregateWeight = getFiniteNumber(
+    exerciseLog?.topWeight ??
+      exerciseLog?.maxWeight ??
+      exerciseLog?.averageWeight ??
+      exerciseLog?.actualWeight,
+  );
 
   if (aggregateWeight !== null) {
     return aggregateWeight;
   }
 
-  return getWorkingWeight(setLogs, plannedWeight, exercise);
+  return getNumericWeight(plannedWeight, exercise);
 }
 
 export function classifyExerciseType(exercise = {}) {
@@ -857,11 +1268,12 @@ export function evaluateExercisePerformance({
   session,
   previousExerciseSession,
   planned = {},
+  identity = {},
 }) {
-  const exerciseLog = getExerciseLog(session, exercise);
+  const exerciseLog = resolveExerciseLog(session, exercise, { identity }).log;
   const setLogs = getSetLogs(exerciseLog);
   const loggedReps = getLoggedReps(setLogs);
-  const previousExerciseLog = getExerciseLog(previousExerciseSession, exercise);
+  const previousExerciseLog = resolveExerciseLog(previousExerciseSession, exercise, { identity }).log;
   const previousSetLogs = getSetLogs(previousExerciseLog);
   const previousLoggedReps = getLoggedReps(previousSetLogs);
   const targetSets = toNumber(planned.sets, exercise.sets);
@@ -869,11 +1281,13 @@ export function evaluateExercisePerformance({
   const repsMax = planned.repsMax ?? exercise.repsMax;
   const targetRPE = planned.targetRPE ?? exercise.targetRPE;
   const plannedWeight = planned.recommendedWeight ?? exercise.recommendedWeight;
-  const workingWeight = getExerciseAverageWeight(exerciseLog, setLogs, plannedWeight, exercise);
-  const previousWorkingWeight = getExerciseAverageWeight(
+  const previousPlannedWeight =
+    getPlannedExerciseSnapshot(previousExerciseSession, exercise)?.recommendedWeight ?? plannedWeight;
+  const workingWeight = getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise);
+  const previousWorkingWeight = getExerciseWorkingWeight(
     previousExerciseLog,
     previousSetLogs,
-    plannedWeight,
+    previousPlannedWeight,
     exercise,
   );
   const exerciseRPE = getExerciseRpeFromLog(exerciseLog, setLogs);
@@ -923,9 +1337,11 @@ export function evaluateExercisePerformance({
     previousTotalReps !== null &&
     totalReps < previousTotalReps &&
     comparableLoad;
+  // Decision new-C: an exercise with no set that has numeric reps (and no
+  // positive aggregate rep count) is not evidence. Untouched exercises are
+  // saved as sets of nulls, and a planned weight alone must not count.
   const hasMeaningfulData =
-    Boolean(exerciseLog) &&
-    (hasSetLevelData || hasAggregateData || exerciseRPE !== null || workingWeight !== null);
+    Boolean(exerciseLog) && (hasSetLevelData || (hasAggregateData && totalReps > 0));
   const dataQuality = hasSetLevelData ? "set_level" : hasAggregateData ? "aggregate" : "missing";
   const warnings = [];
 
@@ -1038,17 +1454,22 @@ export function evaluateExerciseHistory({
   session,
   previousSessions = [],
   planned = {},
+  identity = {},
 }) {
-  const historySessions = getPreviousExerciseSessions(dayId, exercise, session, previousSessions);
-  const samples = historySessions
+  const selection = selectExerciseHistory(dayId, exercise, session, previousSessions, identity);
+  const samples = selection.sessions
     .map((historySession) => {
       const readinessModifier = evaluateReadinessModifier(getSessionReadinessSummary(historySession));
       const sessionFatigue = evaluateSessionFatigue(historySession.sessionRpe);
+      // F11: judge each sample against its own planned snapshot when the
+      // session carries one; fall back to the current plan otherwise.
+      const samplePlanned = getPlannedExerciseSnapshot(historySession, exercise) ?? planned;
       const performance = evaluateExercisePerformance({
         exercise,
         session: historySession,
         previousExerciseSession: null,
-        planned,
+        planned: samplePlanned,
+        identity,
       });
 
       return {
@@ -1062,7 +1483,7 @@ export function evaluateExerciseHistory({
       };
     })
     .filter((sample) => sample.performance.hasMeaningfulData)
-    .slice(0, 5)
+    .slice(0, HISTORY_SAMPLE_LIMIT)
     .map((sample) => ({
       ...sample,
       isStrong: isStrongHistoryPerformance(sample),
@@ -1083,7 +1504,7 @@ export function evaluateExerciseHistory({
   const regressingPairs = comparisons.filter((comparison) => comparison === "regressed").length;
   const consecutiveStrongSessions = samples.findIndex((sample) => !sample.isStrong);
   const consecutiveMissedHighRpe = samples.findIndex((sample) => !sample.isMissedHighRpe);
-  const warnings = [];
+  const warnings = [...selection.warnings];
   let trend = "insufficient_history";
 
   if (samples.length >= 2) {
@@ -1130,6 +1551,10 @@ export function evaluateExerciseHistory({
       consecutiveStrongSessions === -1 ? samples.length : consecutiveStrongSessions,
     consecutiveMissedHighRpe:
       consecutiveMissedHighRpe === -1 ? samples.length : consecutiveMissedHighRpe,
+    longBreak: selection.longBreak,
+    mostRecentSessionAgeDays: selection.mostRecentAgeDays,
+    staleSampleCount: selection.staleCount,
+    skippedAmbiguousSessions: selection.skippedAmbiguous,
     warnings,
   };
 }
@@ -1146,6 +1571,8 @@ function getBaseCoachRecommendation(performance) {
     warnings: [...performance.warnings],
     historyTrend: "insufficient_history",
     historySampleSize: 0,
+    decisionOverridden: false,
+    contextReason: null,
   };
 }
 
@@ -1252,10 +1679,68 @@ function addUniqueReason(recommendation, reason, position = "end") {
   }
 }
 
-function removeReasonsContaining(recommendation, fragments) {
-  recommendation.reasons = recommendation.reasons.filter(
-    (reason) => !fragments.some((fragment) => reason.includes(fragment)),
-  );
+function capConfidence(confidence, ceiling) {
+  const order = ["low", "medium", "high"];
+  const current = order.indexOf(confidence);
+  const limit = order.indexOf(ceiling);
+
+  if (current === -1 || limit === -1) {
+    return confidence;
+  }
+
+  return current > limit ? ceiling : confidence;
+}
+
+/**
+ * Changes the decision and records that it changed. When a decision changes,
+ * the reasons list is rebuilt at the end from the final decision's primary
+ * reason plus this single context sentence, so a stale reason for the old
+ * decision never survives next to the new one.
+ */
+function overrideDecision(recommendation, {
+  decision,
+  nextWeight,
+  nextSets,
+  repFocus,
+  confidence,
+  conservative = true,
+  contextReason,
+}) {
+  recommendation.decision = decision;
+
+  if (nextWeight !== undefined) {
+    recommendation.nextWeight = nextWeight;
+  }
+
+  if (nextSets !== undefined) {
+    recommendation.nextSets = nextSets;
+  }
+
+  if (repFocus) {
+    recommendation.repFocus = repFocus;
+  }
+
+  if (confidence) {
+    recommendation.confidence = confidence;
+  }
+
+  recommendation.conservative = conservative;
+  recommendation.decisionOverridden = true;
+
+  if (contextReason) {
+    recommendation.contextReason = contextReason;
+  }
+
+  return recommendation;
+}
+
+function describeBreakLength(days) {
+  if (!Number.isFinite(days)) {
+    return "more than six weeks";
+  }
+
+  const weeks = Math.floor(days / 7);
+  return weeks >= 2 ? `${days} days (about ${weeks} weeks)` : `${days} days`;
 }
 
 function applyHistoryContext({
@@ -1271,20 +1756,31 @@ function applyHistoryContext({
   recommendation.historySampleSize = historySummary.sampleSize;
   recommendation.warnings.push(...historySummary.warnings);
 
+  // Decision new-B: the last logged session is older than the recency window.
+  if (historySummary.longBreak) {
+    return overrideDecision(recommendation, {
+      decision: "hold",
+      nextWeight: performance.workingWeight,
+      nextSets: performance.targetSets,
+      repFocus: "Re-establish clean reps at this load before progressing.",
+      confidence: capConfidence(recommendation.confidence, "medium"),
+      conservative: true,
+      contextReason: `Last logged ${describeBreakLength(historySummary.mostRecentSessionAgeDays)} ago - after a long break the load holds until the pattern is re-established.`,
+    });
+  }
+
   if (!historySummary.sampleSize) {
     if (recommendation.decision === "increase_load") {
       if (profile.progressionCaps.requiresRepeatTopRange) {
-        removeReasonsContaining(recommendation, ["Load increased", "progressed"]);
-        recommendation.decision = "increase_reps";
-        recommendation.nextWeight = performance.workingWeight;
-        recommendation.repFocus = "Repeat top-range reps before adding load.";
-        recommendation.confidence = "medium";
-        recommendation.conservative = true;
-        addUniqueReason(
-          recommendation,
-          "This exercise profile uses especially conservative load jumps, so reps must repeat before load goes up.",
-        );
-        return recommendation;
+        return overrideDecision(recommendation, {
+          decision: "increase_reps",
+          nextWeight: performance.workingWeight,
+          repFocus: "Repeat top-range reps before adding load.",
+          confidence: "medium",
+          conservative: true,
+          contextReason:
+            "This exercise profile uses especially conservative load jumps, so top-range reps must repeat before adding load.",
+        });
       }
 
       recommendation.confidence = "medium";
@@ -1295,13 +1791,27 @@ function applyHistoryContext({
       );
     }
 
+    // Decision new-D / F3: with no usable history a bad session holds; a
+    // reduction needs two consecutive qualifying bad sessions.
+    if (recommendation.decision === "reduce_load") {
+      return overrideDecision(recommendation, {
+        decision: "hold",
+        nextWeight: performance.workingWeight,
+        repFocus: "Repeat the load once before reducing unless the same issue repeats.",
+        confidence: "medium",
+        conservative: true,
+        contextReason: "One difficult session usually earns a hold, not an automatic reduction.",
+      });
+    }
+
     return recommendation;
   }
 
   const currentMissedHighRpe = performance.belowMin && isHighExerciseRpe(performance);
+  // Decision new-D: consecutive means the most recent fresh sample was also a
+  // missed-target/high-RPE session.
   const repeatedMissedHighRpe =
-    currentMissedHighRpe &&
-    (historySummary.consecutiveMissedHighRpe >= 1 || historySummary.missedHighRpeCount >= 2);
+    currentMissedHighRpe && historySummary.consecutiveMissedHighRpe >= 1;
   const repeatedHighSessionRpe =
     historySummary.highSessionRpeCount >= 2 ||
     (sessionFatigue.isVeryHigh && historySummary.highSessionRpeCount >= 1);
@@ -1347,18 +1857,15 @@ function applyHistoryContext({
 
   if (recommendation.decision === "increase_load") {
     if (profile.progressionCaps.requiresRepeatTopRange && !twoStrongSessions) {
-      removeReasonsContaining(recommendation, ["Load increased", "progressed"]);
-      recommendation.decision = "increase_reps";
-      recommendation.nextWeight = performance.workingWeight;
-      recommendation.repFocus = "Repeat top-range reps before adding load.";
-      recommendation.conservative = true;
-      recommendation.confidence = "medium";
-      addUniqueReason(
-        recommendation,
-        "This exercise profile uses especially conservative load jumps, so reps must repeat before load goes up.",
-        "start",
-      );
-      return recommendation;
+      return overrideDecision(recommendation, {
+        decision: "increase_reps",
+        nextWeight: performance.workingWeight,
+        repFocus: "Repeat top-range reps before adding load.",
+        confidence: "medium",
+        conservative: true,
+        contextReason:
+          "This exercise profile uses especially conservative load jumps, so top-range reps must repeat before adding load.",
+      });
     }
 
     if (mode === "quality_first") {
@@ -1372,21 +1879,18 @@ function applyHistoryContext({
     }
 
     if (historySummary.trend === "regressing" || repeatedHighSessionRpe || repeatedHighExerciseRpe) {
-      removeReasonsContaining(recommendation, ["Load increased", "progressed"]);
-      recommendation.decision = mode === "reps_first" ? "increase_reps" : "hold";
-      recommendation.nextWeight = performance.workingWeight;
-      recommendation.repFocus =
-        mode === "reps_first"
-          ? "Confirm clean top-range reps again before adding load."
-          : "Confirm this load again before increasing.";
-      recommendation.conservative = true;
-      recommendation.confidence = "medium";
-      addUniqueReason(
-        recommendation,
-        "Recent history showed fatigue or regression, so load was not increased off one good session.",
-        "start",
-      );
-      return recommendation;
+      return overrideDecision(recommendation, {
+        decision: mode === "reps_first" ? "increase_reps" : "hold",
+        nextWeight: performance.workingWeight,
+        repFocus:
+          mode === "reps_first"
+            ? "Confirm clean top-range reps again before adding load."
+            : "Confirm this load again before increasing.",
+        confidence: "medium",
+        conservative: true,
+        contextReason:
+          "Recent history showed fatigue or regression, so load was not increased off one good session.",
+      });
     }
 
     if (twoStrongSessions) {
@@ -1408,24 +1912,24 @@ function applyHistoryContext({
 
   if (recommendation.decision === "reduce_load") {
     if (!repeatedMissedHighRpe) {
-      removeReasonsContaining(recommendation, ["Load slightly reduced", "reduced because"]);
-      recommendation.decision = "hold";
-      recommendation.nextWeight = performance.workingWeight;
-      recommendation.repFocus = "Repeat the load once before reducing unless the same issue repeats.";
-      recommendation.conservative = true;
-      recommendation.confidence = "medium";
-      addUniqueReason(
-        recommendation,
-        "One difficult session usually earns a hold, not an automatic reduction.",
-        "start",
-      );
+      overrideDecision(recommendation, {
+        decision: "hold",
+        nextWeight: performance.workingWeight,
+        repFocus: "Repeat the load once before reducing unless the same issue repeats.",
+        confidence: "medium",
+        conservative: true,
+        contextReason: "One difficult session usually earns a hold, not an automatic reduction.",
+      });
     } else if (classification.isMainCompound && historySummary.consecutiveMissedHighRpe < 2) {
-      removeReasonsContaining(recommendation, ["Load slightly reduced", "reduced because"]);
-      recommendation.decision = "hold";
-      recommendation.nextWeight = performance.workingWeight;
-      recommendation.repFocus = "Protect the main lift and reassess before reducing load.";
-      recommendation.conservative = true;
-      recommendation.confidence = "medium";
+      overrideDecision(recommendation, {
+        decision: "hold",
+        nextWeight: performance.workingWeight,
+        repFocus: "Protect the main lift and reassess before reducing load.",
+        confidence: "medium",
+        conservative: true,
+        contextReason:
+          "The main lift is protected from an early reduction; reassess after one more session at this load.",
+      });
       recommendation.warnings.push("Main compound load was protected from an aggressive reduction.");
     } else {
       recommendation.confidence = historySummary.consecutiveMissedHighRpe >= 2 ? "high" : "medium";
@@ -1443,14 +1947,13 @@ function applyHistoryContext({
     historySummary.trend === "improving" &&
     !isHighExerciseRpe(performance, 8.5)
   ) {
-    recommendation.decision = "increase_reps";
-    recommendation.repFocus = "Keep load and build reps before increasing weight.";
-    recommendation.confidence = "medium";
-    addUniqueReason(
-      recommendation,
-      "Isolation history is improving, so reps-first progression stays the target.",
-      "start",
-    );
+    overrideDecision(recommendation, {
+      decision: "increase_reps",
+      repFocus: "Keep load and build reps before increasing weight.",
+      confidence: "medium",
+      conservative: recommendation.conservative,
+      contextReason: "Isolation history is improving, so reps-first progression stays the target.",
+    });
   }
 
   return recommendation;
@@ -1489,6 +1992,9 @@ export function calculateNextRecommendation({
     if (performance.painFlagged) {
       recommendation.warnings.push(PAIN_FLAG_WARNING);
     }
+
+    delete recommendation.decisionOverridden;
+    delete recommendation.contextReason;
 
     return recommendation;
   }
@@ -1672,6 +2178,9 @@ export function calculateNextRecommendation({
     profile,
   });
 
+  // Pain handling runs after history and stays independent of it. It is the
+  // most important context for the athlete, so it becomes the one context
+  // sentence next to the final decision's primary reason.
   if (performance.painFlagged) {
     if (
       recommendation.decision === "increase_load" ||
@@ -1681,11 +2190,22 @@ export function calculateNextRecommendation({
       recommendation.nextWeight = performance.workingWeight;
     }
 
-    recommendation.conservative = true;
-    recommendation.repFocus = "Stay in a pain-free range and cut a set short the moment it flares up.";
-    recommendation.reasons.push(
-      "You flagged pain or discomfort here, so progression is on hold until a pain-free session is logged.",
-    );
+    // The pain sentence takes the single context slot; a context sentence that
+    // history already supplied (the long-break explanation of decision new-B)
+    // must still reach the athlete, so it moves to the warnings.
+    if (historySummary.longBreak && recommendation.contextReason) {
+      recommendation.warnings.push(recommendation.contextReason);
+    }
+
+    overrideDecision(recommendation, {
+      decision: recommendation.decision,
+      repFocus: "Stay in a pain-free range and cut a set short the moment it flares up.",
+      conservative: true,
+      contextReason:
+        recommendation.decision === "hold"
+          ? "You flagged pain or discomfort here, so progression is on hold until a pain-free session is logged."
+          : "You flagged pain or discomfort here, so nothing is added until a pain-free session is logged.",
+    });
     recommendation.warnings.push(PAIN_FLAG_WARNING);
   }
 
@@ -1696,11 +2216,18 @@ export function calculateNextRecommendation({
     sessionFatigue,
   });
 
-  recommendation.reasons = [
-    finalPrimaryReason,
-    ...recommendation.reasons.filter((reason) => reason && reason !== finalPrimaryReason),
-  ];
+  // Whenever the decision changed after the first reason pass, rebuild the
+  // list: exactly one primary reason for the final decision plus at most one
+  // context sentence. Otherwise keep the supporting reasons that were added.
+  recommendation.reasons = recommendation.decisionOverridden
+    ? [finalPrimaryReason, recommendation.contextReason].filter(Boolean)
+    : [
+        finalPrimaryReason,
+        ...recommendation.reasons.filter((reason) => reason && reason !== finalPrimaryReason),
+      ];
   recommendation.warnings = [...new Set(recommendation.warnings.filter(Boolean))];
+  delete recommendation.decisionOverridden;
+  delete recommendation.contextReason;
 
   return recommendation;
 }
@@ -1708,33 +2235,39 @@ export function calculateNextRecommendation({
 function calculateExerciseRecommendationV2(
   exercise,
   session,
-  previousExerciseSessions,
+  previousSessions,
   wellnessSummary,
   dayId,
+  identity = {},
 ) {
-  const planned = getExerciseLog(session.plannedExercises, exercise) ?? {};
-  const historySessions = Array.isArray(previousExerciseSessions)
-    ? previousExerciseSessions
-    : previousExerciseSessions
-      ? [previousExerciseSessions]
+  const planned = getPlannedExerciseSnapshot(session, exercise) ?? {};
+  const candidateSessions = Array.isArray(previousSessions)
+    ? previousSessions
+    : previousSessions
+      ? [previousSessions]
       : [];
   const classification = classifyExerciseType(exercise);
   const profile = buildExerciseProfile(exercise);
   const mode = profile.progressionMode;
   const readinessModifier = evaluateReadinessModifier(wellnessSummary);
   const sessionFatigue = evaluateSessionFatigue(session.sessionRpe);
+  // Strict identity + recency selection. The previous-session comparison uses
+  // the most recent fresh sample only; after a long break there is none.
+  const history = selectExerciseHistory(dayId, exercise, session, candidateSessions, identity);
   const performance = evaluateExercisePerformance({
     exercise,
     session,
-    previousExerciseSession: historySessions[0] ?? null,
+    previousExerciseSession: history.sessions[0] ?? null,
     planned,
+    identity,
   });
   const historySummary = evaluateExerciseHistory({
     exercise,
     dayId,
     session,
-    previousSessions: historySessions,
+    previousSessions: candidateSessions,
     planned,
+    identity,
   });
   const recommendation = calculateNextRecommendation({
     exercise,

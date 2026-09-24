@@ -3,12 +3,27 @@ import {
   workoutProgram,
 } from "../config/workoutProgram.js";
 import { exerciseLibraryContentBatches } from "../data/exerciseLibraryContent.js";
-import { readStorage, STORAGE_KEYS, writeStorage } from "./storage.js";
+import {
+  readStorage,
+  readStorageResult,
+  STORAGE_KEYS,
+  writeStorage,
+  writeStorageBatch,
+} from "./storage.js";
 
 export const PROGRAM_STORAGE_VERSION = 1;
+
+// Upper bound for a program target's set count. Shared by the target editor,
+// updateProgramExerciseTargetChecked and the strict share validator so that a
+// program that is valid inside the app always round-trips through share/import.
+export const MAX_TARGET_SETS = 30;
 export const DEFAULT_PROGRAM_ID = "default-athletic-bodybuilding-rpe";
 export const ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID =
   "default-athletic-aesthetic-basketball";
+
+// Note used by seeded / freshly duplicated progression records. App.jsx treats a
+// progression with this note (and no sourcePlanGeneratedAt) as "not earned".
+export const BASE_RECOMMENDATION_NOTE = "Base program prescription.";
 
 function nowIso() {
   return new Date().toISOString();
@@ -44,10 +59,26 @@ function mergeById(existingItems, seedItems) {
   seedItems.forEach((item) => {
     if (!existingIds.has(item.id)) {
       merged.push(item);
+      existingIds.add(item.id);
     }
   });
 
   return merged;
+}
+
+function uniqueById(items) {
+  const seen = new Set();
+
+  return asArray(items).filter((item) => {
+    const id = item?.id;
+
+    if (id === undefined || id === null || seen.has(id)) {
+      return false;
+    }
+
+    seen.add(id);
+    return true;
+  });
 }
 
 function makeSectionId(programId, dayId) {
@@ -348,7 +379,7 @@ function buildProgramSeedFromConfig(programConfig, options, createdAt = nowIso()
         lastRecommendedReps: targetReps,
         lastRecommendedSets: exercise.sets,
         lastTargetRPE: exercise.targetRPE,
-        recommendationNote: "Base program prescription.",
+        recommendationNote: BASE_RECOMMENDATION_NOTE,
         updatedAt: createdAt,
       });
     });
@@ -404,17 +435,25 @@ function buildAthleticAestheticBasketballProgramSeed(createdAt = nowIso()) {
   );
 }
 
-function ensureProgramStorageMeta(seedTime) {
-  const existingMeta = readStorage(STORAGE_KEYS.programStorageMeta, null);
-  const updatedMeta = {
-    schemaVersion: PROGRAM_STORAGE_VERSION,
-    createdAt: existingMeta?.createdAt ?? seedTime,
-    updatedAt: seedTime,
-    defaultProgramId: existingMeta?.defaultProgramId ?? DEFAULT_PROGRAM_ID,
-  };
+// Every key the seed merges into. When any of them holds unreadable JSON the
+// seed must not run: readStorage returns the empty fallback for a corrupt key,
+// which would look like a fresh install and the seed would write over the
+// user's data (decision new-G: the fallback is never written back).
+const SEED_STORAGE_KEYS = [
+  STORAGE_KEYS.programs,
+  STORAGE_KEYS.activeProgramId,
+  STORAGE_KEYS.programStorageMeta,
+  STORAGE_KEYS.programDays,
+  STORAGE_KEYS.programSections,
+  STORAGE_KEYS.exerciseLibrary,
+  STORAGE_KEYS.programExercises,
+  STORAGE_KEYS.baselines,
+  STORAGE_KEYS.programProgressions,
+  STORAGE_KEYS.programStates,
+];
 
-  writeStorage(STORAGE_KEYS.programStorageMeta, updatedMeta);
-  return updatedMeta;
+function getCorruptSeedStorageKeys() {
+  return SEED_STORAGE_KEYS.filter((key) => readStorageResult(key, null).corrupt);
 }
 
 function getProgramStates() {
@@ -422,7 +461,7 @@ function getProgramStates() {
 }
 
 function writeProgramStates(states) {
-  writeStorage(STORAGE_KEYS.programStates, asArray(states));
+  return writeStorage(STORAGE_KEYS.programStates, asArray(states));
 }
 
 function getBaselines() {
@@ -461,18 +500,21 @@ function getProgramDisplayNickname(program) {
   return program?.name ?? "Program";
 }
 
-function mergeExerciseLibraryContent(seedLibraryExercises) {
+// Library technique content (src/data/exerciseLibraryContent.js) is filled
+// into Library entries in memory; the caller decides when to write. Pure.
+// Returns { exerciseLibrary, changed }.
+function applyExerciseLibraryContent(exerciseLibrary, seedLibraryExercises) {
   const contentById = getExerciseLibraryContentById();
+  const currentLibrary = asArray(exerciseLibrary);
 
   if (!contentById.size) {
-    return false;
+    return { exerciseLibrary: currentLibrary, changed: false };
   }
 
   const seedById = new Map(asArray(seedLibraryExercises).map((exercise) => [exercise.id, exercise]));
-  const exerciseLibrary = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, []));
-  let didChange = false;
+  let changed = false;
 
-  const nextExerciseLibrary = exerciseLibrary.map((exercise) => {
+  const nextExerciseLibrary = currentLibrary.map((exercise) => {
     const content = contentById.get(exercise.id);
 
     if (!content) {
@@ -526,33 +568,31 @@ function mergeExerciseLibraryContent(seedLibraryExercises) {
       normalizeLibraryValue(nextExercise) !== normalizeLibraryValue(exercise) ||
       JSON.stringify(nextExercise) !== JSON.stringify(exercise)
     ) {
-      didChange = true;
+      changed = true;
     }
 
     return nextExercise;
   });
 
-  if (didChange) {
-    writeStorage(STORAGE_KEYS.exerciseLibrary, nextExerciseLibrary);
-  }
-
-  return didChange;
+  return { exerciseLibrary: nextExerciseLibrary, changed };
 }
 
-function backfillDefaultProgramWarmups() {
+// Default-program days that predate the warm-up field get the config warm-up.
+// Pure. Returns { programDays, changed }.
+function applyDefaultProgramWarmups(programDays) {
   const sourceWarmupsByDayId = new Map(
     workoutProgram.days
       .map((day) => [day.id, normalizeWarmup(day.warmup)])
       .filter(([, warmup]) => warmup),
   );
+  const currentDays = asArray(programDays);
 
   if (!sourceWarmupsByDayId.size) {
-    return false;
+    return { programDays: currentDays, changed: false };
   }
 
-  const programDays = asArray(readStorage(STORAGE_KEYS.programDays, []));
-  let didChange = false;
-  const nextProgramDays = programDays.map((day) => {
+  let changed = false;
+  const nextProgramDays = currentDays.map((day) => {
     if (
       day.programId !== DEFAULT_PROGRAM_ID ||
       Object.prototype.hasOwnProperty.call(day, "warmup")
@@ -566,157 +606,286 @@ function backfillDefaultProgramWarmups() {
       return day;
     }
 
-    didChange = true;
+    changed = true;
     return {
       ...day,
       warmup: sourceWarmup,
     };
   });
 
-  if (didChange) {
-    writeStorage(STORAGE_KEYS.programDays, nextProgramDays);
-  }
-
-  return didChange;
+  return { programDays: nextProgramDays, changed };
 }
 
-function seedProgramIfMissing(seed) {
-  const programs = getPrograms();
+// The seed works on an in-memory copy of every program storage collection and
+// writes the changed keys in ONE batch (fix round 2: a failed write mid-seed
+// used to leave programs without days/exercises for good).
+const SEED_STATE_FIELDS = Object.freeze({
+  programs: STORAGE_KEYS.programs,
+  programDays: STORAGE_KEYS.programDays,
+  programSections: STORAGE_KEYS.programSections,
+  exerciseLibrary: STORAGE_KEYS.exerciseLibrary,
+  programExercises: STORAGE_KEYS.programExercises,
+  baselines: STORAGE_KEYS.baselines,
+  programProgressions: STORAGE_KEYS.programProgressions,
+  programStates: STORAGE_KEYS.programStates,
+});
 
-  if (programs.some((program) => program.id === seed.program.id)) {
-    return false;
-  }
-
-  writeStorage(STORAGE_KEYS.programs, mergeById(programs, [seed.program]));
-  writeStorage(
-    STORAGE_KEYS.programDays,
-    mergeById(readStorage(STORAGE_KEYS.programDays, []), seed.days),
+function readSeedState() {
+  return Object.fromEntries(
+    Object.entries(SEED_STATE_FIELDS).map(([field, key]) => [field, asArray(readStorage(key, []))]),
   );
-  writeStorage(
-    STORAGE_KEYS.programSections,
-    mergeById(readStorage(STORAGE_KEYS.programSections, []), seed.sections),
-  );
-  writeStorage(
-    STORAGE_KEYS.exerciseLibrary,
-    mergeById(readStorage(STORAGE_KEYS.exerciseLibrary, []), seed.libraryExercises),
-  );
-  writeStorage(
-    STORAGE_KEYS.programExercises,
-    mergeById(readStorage(STORAGE_KEYS.programExercises, []), seed.programExercises),
-  );
-  writeStorage(
-    STORAGE_KEYS.baselines,
-    mergeById(readStorage(STORAGE_KEYS.baselines, []), seed.baselines),
-  );
-  writeStorage(
-    STORAGE_KEYS.programProgressions,
-    mergeById(readStorage(STORAGE_KEYS.programProgressions, []), seed.progressions),
-  );
-  writeProgramStates(mergeById(getProgramStates(), [seed.programState]));
-  mergeExerciseLibraryContent(seed.libraryExercises);
-
-  return true;
 }
 
-export function seedDefaultProgramIfNeeded() {
-  const seedTime = nowIso();
-  const existingPrograms = getPrograms();
-  const seed = buildDefaultProgramSeed(seedTime);
-  const basketballSeed = buildAthleticAestheticBasketballProgramSeed(seedTime);
+function mergeSeedCollection(state, changedFields, field, seedItems) {
+  const merged = mergeById(state[field], seedItems);
 
-  ensureProgramStorageMeta(seedTime);
+  if (merged.length !== state[field].length) {
+    state[field] = merged;
+    changedFields.add(field);
+  }
+}
 
-  if (!existingPrograms.length) {
-    writeStorage(STORAGE_KEYS.programs, mergeById(existingPrograms, [seed.program, basketballSeed.program]));
-    writeStorage(
-      STORAGE_KEYS.programDays,
-      mergeById(readStorage(STORAGE_KEYS.programDays, []), [...seed.days, ...basketballSeed.days]),
-    );
-    writeStorage(
-      STORAGE_KEYS.programSections,
-      mergeById(
-        readStorage(STORAGE_KEYS.programSections, []),
-        [...seed.sections, ...basketballSeed.sections],
-      ),
-    );
-    writeStorage(
-      STORAGE_KEYS.exerciseLibrary,
-      mergeById(
-        readStorage(STORAGE_KEYS.exerciseLibrary, []),
-        [...seed.libraryExercises, ...basketballSeed.libraryExercises],
-      ),
-    );
-    writeStorage(
-      STORAGE_KEYS.programExercises,
-      mergeById(
-        readStorage(STORAGE_KEYS.programExercises, []),
-        [...seed.programExercises, ...basketballSeed.programExercises],
-      ),
-    );
-    writeStorage(
-      STORAGE_KEYS.baselines,
-      mergeById(readStorage(STORAGE_KEYS.baselines, []), [...seed.baselines, ...basketballSeed.baselines]),
-    );
-    writeStorage(
-      STORAGE_KEYS.programProgressions,
-      mergeById(
-        readStorage(STORAGE_KEYS.programProgressions, []),
-        [...seed.progressions, ...basketballSeed.progressions],
-      ),
-    );
-    writeProgramStates(mergeById(getProgramStates(), [seed.programState, basketballSeed.programState]));
-    writeStorage(STORAGE_KEYS.activeProgramId, seed.program.id);
-    mergeExerciseLibraryContent([...seed.libraryExercises, ...basketballSeed.libraryExercises]);
+/**
+ * Adds whatever of a default program's seed is missing: the program itself,
+ * and its days / sections / library entries / program exercises / baselines /
+ * state. Add-only by id, so user data is never replaced. Progression records
+ * are only seeded together with the program (an existing program's
+ * progressions are earned from sessions, or deliberately deleted).
+ * Returns true when the program record itself was added.
+ */
+function applyProgramSeed(state, changedFields, seed) {
+  const programMissing = !state.programs.some((program) => program.id === seed.program.id);
 
-    return {
-      seeded: true,
-      activeProgramId: seed.program.id,
-    };
+  if (programMissing) {
+    mergeSeedCollection(state, changedFields, "programs", [seed.program]);
   }
 
-  if (!getActiveProgramId()) {
-    const defaultProgram =
-      existingPrograms.find((program) => program.isDefault && !program.isArchived) ??
-      existingPrograms.find((program) => !program.isArchived) ??
-      existingPrograms[0];
+  mergeSeedCollection(state, changedFields, "programDays", seed.days);
+  mergeSeedCollection(state, changedFields, "programSections", seed.sections);
+  mergeSeedCollection(state, changedFields, "exerciseLibrary", seed.libraryExercises);
+  mergeSeedCollection(state, changedFields, "programExercises", seed.programExercises);
+  mergeSeedCollection(state, changedFields, "baselines", seed.baselines);
 
-    if (defaultProgram) {
-      writeStorage(STORAGE_KEYS.activeProgramId, defaultProgram.id);
-    }
+  if (programMissing) {
+    mergeSeedCollection(state, changedFields, "programProgressions", seed.progressions);
   }
 
-  let didBackfillDefaultNickname = false;
-  const currentPrograms = getPrograms();
-  const nextPrograms = currentPrograms.map((program) => {
-    if (program.id === DEFAULT_PROGRAM_ID && !program.nickname) {
-      didBackfillDefaultNickname = true;
-      return { ...program, nickname: "Athletic Program", updatedAt: program.updatedAt ?? seedTime };
-    }
+  mergeSeedCollection(state, changedFields, "programStates", [seed.programState]);
 
-    return program;
-  });
+  return programMissing;
+}
 
-  if (didBackfillDefaultNickname) {
-    writeStorage(STORAGE_KEYS.programs, nextPrograms);
+function applySeedLibraryContent(state, changedFields, seedLibraryExercises) {
+  const merged = applyExerciseLibraryContent(state.exerciseLibrary, seedLibraryExercises);
+
+  if (merged.changed) {
+    state.exerciseLibrary = merged.exerciseLibrary;
+    changedFields.add("exerciseLibrary");
+  }
+}
+
+function buildSeedEntries(state, changedFields) {
+  return [...changedFields].map((field) => ({
+    key: SEED_STATE_FIELDS[field],
+    value: state[field],
+  }));
+}
+
+function resolveActiveProgramIdInMemory(programs) {
+  const storedRead = readStorageResult(STORAGE_KEYS.activeProgramId, null);
+  const activeProgram = programs.find(
+    (program) => program.id === storedRead.value && !program.isArchived,
+  );
+
+  if (activeProgram) {
+    return { activeProgramId: activeProgram.id, changed: false };
   }
 
-  backfillDefaultProgramWarmups();
-  seedProgramIfMissing(basketballSeed);
-  mergeExerciseLibraryContent(seed.libraryExercises);
+  const fallbackProgram =
+    programs.find((program) => program.isDefault && !program.isArchived) ??
+    programs.find((program) => !program.isArchived) ??
+    programs[0] ??
+    null;
 
   return {
-    seeded: false,
-    activeProgramId: getActiveProgramId(),
+    activeProgramId: fallbackProgram?.id ?? null,
+    changed: Boolean(fallbackProgram) && !storedRead.corrupt,
   };
 }
 
-export function getPrograms() {
+/**
+ * Seeds the default programs into fresh storage and backfills older storage,
+ * all in one checked batch. Returns { seeded, activeProgramId }, or
+ * { seeded: false, error, code, failedKey, activeProgramId } when the batch
+ * failed (nothing was written), or, when a program storage key holds
+ * unreadable JSON, { seeded: false, blocked: true, corruptKeys, activeProgramId }
+ * without writing anything: the fallback of a corrupt key is never written
+ * back (decision new-G), so the user's data can be recovered from the key
+ * itself or its `.corrupt-<n>` copy.
+ */
+export function seedDefaultProgramIfNeeded() {
+  const seedTime = nowIso();
+  const corruptKeys = getCorruptSeedStorageKeys();
+
+  if (corruptKeys.length) {
+    return {
+      seeded: false,
+      blocked: true,
+      corruptKeys,
+      activeProgramId: getActiveProgramId(),
+    };
+  }
+
+  const state = readSeedState();
+  const changedFields = new Set();
+  const seed = buildDefaultProgramSeed(seedTime);
+  const basketballSeed = buildAthleticAestheticBasketballProgramSeed(seedTime);
+  const isFreshInstall = !state.programs.length;
+
+  if (!isFreshInstall) {
+    // Older storage: the default nickname and the config warm-ups are filled in.
+    let didBackfillDefaultNickname = false;
+    const nextPrograms = state.programs.map((program) => {
+      if (program.id === DEFAULT_PROGRAM_ID && !program.nickname) {
+        didBackfillDefaultNickname = true;
+        return { ...program, nickname: "Athletic Program", updatedAt: program.updatedAt ?? seedTime };
+      }
+
+      return program;
+    });
+
+    if (didBackfillDefaultNickname) {
+      state.programs = nextPrograms;
+      changedFields.add("programs");
+    }
+
+    const warmups = applyDefaultProgramWarmups(state.programDays);
+
+    if (warmups.changed) {
+      state.programDays = warmups.programDays;
+      changedFields.add("programDays");
+    }
+  }
+
+  applyProgramSeed(state, changedFields, seed);
+  applyProgramSeed(state, changedFields, basketballSeed);
+  applySeedLibraryContent(state, changedFields, [
+    ...seed.libraryExercises,
+    ...basketballSeed.libraryExercises,
+  ]);
+
+  const entries = buildSeedEntries(state, changedFields);
+  const active = resolveActiveProgramIdInMemory(state.programs);
+
+  if (active.changed) {
+    entries.push({ key: STORAGE_KEYS.activeProgramId, value: active.activeProgramId });
+  }
+
+  const existingMeta = readStorage(STORAGE_KEYS.programStorageMeta, null);
+  const meta = {
+    schemaVersion: PROGRAM_STORAGE_VERSION,
+    createdAt: existingMeta?.createdAt ?? seedTime,
+    updatedAt: seedTime,
+    defaultProgramId: existingMeta?.defaultProgramId ?? DEFAULT_PROGRAM_ID,
+  };
+  const metaChanged =
+    !existingMeta ||
+    existingMeta.schemaVersion !== meta.schemaVersion ||
+    existingMeta.defaultProgramId !== meta.defaultProgramId;
+
+  if (entries.length || metaChanged) {
+    entries.push({ key: STORAGE_KEYS.programStorageMeta, value: meta });
+  }
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      seeded: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      activeProgramId: isFreshInstall ? null : active.activeProgramId,
+    };
+  }
+
+  return {
+    seeded: isFreshInstall,
+    activeProgramId: active.activeProgramId,
+  };
+}
+
+// Every stored program, archived ones included. Internal writers must use this
+// so that rewriting the programs key never drops archived programs.
+function getAllPrograms() {
   return asArray(readStorage(STORAGE_KEYS.programs, []));
 }
 
+/**
+ * Programs for lists. Archived programs are hidden unless
+ * `{ includeArchived: true }` is passed (decision new-F).
+ */
+export function getPrograms(options = {}) {
+  const includeArchived = Boolean(options?.includeArchived);
+  const programs = getAllPrograms();
+
+  return includeArchived ? programs : programs.filter((program) => !program.isArchived);
+}
+
+export function getArchivedPrograms() {
+  return getAllPrograms().filter((program) => Boolean(program.isArchived));
+}
+
+/**
+ * Decision new-F. Returns { ok: true, program } or { ok: false, error }.
+ * Active and default programs cannot be archived. Unarchiving is always allowed.
+ * Archived programs keep every related record.
+ */
+export function setProgramArchived(programId, archived) {
+  const programs = getAllPrograms();
+  const existingIndex = programs.findIndex((program) => program.id === programId);
+
+  if (existingIndex < 0) {
+    return { ok: false, error: "Program not found." };
+  }
+
+  const existingProgram = programs[existingIndex];
+  const nextArchived = Boolean(archived);
+
+  if (nextArchived) {
+    if (existingProgram.isDefault || existingProgram.id === DEFAULT_PROGRAM_ID) {
+      return { ok: false, error: "Default programs cannot be archived." };
+    }
+
+    if (readStorage(STORAGE_KEYS.activeProgramId, null) === programId) {
+      return { ok: false, error: "The active program cannot be archived. Switch programs first." };
+    }
+  }
+
+  if (Boolean(existingProgram.isArchived) === nextArchived) {
+    return { ok: true, program: existingProgram, changed: false };
+  }
+
+  const updatedProgram = {
+    ...existingProgram,
+    isArchived: nextArchived,
+    updatedAt: nowIso(),
+  };
+  const nextPrograms = [...programs];
+  nextPrograms[existingIndex] = updatedProgram;
+  const writeResult = writeStorage(STORAGE_KEYS.programs, nextPrograms);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code };
+  }
+
+  return { ok: true, program: updatedProgram, changed: true };
+}
+
 export function getActiveProgramId() {
-  const storedProgramId = readStorage(STORAGE_KEYS.activeProgramId, null);
-  const programs = getPrograms();
+  const storedRead = readStorageResult(STORAGE_KEYS.activeProgramId, null);
+  const storedProgramId = storedRead.value;
+  const programs = getAllPrograms();
   const activeProgram = programs.find(
     (program) => program.id === storedProgramId && !program.isArchived,
   );
@@ -732,7 +901,12 @@ export function getActiveProgramId() {
     null;
 
   if (fallbackProgram) {
-    writeStorage(STORAGE_KEYS.activeProgramId, fallbackProgram.id);
+    // A corrupt stored id is used in memory only; it is never overwritten
+    // by the fallback (decision new-G).
+    if (!storedRead.corrupt) {
+      writeStorage(STORAGE_KEYS.activeProgramId, fallbackProgram.id);
+    }
+
     return fallbackProgram.id;
   }
 
@@ -741,28 +915,49 @@ export function getActiveProgramId() {
 
 export function getActiveProgram() {
   const activeProgramId = getActiveProgramId();
-  return getPrograms().find((program) => program.id === activeProgramId) ?? null;
+  return getAllPrograms().find((program) => program.id === activeProgramId) ?? null;
 }
 
-export function setActiveProgram(programId) {
-  const program = getPrograms().find(
+/**
+ * Returns { ok: true, programId } or { ok: false, error, code }. The active
+ * id is only reported as switched after the write succeeded (fix round 2).
+ */
+export function setActiveProgramChecked(programId) {
+  const program = getAllPrograms().find(
     (candidate) => candidate.id === programId && !candidate.isArchived,
   );
 
   if (!program) {
-    return null;
+    return { ok: false, error: "Program not found or archived.", programId: null };
   }
 
-  writeStorage(STORAGE_KEYS.activeProgramId, program.id);
-  return program.id;
+  const writeResult = writeStorage(STORAGE_KEYS.activeProgramId, program.id);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, programId: null };
+  }
+
+  return { ok: true, programId: program.id };
 }
 
-export function updateProgramMetadata(programId, patch) {
-  const programs = getPrograms();
+/**
+ * Legacy-shaped wrapper: the new active program id, or null when the program
+ * is missing/archived or the write failed.
+ */
+export function setActiveProgram(programId) {
+  return setActiveProgramChecked(programId).programId;
+}
+
+/**
+ * Returns { ok: true, program } or { ok: false, error, code, program: null }.
+ * The updated program is only returned after the write succeeded.
+ */
+export function updateProgramMetadataChecked(programId, patch) {
+  const programs = getAllPrograms();
   const existingIndex = programs.findIndex((program) => program.id === programId);
 
   if (existingIndex < 0) {
-    return null;
+    return { ok: false, error: "Program not found.", program: null };
   }
 
   const existingProgram = programs[existingIndex];
@@ -785,9 +980,21 @@ export function updateProgramMetadata(programId, patch) {
   }
 
   programs[existingIndex] = updatedProgram;
-  writeStorage(STORAGE_KEYS.programs, programs);
+  const writeResult = writeStorage(STORAGE_KEYS.programs, programs);
 
-  return updatedProgram;
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, program: null };
+  }
+
+  return { ok: true, program: updatedProgram };
+}
+
+/**
+ * Legacy-shaped wrapper: the updated program, or null when the program is
+ * missing or the write failed.
+ */
+export function updateProgramMetadata(programId, patch) {
+  return updateProgramMetadataChecked(programId, patch).program;
 }
 
 function cleanNumber(value, fallback = null) {
@@ -812,13 +1019,157 @@ function cleanWeight(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function updateProgramExerciseTarget(programId, programExerciseId, patch) {
-  const program = getPrograms().find(
+function hasOwn(object, field) {
+  return Boolean(object) && Object.prototype.hasOwnProperty.call(object, field);
+}
+
+function isPositiveFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Rest can be a scalar (seconds) or a [min, max] range (decision 19.4-3).
+ * Returns the cleaned value or `fallback` when the input is not usable.
+ * Stored ranges are never rewritten into scalars.
+ */
+function cleanRestTime(value, fallback = null) {
+  if (Array.isArray(value)) {
+    const [min, max] = value.map((entry) => cleanNumber(entry, null));
+
+    if (value.length === 2 && isPositiveFiniteNumber(min) && isPositiveFiniteNumber(max) && min <= max) {
+      return [min, max];
+    }
+
+    return fallback;
+  }
+
+  const scalar = cleanNumber(value, null);
+  return isPositiveFiniteNumber(scalar) ? scalar : fallback;
+}
+
+function applyProgramExerciseTargetPatch(existingExercise, patch = {}) {
+  const updatedExercise = { ...existingExercise };
+
+  if (hasOwn(patch, "targetSets")) {
+    updatedExercise.targetSets = cleanNumber(patch.targetSets, existingExercise.targetSets);
+  }
+
+  if (hasOwn(patch, "targetReps")) {
+    const nextReps = patch.targetReps && typeof patch.targetReps === "object" ? patch.targetReps : {};
+    const existingReps =
+      existingExercise.targetReps && typeof existingExercise.targetReps === "object"
+        ? existingExercise.targetReps
+        : {};
+
+    updatedExercise.targetReps = {
+      min: hasOwn(nextReps, "min") ? cleanNumber(nextReps.min, null) : existingReps.min ?? null,
+      max: hasOwn(nextReps, "max") ? cleanNumber(nextReps.max, null) : existingReps.max ?? null,
+      label: hasOwn(nextReps, "label")
+        ? String(nextReps.label ?? "").trim() || null
+        : existingReps.label ?? null,
+    };
+  }
+
+  if (hasOwn(patch, "targetWeight")) {
+    updatedExercise.targetWeight = cleanWeight(patch.targetWeight);
+  }
+
+  if (hasOwn(patch, "targetRPE")) {
+    updatedExercise.targetRPE = cleanNumber(patch.targetRPE, existingExercise.targetRPE);
+  }
+
+  if (hasOwn(patch, "restTime")) {
+    updatedExercise.restTime = cleanRestTime(patch.restTime, existingExercise.restTime);
+  }
+
+  if (hasOwn(patch, "notes")) {
+    updatedExercise.notes = String(patch.notes ?? "").trim();
+  }
+
+  return updatedExercise;
+}
+
+/**
+ * Validates a target patch before it is applied (fix round 2, decision new-R):
+ * the cleaned patch input must be usable (a value the cleaners would silently
+ * replace with the current one is rejected instead) and the merged result must
+ * pass the same rules as the strict share validator for the touched fields.
+ * Returns capitalised messages, empty when the patch is fine.
+ */
+function collectTargetPatchErrors(existingExercise, patch) {
+  const errors = [];
+  const touched = PROGRAM_EXERCISE_TARGET_FIELDS.filter((field) => hasOwn(patch, field));
+  const isUnparsableNumber = (value) =>
+    !isNullish(value) && value !== "" && cleanNumber(value, null) === null;
+
+  if (hasOwn(patch, "targetSets") && !isValidTargetSets(cleanNumber(patch.targetSets, null))) {
+    errors.push(`sets must be a whole number from 1 to ${MAX_TARGET_SETS}.`);
+  }
+
+  if (hasOwn(patch, "targetReps") && patch.targetReps && typeof patch.targetReps === "object") {
+    if (hasOwn(patch.targetReps, "min") && isUnparsableNumber(patch.targetReps.min)) {
+      errors.push("minimum reps must be a positive number.");
+    }
+
+    if (hasOwn(patch.targetReps, "max") && isUnparsableNumber(patch.targetReps.max)) {
+      errors.push("maximum reps must be a positive number.");
+    }
+  }
+
+  if (hasOwn(patch, "targetRPE") && !isHalfStepRpe(cleanNumber(patch.targetRPE, null))) {
+    errors.push("target RPE must be 1-10 in .5 steps.");
+  }
+
+  // restTime: an unusable input keeps the current value (verify-program-h1-duplicate
+  // contract); the merged value is still checked below.
+
+  if (
+    hasOwn(patch, "targetWeight") &&
+    !isNullish(patch.targetWeight) &&
+    patch.targetWeight !== "" &&
+    cleanWeight(patch.targetWeight) === null
+  ) {
+    errors.push('target weight must be empty, a number of kg (0 or more) or "BW".');
+  }
+
+  const merged = applyProgramExerciseTargetPatch(existingExercise, patch);
+  const alreadyReported = new Set(errors);
+
+  collectProgramExerciseTargetErrors(merged, touched).forEach((message) => {
+    if (!alreadyReported.has(message)) {
+      errors.push(message);
+    }
+  });
+
+  return errors.map(capitalizeMessage);
+}
+
+/**
+ * Decision 19.4-2. Edits a custom program target and deletes the stored
+ * progression for that programExerciseId in the same batch, so the next session
+ * starts from the new target. Missing patch fields keep their current values.
+ *
+ * Returns { ok: true, exercise, deletedProgression } or
+ *         { ok: false, error, code, failedKey, exercise: null }.
+ *
+ * The pending next-plan entry lives in App state (STORAGE_KEYS.nextPlans via
+ * useLocalStorageState); use `removeExerciseFromNextPlans` there.
+ */
+export function updateProgramExerciseTargetChecked(programId, programExerciseId, patch) {
+  const program = getAllPrograms().find(
     (candidate) => candidate.id === programId && !candidate.isArchived,
   );
 
-  if (!program || program.isDefault || program.id === DEFAULT_PROGRAM_ID) {
-    return null;
+  if (!program) {
+    return { ok: false, error: "Program not found or archived.", exercise: null };
+  }
+
+  if (program.isDefault || program.id === DEFAULT_PROGRAM_ID) {
+    return {
+      ok: false,
+      error: "Default program targets are protected. Duplicate the program first.",
+      exercise: null,
+    };
   }
 
   const programExercises = asArray(readStorage(STORAGE_KEYS.programExercises, []));
@@ -828,29 +1179,146 @@ export function updateProgramExerciseTarget(programId, programExerciseId, patch)
   );
 
   if (existingIndex < 0) {
-    return null;
+    return { ok: false, error: "Program exercise not found.", exercise: null };
   }
 
-  const existingExercise = programExercises[existingIndex];
-  const nextReps = patch.targetReps ?? {};
-  const updatedExercise = {
-    ...existingExercise,
-    targetSets: cleanNumber(patch.targetSets, existingExercise.targetSets),
-    targetReps: {
-      min: cleanNumber(nextReps.min, null),
-      max: cleanNumber(nextReps.max, null),
-      label: String(nextReps.label ?? "").trim() || null,
-    },
-    targetWeight: cleanWeight(patch.targetWeight),
-    targetRPE: cleanNumber(patch.targetRPE, existingExercise.targetRPE),
-    restTime: cleanNumber(patch.restTime, existingExercise.restTime),
-    notes: String(patch.notes ?? "").trim(),
-  };
+  const targetErrors = collectTargetPatchErrors(programExercises[existingIndex], patch ?? {});
 
-  programExercises[existingIndex] = updatedExercise;
-  writeStorage(STORAGE_KEYS.programExercises, programExercises);
+  if (targetErrors.length) {
+    return {
+      ok: false,
+      error: targetErrors.join(" "),
+      errors: targetErrors,
+      exercise: null,
+    };
+  }
 
-  return updatedExercise;
+  const updatedExercise = applyProgramExerciseTargetPatch(programExercises[existingIndex], patch);
+  const nextProgramExercises = [...programExercises];
+  nextProgramExercises[existingIndex] = updatedExercise;
+
+  const progressions = getProgramProgressions();
+  const nextProgressions = progressions.filter(
+    (progression) =>
+      !(progression.programId === programId && progression.programExerciseId === programExerciseId),
+  );
+  const deletedProgression = nextProgressions.length !== progressions.length;
+
+  const entries = [{ key: STORAGE_KEYS.programExercises, value: nextProgramExercises }];
+
+  if (deletedProgression) {
+    entries.push({ key: STORAGE_KEYS.programProgressions, value: nextProgressions });
+  }
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      exercise: null,
+    };
+  }
+
+  return { ok: true, exercise: updatedExercise, deletedProgression };
+}
+
+/**
+ * Legacy-shaped wrapper kept for App.jsx: returns the updated program exercise,
+ * or null when the edit was rejected or the write failed. Same behaviour as
+ * `updateProgramExerciseTargetChecked` (progression deleted, batch write).
+ */
+export function updateProgramExerciseTarget(programId, programExerciseId, patch) {
+  const result = updateProgramExerciseTargetChecked(programId, programExerciseId, patch);
+  return result.ok ? result.exercise : null;
+}
+
+/**
+ * Returns { ok: true, removedCount } or { ok: false, error, code }.
+ */
+export function deleteProgramProgression(programId, programExerciseId) {
+  const progressions = getProgramProgressions();
+  const nextProgressions = progressions.filter(
+    (progression) =>
+      !(progression.programId === programId && progression.programExerciseId === programExerciseId),
+  );
+  const removedCount = progressions.length - nextProgressions.length;
+
+  if (!removedCount) {
+    return { ok: true, removedCount: 0 };
+  }
+
+  const writeResult = writeStorage(STORAGE_KEYS.programProgressions, nextProgressions);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, removedCount: 0 };
+  }
+
+  return { ok: true, removedCount };
+}
+
+/**
+ * Deletes every stored progression of the program exercises that belong to
+ * `dayId` in `programId`. Returns { ok: true, removedCount } or { ok: false, error, code }.
+ */
+export function deleteProgramProgressionsForDay(programId, dayId) {
+  const dayExerciseIds = new Set(
+    asArray(readStorage(STORAGE_KEYS.programExercises, []))
+      .filter((programExercise) => programExercise.programId === programId && programExercise.dayId === dayId)
+      .map((programExercise) => programExercise.id),
+  );
+  const progressions = getProgramProgressions();
+  const nextProgressions = progressions.filter(
+    (progression) =>
+      !(progression.programId === programId && dayExerciseIds.has(progression.programExerciseId)),
+  );
+  const removedCount = progressions.length - nextProgressions.length;
+
+  if (!removedCount) {
+    return { ok: true, removedCount: 0 };
+  }
+
+  const writeResult = writeStorage(STORAGE_KEYS.programProgressions, nextProgressions);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, removedCount: 0 };
+  }
+
+  return { ok: true, removedCount };
+}
+
+/**
+ * Pure helper for the UI track (decision 19.4-2): returns a copy of `nextPlans`
+ * (keyed by dayId) with the plan exercise whose `exerciseId` equals
+ * `programExerciseId` removed. Plans that end up with no exercises are dropped.
+ * Does not touch storage.
+ */
+export function removeExerciseFromNextPlans(nextPlans, programExerciseId) {
+  if (!nextPlans || typeof nextPlans !== "object") {
+    return {};
+  }
+
+  const result = {};
+
+  Object.entries(nextPlans).forEach(([dayId, plan]) => {
+    const exercises = asArray(plan?.exercises);
+    const hasMatch = exercises.some((exercise) => exercise?.exerciseId === programExerciseId);
+
+    if (!hasMatch) {
+      result[dayId] = plan;
+      return;
+    }
+
+    const remaining = exercises.filter((exercise) => exercise?.exerciseId !== programExerciseId);
+
+    if (remaining.length) {
+      result[dayId] = { ...plan, exercises: remaining };
+    }
+  });
+
+  return result;
 }
 
 export function getProgramDays(programId) {
@@ -919,8 +1387,45 @@ export function updateProgramState(programId, patch) {
     states.push(updatedState);
   }
 
-  writeProgramStates(states);
-  return updatedState;
+  // Returns null when the write failed (fix round 2): the state in storage is unchanged.
+  return writeProgramStates(states).ok ? updatedState : null;
+}
+
+/**
+ * Pure (fix round 2, decision new-E): the ProgramState a program should carry
+ * after its session history changed. Derived from the most recent remaining
+ * session of that program: that session's day is the last completed one, the
+ * following day in the program is next, and its date is the last workout
+ * date. With no session left the state goes back to "nothing completed, first
+ * day next". Sessions without a programId (legacy) never drive the state.
+ */
+export function deriveProgramStatePatchFromSessions(programId, sessions, programDays) {
+  const days = asArray(programDays);
+  const firstDayId = days[0]?.id ?? null;
+  const latest = asArray(sessions)
+    .filter((session) => session && session.programId === programId)
+    .reduce((best, session) => {
+      const time = new Date(session.date ?? 0).getTime();
+      const bestTime = best ? new Date(best.date ?? 0).getTime() : -Infinity;
+      return time > bestTime ? session : best;
+    }, null);
+
+  if (!latest) {
+    return {
+      lastCompletedDayId: null,
+      nextRecommendedDayId: firstDayId,
+      lastWorkoutDate: null,
+    };
+  }
+
+  const dayIndex = days.findIndex((day) => day.id === latest.dayId);
+  const nextDay = dayIndex >= 0 ? days[(dayIndex + 1) % days.length] : days[0];
+
+  return {
+    lastCompletedDayId: latest.dayId ?? null,
+    nextRecommendedDayId: nextDay?.id ?? latest.dayId ?? null,
+    lastWorkoutDate: latest.date ?? null,
+  };
 }
 
 export function getProgramBaseline(programId, programExerciseId) {
@@ -942,64 +1447,231 @@ export function getProgramProgression(programId, programExerciseId) {
   );
 }
 
+/**
+ * Turns one generated-plan exercise into a progression patch. Pure.
+ */
+export function buildProgressionPatchFromPlanExercise(plan, exercisePlan) {
+  const recommendationNote =
+    exercisePlan.reasons?.filter(Boolean).join(" ") ||
+    exercisePlan.repFocus ||
+    "Starting recommendation based on baseline.";
+
+  return {
+    lastRecommendedWeight: exercisePlan.recommendedWeight,
+    lastRecommendedReps: {
+      min: exercisePlan.repsMin,
+      max: exercisePlan.repsMax,
+      label: exercisePlan.repsLabel,
+    },
+    lastRecommendedSets: exercisePlan.sets,
+    lastTargetRPE: exercisePlan.targetRPE,
+    recommendationNote,
+    repFocus: exercisePlan.repFocus ?? null,
+    previousWeight: exercisePlan.previousWeight ?? null,
+    totalReps: exercisePlan.totalReps ?? null,
+    previousTotalReps: exercisePlan.previousTotalReps ?? null,
+    exerciseRPE: exercisePlan.exerciseRPE ?? null,
+    conservative: Boolean(exercisePlan.conservative),
+    decision: exercisePlan.decision ?? null,
+    confidence: exercisePlan.confidence ?? null,
+    warnings: Array.isArray(exercisePlan.warnings) ? exercisePlan.warnings.filter(Boolean) : [],
+    sourceSessionId: plan?.sourceSessionId ?? null,
+    sourcePlanGeneratedAt: plan?.generatedAt ?? null,
+  };
+}
+
+/**
+ * Converts a generated plan into Array<{ programExerciseId, patch }>. Pure.
+ */
+export function buildProgressionUpdatesFromPlan(plan) {
+  return asArray(plan?.exercises)
+    .filter((exercisePlan) => exercisePlan && exercisePlan.exerciseId)
+    .map((exercisePlan) => ({
+      programExerciseId: exercisePlan.exerciseId,
+      patch: buildProgressionPatchFromPlanExercise(plan, exercisePlan),
+    }));
+}
+
+/**
+ * Applies progression updates to a progressions array and returns a NEW array.
+ * Pure: identity, id and updatedAt are enforced, everything else comes from the
+ * existing record merged with the patch.
+ */
+export function applyProgressionUpdates(progressions, programId, updates, updatedAt = nowIso()) {
+  const next = [...asArray(progressions)];
+
+  asArray(updates).forEach((update) => {
+    const programExerciseId = update?.programExerciseId;
+
+    if (!programExerciseId) {
+      return;
+    }
+
+    const existingIndex = next.findIndex(
+      (progression) =>
+        progression.programId === programId && progression.programExerciseId === programExerciseId,
+    );
+    const progressionRecord = {
+      ...(existingIndex >= 0 ? next[existingIndex] : {}),
+      ...(update.patch ?? {}),
+      id: makeProgressionId(programExerciseId),
+      programId,
+      programExerciseId,
+      updatedAt,
+    };
+
+    if (existingIndex >= 0) {
+      next[existingIndex] = progressionRecord;
+    } else {
+      next.push(progressionRecord);
+    }
+  });
+
+  return next;
+}
+
+function buildProgramStateRecord(states, programId, patch, updatedAt = nowIso()) {
+  const existingIndex = states.findIndex((programState) => programState.programId === programId);
+  const updatedState = {
+    ...(existingIndex >= 0 ? states[existingIndex] : getProgramState(programId)),
+    ...(patch ?? {}),
+    programId,
+    updatedAt,
+  };
+  const next = [...states];
+
+  if (existingIndex >= 0) {
+    next[existingIndex] = updatedState;
+  } else {
+    next.push(updatedState);
+  }
+
+  return { states: next, state: updatedState };
+}
+
 export function upsertProgramProgressionsFromPlan(programId, plan) {
   if (!programId || !plan?.exercises?.length) {
     return [];
   }
 
-  const updatedAt = nowIso();
-  const progressions = getProgramProgressions();
-
-  plan.exercises.forEach((exercisePlan) => {
-    const programExerciseId = exercisePlan.exerciseId;
-    const existingIndex = progressions.findIndex(
-      (progression) =>
-        progression.programId === programId &&
-        progression.programExerciseId === programExerciseId,
-    );
-    const recommendationNote =
-      exercisePlan.reasons?.filter(Boolean).join(" ") ||
-      exercisePlan.repFocus ||
-      "Starting recommendation based on baseline.";
-    const progressionRecord = {
-      ...(existingIndex >= 0 ? progressions[existingIndex] : {}),
-      id: makeProgressionId(programExerciseId),
-      programId,
-      programExerciseId,
-      lastRecommendedWeight: exercisePlan.recommendedWeight,
-      lastRecommendedReps: {
-        min: exercisePlan.repsMin,
-        max: exercisePlan.repsMax,
-        label: exercisePlan.repsLabel,
-      },
-      lastRecommendedSets: exercisePlan.sets,
-      lastTargetRPE: exercisePlan.targetRPE,
-      recommendationNote,
-      repFocus: exercisePlan.repFocus ?? null,
-      previousWeight: exercisePlan.previousWeight ?? null,
-      totalReps: exercisePlan.totalReps ?? null,
-      previousTotalReps: exercisePlan.previousTotalReps ?? null,
-      exerciseRPE: exercisePlan.exerciseRPE ?? null,
-      conservative: Boolean(exercisePlan.conservative),
-      decision: exercisePlan.decision ?? null,
-      confidence: exercisePlan.confidence ?? null,
-      warnings: Array.isArray(exercisePlan.warnings)
-        ? exercisePlan.warnings.filter(Boolean)
-        : [],
-      sourceSessionId: plan.sourceSessionId ?? null,
-      sourcePlanGeneratedAt: plan.generatedAt ?? null,
-      updatedAt,
-    };
-
-    if (existingIndex >= 0) {
-      progressions[existingIndex] = progressionRecord;
-    } else {
-      progressions.push(progressionRecord);
-    }
-  });
+  const progressions = applyProgressionUpdates(
+    getProgramProgressions(),
+    programId,
+    buildProgressionUpdatesFromPlan(plan),
+  );
 
   writeStorage(STORAGE_KEYS.programProgressions, progressions);
   return progressions;
+}
+
+/**
+ * Session save transaction (review finding F2, handoff section 7).
+ *
+ * persistWorkoutSave({
+ *   sessions,            // full next sessions array (new session already prepended)
+ *   nextPlans,           // full next nextPlans object
+ *   workoutDrafts,       // full next workoutDrafts object
+ *   programId,           // active program id (optional)
+ *   progressionUpdates,  // Array<{ programExerciseId, patch }> (optional)
+ *   plan,                // generated plan; converted to progressionUpdates when given
+ *   programStatePatch,   // partial ProgramState (optional)
+ *   deleteProgressionsForDayId, // day id whose stored progressions are removed
+ *                        // (decision new-E: last session of a day deleted)
+ * })
+ *
+ * Any of sessions / nextPlans / workoutDrafts left `undefined` is not written.
+ * Everything else is written in ONE writeStorageBatch: on failure nothing changes.
+ *
+ * Returns { ok: true, writtenKeys, progressions, programState, removedProgressionCount } or
+ *         { ok: false, error, code, failedKey, rolledBack }.
+ */
+export function persistWorkoutSave({
+  sessions,
+  nextPlans,
+  workoutDrafts,
+  programId = null,
+  progressionUpdates,
+  plan,
+  programStatePatch,
+  deleteProgressionsForDayId = null,
+} = {}) {
+  const updatedAt = nowIso();
+  const entries = [];
+
+  if (sessions !== undefined) {
+    entries.push({ key: STORAGE_KEYS.sessions, value: sessions });
+  }
+
+  if (nextPlans !== undefined) {
+    entries.push({ key: STORAGE_KEYS.nextPlans, value: nextPlans });
+  }
+
+  if (workoutDrafts !== undefined) {
+    entries.push({ key: STORAGE_KEYS.workoutDrafts, value: workoutDrafts });
+  }
+
+  let progressions = null;
+  let programState = null;
+  let removedProgressionCount = 0;
+
+  if (programId) {
+    const updates = [
+      ...asArray(progressionUpdates),
+      ...(plan ? buildProgressionUpdatesFromPlan(plan) : []),
+    ];
+    let currentProgressions = getProgramProgressions();
+
+    if (deleteProgressionsForDayId) {
+      const dayExerciseIds = new Set(
+        asArray(readStorage(STORAGE_KEYS.programExercises, []))
+          .filter(
+            (programExercise) =>
+              programExercise.programId === programId &&
+              programExercise.dayId === deleteProgressionsForDayId,
+          )
+          .map((programExercise) => programExercise.id),
+      );
+      const remaining = currentProgressions.filter(
+        (progression) =>
+          !(progression.programId === programId && dayExerciseIds.has(progression.programExerciseId)),
+      );
+      removedProgressionCount = currentProgressions.length - remaining.length;
+      currentProgressions = remaining;
+    }
+
+    if (updates.length || removedProgressionCount) {
+      progressions = updates.length
+        ? applyProgressionUpdates(currentProgressions, programId, updates, updatedAt)
+        : currentProgressions;
+      entries.push({ key: STORAGE_KEYS.programProgressions, value: progressions });
+    }
+
+    if (programStatePatch && typeof programStatePatch === "object") {
+      const built = buildProgramStateRecord(getProgramStates(), programId, programStatePatch, updatedAt);
+      programState = built.state;
+      entries.push({ key: STORAGE_KEYS.programStates, value: built.states });
+    }
+  }
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      rolledBack: writeResult.rolledBack,
+    };
+  }
+
+  return {
+    ok: true,
+    writtenKeys: writeResult.writtenKeys,
+    progressions,
+    programState,
+    removedProgressionCount,
+  };
 }
 
 export function getProgramDayViewModels(programId) {
@@ -1093,7 +1765,7 @@ export const PROGRAM_SHARE_TYPE = "rpe-tracker-program-share";
 export const PROGRAM_SHARE_SCHEMA_VERSION = 1;
 
 export function exportProgramShare(programId) {
-  const program = getPrograms().find((entry) => entry.id === programId);
+  const program = getAllPrograms().find((entry) => entry.id === programId);
   if (!program) {
     return null;
   }
@@ -1106,8 +1778,10 @@ export function exportProgramShare(programId) {
     (exercise) => exercise.programId === programId,
   );
   const referencedExerciseIds = new Set(programExercises.map((exercise) => exercise.exerciseId));
-  const libraryExercises = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, [])).filter(
-    (exercise) => referencedExerciseIds.has(exercise.id),
+  const libraryExercises = uniqueById(
+    asArray(readStorage(STORAGE_KEYS.exerciseLibrary, [])).filter((exercise) =>
+      referencedExerciseIds.has(exercise.id),
+    ),
   );
 
   return {
@@ -1153,32 +1827,286 @@ export function validateProgramShare(share) {
   return { valid: true };
 }
 
+function isValidTargetSets(value) {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_TARGET_SETS;
+}
+
+function isHalfStepRpe(value) {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 1 &&
+    value <= 10 &&
+    Number.isInteger(value * 2)
+  );
+}
+
+function isValidShareRest(value) {
+  if (Array.isArray(value)) {
+    return (
+      value.length === 2 &&
+      isPositiveFiniteNumber(value[0]) &&
+      isPositiveFiniteNumber(value[1]) &&
+      value[0] <= value[1]
+    );
+  }
+
+  return isPositiveFiniteNumber(value);
+}
+
+function isValidShareWeight(value) {
+  if (value === null || value === undefined) {
+    return true;
+  }
+
+  if (typeof value === "string") {
+    return value.trim().toLowerCase() === "bw";
+  }
+
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isNullish(value) {
+  return value === null || value === undefined;
+}
+
+function findDuplicateIds(items) {
+  const seen = new Set();
+  const duplicates = new Set();
+
+  items.forEach((item) => {
+    const id = String(item?.id ?? "");
+
+    if (!id) {
+      return;
+    }
+
+    if (seen.has(id)) {
+      duplicates.add(id);
+    }
+
+    seen.add(id);
+  });
+
+  return [...duplicates];
+}
+
+function describeShareExercise(programExercise, index) {
+  return `Exercise ${index + 1}${programExercise?.exerciseId ? ` (${programExercise.exerciseId})` : ""}`;
+}
+
+const PROGRAM_EXERCISE_TARGET_FIELDS = Object.freeze([
+  "targetSets",
+  "targetReps",
+  "targetRPE",
+  "restTime",
+  "targetWeight",
+]);
+
+/**
+ * One rule set for program targets (decision new-R extended in fix round 2):
+ * the strict share validator and updateProgramExerciseTargetChecked check the
+ * same fields with the same messages, so every target the app stores exports
+ * and imports again. `fields` limits the check to the given target fields
+ * (a target edit only validates what the patch touched).
+ * Returns message bodies (lower-case start, no label).
+ */
+function collectProgramExerciseTargetErrors(programExercise, fields = PROGRAM_EXERCISE_TARGET_FIELDS) {
+  const errors = [];
+  const checks = new Set(fields);
+
+  if (checks.has("targetSets") && !isValidTargetSets(programExercise.targetSets)) {
+    errors.push(`sets must be a whole number from 1 to ${MAX_TARGET_SETS}.`);
+  }
+
+  if (checks.has("targetReps")) {
+    const targetReps =
+      programExercise.targetReps && typeof programExercise.targetReps === "object"
+        ? programExercise.targetReps
+        : {};
+    const repsMin = targetReps.min;
+    const repsMax = targetReps.max;
+    const repsLabel = String(targetReps.label ?? "").trim();
+    const hasMin = !isNullish(repsMin);
+    const hasMax = !isNullish(repsMax);
+
+    if (hasMin && !isPositiveFiniteNumber(repsMin)) {
+      errors.push("minimum reps must be a positive number.");
+    }
+
+    if (hasMax && !isPositiveFiniteNumber(repsMax)) {
+      errors.push("maximum reps must be a positive number.");
+    }
+
+    if (
+      hasMin &&
+      hasMax &&
+      isPositiveFiniteNumber(repsMin) &&
+      isPositiveFiniteNumber(repsMax) &&
+      repsMin > repsMax
+    ) {
+      errors.push("minimum reps cannot exceed maximum reps.");
+    }
+
+    if (!hasMin && !hasMax && !repsLabel) {
+      errors.push("needs a rep range or a rep label.");
+    }
+  }
+
+  if (checks.has("targetRPE") && !isHalfStepRpe(programExercise.targetRPE)) {
+    errors.push("target RPE must be 1-10 in .5 steps.");
+  }
+
+  if (checks.has("restTime") && !isValidShareRest(programExercise.restTime)) {
+    errors.push("rest must be a positive number of seconds or a [min, max] range.");
+  }
+
+  if (checks.has("targetWeight") && !isValidShareWeight(programExercise.targetWeight)) {
+    errors.push('target weight must be empty, a number of kg (0 or more) or "BW".');
+  }
+
+  return errors;
+}
+
+function capitalizeMessage(message) {
+  return message.charAt(0).toUpperCase() + message.slice(1);
+}
+
+/**
+ * Strict share validation used by importProgramShare. Checks every value that
+ * the workout flow relies on and returns a readable list of problems.
+ *
+ * Returns { valid: true, errors: [] } or { valid: false, error, errors }.
+ * `error` is the joined message; `errors` is one string per problem.
+ */
+export function validateProgramShareStrict(share) {
+  const basic = validateProgramShare(share);
+
+  if (!basic.valid) {
+    return { valid: false, error: basic.error, errors: [basic.error] };
+  }
+
+  const errors = [];
+  const days = asArray(share.days);
+  const sections = asArray(share.sections).filter((section) => section && typeof section === "object");
+  const programExercises = asArray(share.programExercises).filter(
+    (programExercise) => programExercise && typeof programExercise === "object",
+  );
+  const libraryExercises = asArray(share.libraryExercises).filter(
+    (exercise) => exercise && typeof exercise === "object",
+  );
+
+  if (asArray(share.programExercises).length !== programExercises.length) {
+    errors.push("The program share has invalid exercise entries.");
+  }
+
+  const dayIds = new Set(days.map((day) => String(day.id)));
+
+  findDuplicateIds(days).forEach((id) => errors.push(`Duplicate day id "${id}" in share.`));
+  findDuplicateIds(sections).forEach((id) => errors.push(`Duplicate section id "${id}" in share.`));
+  findDuplicateIds(programExercises).forEach((id) =>
+    errors.push(`Duplicate program exercise id "${id}" in share.`),
+  );
+  // Duplicate library entries are tolerated: import only adds library ids that
+  // are missing locally, keeping the first occurrence, so they cannot corrupt data.
+
+  libraryExercises.forEach((exercise, index) => {
+    if (!exercise.id) {
+      errors.push(`Library exercise ${index + 1} has no id.`);
+    }
+  });
+
+  sections.forEach((section, index) => {
+    if (!section.id) {
+      errors.push(`Section ${index + 1} has no id.`);
+    }
+
+    if (!dayIds.has(String(section.dayId))) {
+      errors.push(`Section ${index + 1} references unknown day "${section.dayId}".`);
+    }
+  });
+
+  // Decision new-V: every program exercise must point at a Library entry that
+  // exists somewhere - in the share, in the local Library or in the built-in
+  // config - otherwise the import would produce a placeholder "Exercise" with
+  // no technique content that the workout flow then logs against.
+  const shareLibraryIds = new Set(libraryExercises.map((exercise) => String(exercise.id ?? "")));
+  const localLibraryIds = new Set(
+    asArray(readStorage(STORAGE_KEYS.exerciseLibrary, [])).map((exercise) => String(exercise?.id ?? "")),
+  );
+
+  programExercises.forEach((programExercise, index) => {
+    const label = describeShareExercise(programExercise, index);
+
+    if (!programExercise.id) {
+      errors.push(`${label} has no id.`);
+    }
+
+    if (!programExercise.exerciseId) {
+      errors.push(`${label} has no library exercise id.`);
+    } else {
+      const exerciseId = String(programExercise.exerciseId);
+
+      if (
+        !shareLibraryIds.has(exerciseId) &&
+        !localLibraryIds.has(exerciseId) &&
+        !getLegacyExerciseConfig(exerciseId)
+      ) {
+        errors.push(
+          `${label} references library exercise "${exerciseId}", which is neither in the share nor in your Library.`,
+        );
+      }
+    }
+
+    if (!dayIds.has(String(programExercise.dayId))) {
+      errors.push(`${label} references unknown day "${programExercise.dayId}".`);
+    }
+
+    collectProgramExerciseTargetErrors(programExercise).forEach((message) => {
+      errors.push(`${label}: ${message}`);
+    });
+  });
+
+  if (errors.length) {
+    return { valid: false, error: errors.join(" "), errors };
+  }
+
+  return { valid: true, errors: [] };
+}
+
 export function importProgramShare(share) {
-  const validation = validateProgramShare(share);
+  const validation = validateProgramShareStrict(share);
   if (!validation.valid) {
-    return validation;
+    return { ...validation, ok: false, program: null, programId: null };
   }
 
   const createdAt = nowIso();
   const newProgramId = makeCopyId("program-import");
   const shareDays = asArray(share.days);
-  const dayIds = new Set(shareDays.map((day) => day.id));
+  // Ids are compared as strings, exactly like validateProgramShareStrict does,
+  // so a share with numeric day ids and string dayId references never passes
+  // validation and then imports as a program without exercises.
+  const dayIds = new Set(shareDays.map((day) => String(day.id)));
   const shareSections = asArray(share.sections).filter(
-    (section) => section && section.id && dayIds.has(section.dayId),
+    (section) => section && section.id && dayIds.has(String(section.dayId)),
   );
-  const sectionIds = new Set(shareSections.map((section) => section.id));
+  const sectionIds = new Set(shareSections.map((section) => String(section.id)));
   const shareProgramExercises = asArray(share.programExercises).filter(
-    (exercise) => exercise && exercise.id && exercise.exerciseId && dayIds.has(exercise.dayId),
+    (exercise) =>
+      exercise && exercise.id && exercise.exerciseId && dayIds.has(String(exercise.dayId)),
   );
-  const shareLibraryExercises = asArray(share.libraryExercises).filter(
-    (exercise) => exercise && exercise.id,
+  const shareLibraryExercises = uniqueById(
+    asArray(share.libraryExercises).filter((exercise) => exercise && exercise.id),
   );
 
   const dayIdMap = new Map(
-    shareDays.map((day, index) => [day.id, `${newProgramId}:day-${index + 1}`]),
+    shareDays.map((day, index) => [String(day.id), `${newProgramId}:day-${index + 1}`]),
   );
   const sectionIdMap = new Map(
-    shareSections.map((section, index) => [section.id, `${newProgramId}:section-${index + 1}`]),
+    shareSections.map((section, index) => [
+      String(section.id),
+      `${newProgramId}:section-${index + 1}`,
+    ]),
   );
 
   const importedName = String(share.program.name).trim();
@@ -1196,26 +2124,30 @@ export function importProgramShare(share) {
   };
   const importedDays = shareDays.map((day, index) => ({
     ...day,
-    id: dayIdMap.get(day.id),
+    id: dayIdMap.get(String(day.id)),
     programId: newProgramId,
     orderIndex: day.orderIndex ?? index,
   }));
   const importedSections = shareSections.map((section) => ({
     ...section,
-    id: sectionIdMap.get(section.id),
+    id: sectionIdMap.get(String(section.id)),
     programId: newProgramId,
-    dayId: dayIdMap.get(section.dayId),
+    dayId: dayIdMap.get(String(section.dayId)),
   }));
-  const importedProgramExercises = shareProgramExercises.map((programExercise, index) => ({
-    ...programExercise,
-    id: `${newProgramId}:exercise-${index + 1}-${programExercise.exerciseId}`,
-    programId: newProgramId,
-    dayId: dayIdMap.get(programExercise.dayId),
-    sectionId: sectionIds.has(programExercise.sectionId)
-      ? sectionIdMap.get(programExercise.sectionId)
-      : importedSections.find((section) => section.dayId === dayIdMap.get(programExercise.dayId))
-          ?.id ?? null,
-  }));
+  const importedProgramExercises = shareProgramExercises.map((programExercise, index) => {
+    const importedDayId = dayIdMap.get(String(programExercise.dayId));
+    const sectionKey = String(programExercise.sectionId ?? "");
+
+    return {
+      ...programExercise,
+      id: `${newProgramId}:exercise-${index + 1}-${programExercise.exerciseId}`,
+      programId: newProgramId,
+      dayId: importedDayId,
+      sectionId: sectionIds.has(sectionKey)
+        ? sectionIdMap.get(sectionKey)
+        : importedSections.find((section) => section.dayId === importedDayId)?.id ?? null,
+    };
+  });
   const importedState = {
     programId: newProgramId,
     lastCompletedDayId: null,
@@ -1233,37 +2165,94 @@ export function importProgramShare(share) {
     (exercise) => !existingLibraryIds.has(exercise.id),
   );
 
-  writeStorage(STORAGE_KEYS.programs, [...getPrograms(), program]);
-  writeStorage(STORAGE_KEYS.programDays, [
-    ...asArray(readStorage(STORAGE_KEYS.programDays, [])),
-    ...importedDays,
-  ]);
-  writeStorage(STORAGE_KEYS.programSections, [
-    ...asArray(readStorage(STORAGE_KEYS.programSections, [])),
-    ...importedSections,
-  ]);
-  writeStorage(STORAGE_KEYS.programExercises, [
-    ...asArray(readStorage(STORAGE_KEYS.programExercises, [])),
-    ...importedProgramExercises,
-  ]);
+  const entries = [
+    { key: STORAGE_KEYS.programs, value: [...getAllPrograms(), program] },
+    {
+      key: STORAGE_KEYS.programDays,
+      value: [...asArray(readStorage(STORAGE_KEYS.programDays, [])), ...importedDays],
+    },
+    {
+      key: STORAGE_KEYS.programSections,
+      value: [...asArray(readStorage(STORAGE_KEYS.programSections, [])), ...importedSections],
+    },
+    {
+      key: STORAGE_KEYS.programExercises,
+      value: [
+        ...asArray(readStorage(STORAGE_KEYS.programExercises, [])),
+        ...importedProgramExercises,
+      ],
+    },
+  ];
+
   if (newLibraryExercises.length) {
-    writeStorage(STORAGE_KEYS.exerciseLibrary, [...existingLibrary, ...newLibraryExercises]);
+    entries.push({
+      key: STORAGE_KEYS.exerciseLibrary,
+      value: [...existingLibrary, ...newLibraryExercises],
+    });
   }
-  writeProgramStates([...getProgramStates(), importedState]);
+
+  entries.push({ key: STORAGE_KEYS.programStates, value: [...getProgramStates(), importedState] });
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      valid: false,
+      error: writeResult.error,
+      errors: [writeResult.error],
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      rolledBack: writeResult.rolledBack,
+      program: null,
+      programId: null,
+    };
+  }
 
   return {
+    ok: true,
     valid: true,
+    errors: [],
     program,
+    programId: newProgramId,
     importedDayCount: importedDays.length,
     importedExerciseCount: importedProgramExercises.length,
     addedLibraryExerciseCount: newLibraryExercises.length,
   };
 }
 
+/**
+ * Decision 19.4-1: a duplicate starts fresh. Progression records are rebuilt
+ * from the copied program targets with the base note and no provenance.
+ */
+function createFreshProgressionFromTarget(programExercise, createdAt) {
+  return {
+    id: makeProgressionId(programExercise.id),
+    programId: programExercise.programId,
+    programExerciseId: programExercise.id,
+    lastRecommendedWeight: cleanWeight(programExercise.targetWeight),
+    lastRecommendedReps: {
+      min: programExercise.targetReps?.min ?? null,
+      max: programExercise.targetReps?.max ?? null,
+      label: programExercise.targetReps?.label ?? null,
+    },
+    lastRecommendedSets: programExercise.targetSets ?? null,
+    lastTargetRPE: programExercise.targetRPE ?? null,
+    recommendationNote: BASE_RECOMMENDATION_NOTE,
+    sourceSessionId: null,
+    sourcePlanGeneratedAt: null,
+    updatedAt: createdAt,
+  };
+}
+
+/**
+ * Returns { ok: true, program, programId } or { ok: false, error, code, failedKey, program: null, programId: null }.
+ * Writes every key in one batch: on failure no partial copy is left behind.
+ */
 export function duplicateProgram(programId) {
-  const sourceProgram = getPrograms().find((program) => program.id === programId);
+  const sourceProgram = getAllPrograms().find((program) => program.id === programId);
   if (!sourceProgram) {
-    return null;
+    return { ok: false, error: "Program not found.", program: null, programId: null };
   }
 
   const createdAt = nowIso();
@@ -1277,9 +2266,6 @@ export function duplicateProgram(programId) {
   );
   const sourceBaselines = asArray(readStorage(STORAGE_KEYS.baselines, [])).filter(
     (baseline) => baseline.programId === sourceProgram.id,
-  );
-  const sourceProgressions = asArray(readStorage(STORAGE_KEYS.programProgressions, [])).filter(
-    (progression) => progression.programId === sourceProgram.id,
   );
   const dayIdMap = new Map(
     sourceDays.map((day, index) => [day.id, `${newProgramId}:day-${index + 1}`]),
@@ -1336,18 +2322,9 @@ export function duplicateProgram(programId) {
         createdAt,
       };
     });
-  const copiedProgressions = sourceProgressions
-    .filter((progression) => programExerciseIdMap.has(progression.programExerciseId))
-    .map((progression) => {
-      const programExerciseId = programExerciseIdMap.get(progression.programExerciseId);
-      return {
-        ...progression,
-        id: makeProgressionId(programExerciseId),
-        programId: newProgramId,
-        programExerciseId,
-        updatedAt: createdAt,
-      };
-    });
+  const copiedProgressions = copiedProgramExercises.map((programExercise) =>
+    createFreshProgressionFromTarget(programExercise, createdAt),
+  );
   const copiedState = {
     programId: newProgramId,
     lastCompletedDayId: null,
@@ -1358,28 +2335,48 @@ export function duplicateProgram(programId) {
     updatedAt: createdAt,
   };
 
-  writeStorage(STORAGE_KEYS.programs, [...getPrograms(), duplicate]);
-  writeStorage(STORAGE_KEYS.programDays, [
-    ...asArray(readStorage(STORAGE_KEYS.programDays, [])),
-    ...copiedDays,
+  const writeResult = writeStorageBatch([
+    { key: STORAGE_KEYS.programs, value: [...getAllPrograms(), duplicate] },
+    {
+      key: STORAGE_KEYS.programDays,
+      value: [...asArray(readStorage(STORAGE_KEYS.programDays, [])), ...copiedDays],
+    },
+    {
+      key: STORAGE_KEYS.programSections,
+      value: [...asArray(readStorage(STORAGE_KEYS.programSections, [])), ...copiedSections],
+    },
+    {
+      key: STORAGE_KEYS.programExercises,
+      value: [
+        ...asArray(readStorage(STORAGE_KEYS.programExercises, [])),
+        ...copiedProgramExercises,
+      ],
+    },
+    {
+      key: STORAGE_KEYS.baselines,
+      value: [...asArray(readStorage(STORAGE_KEYS.baselines, [])), ...copiedBaselines],
+    },
+    {
+      key: STORAGE_KEYS.programProgressions,
+      value: [
+        ...asArray(readStorage(STORAGE_KEYS.programProgressions, [])),
+        ...copiedProgressions,
+      ],
+    },
+    { key: STORAGE_KEYS.programStates, value: [...getProgramStates(), copiedState] },
   ]);
-  writeStorage(STORAGE_KEYS.programSections, [
-    ...asArray(readStorage(STORAGE_KEYS.programSections, [])),
-    ...copiedSections,
-  ]);
-  writeStorage(STORAGE_KEYS.programExercises, [
-    ...asArray(readStorage(STORAGE_KEYS.programExercises, [])),
-    ...copiedProgramExercises,
-  ]);
-  writeStorage(STORAGE_KEYS.baselines, [
-    ...asArray(readStorage(STORAGE_KEYS.baselines, [])),
-    ...copiedBaselines,
-  ]);
-  writeStorage(STORAGE_KEYS.programProgressions, [
-    ...asArray(readStorage(STORAGE_KEYS.programProgressions, [])),
-    ...copiedProgressions,
-  ]);
-  writeProgramStates([...getProgramStates(), copiedState]);
 
-  return duplicate;
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      rolledBack: writeResult.rolledBack,
+      program: null,
+      programId: null,
+    };
+  }
+
+  return { ok: true, program: duplicate, programId: newProgramId };
 }
