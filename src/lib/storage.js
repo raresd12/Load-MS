@@ -17,6 +17,9 @@ export const STORAGE_KEYS = {
   baselines: "rpe-tracker.baselines.v1",
   programStates: "rpe-tracker.program-states.v1",
   programProgressions: "rpe-tracker.program-progressions.v1",
+  // Saved program drafts (decision H2-3): structured draft text only, so the
+  // key is tracked (backup / reset) like every other app key.
+  programDrafts: "rpe-tracker.program-drafts.v1",
 };
 
 export const BACKUP_SCHEMA_VERSION = 1;

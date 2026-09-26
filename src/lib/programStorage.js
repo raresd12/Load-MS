@@ -10,6 +10,15 @@ import {
   writeStorage,
   writeStorageBatch,
 } from "./storage.js";
+// programDraft.js imports helpers from this module and this module imports the
+// draft validator/normalizer: every cross-module use sits inside a function
+// body, so the circular import is safe (no top-level access to live bindings).
+import {
+  comparableTargetReps,
+  normalizeDraftLibraryEntry,
+  normalizeProgramDraft,
+  validateProgramDraft,
+} from "./programDraft.js";
 
 export const PROGRAM_STORAGE_VERSION = 1;
 
@@ -24,6 +33,23 @@ export const ATHLETIC_AESTHETIC_BASKETBALL_PROGRAM_ID =
 // Note used by seeded / freshly duplicated progression records. App.jsx treats a
 // progression with this note (and no sourcePlanGeneratedAt) as "not earned".
 export const BASE_RECOMMENDATION_NOTE = "Base program prescription.";
+
+// Measurement profile of a program exercise (decision H2-2). Persisted on the
+// ProgramExercise by the H2 draft writers; legacy records fall back to the
+// built-in config / Library equipment derivation.
+export const LOAD_TYPES = Object.freeze(["external", "bodyweight", "optionalExternal"]);
+export const WEIGHT_MODES = Object.freeze(["kg", "per dumbbell", "additional load"]);
+export const DEFAULT_LOAD_TYPE = "external";
+export const DEFAULT_WEIGHT_MODE = "kg";
+
+// Saved program drafts (decision H2-3). storage.js may register the same key
+// under STORAGE_KEYS.programDrafts later; until then the literal is used.
+export const PROGRAM_DRAFTS_STORAGE_KEY =
+  STORAGE_KEYS.programDrafts ?? "rpe-tracker.program-drafts.v1";
+export const MAX_STORED_PROGRAM_DRAFTS = 5;
+// A draft is structured text (names, targets, notes). Anything larger is not
+// a draft but an uploaded source, which must never be stored (H2-3).
+export const MAX_STORED_PROGRAM_DRAFT_BYTES = 256 * 1024;
 
 function nowIso() {
   return new Date().toISOString();
@@ -222,6 +248,50 @@ function getLegacyDayConfig(dayId) {
   }
 
   return null;
+}
+
+/**
+ * Built-in (config) prescription of a default-program exercise id, or null.
+ * Read-only: used to derive the measurement profile of legacy records.
+ */
+export function getBuiltInExerciseConfig(exerciseId) {
+  return getLegacyExerciseConfig(exerciseId);
+}
+
+export function isValidLoadType(value) {
+  return LOAD_TYPES.includes(value);
+}
+
+export function isValidWeightMode(value) {
+  return WEIGHT_MODES.includes(value);
+}
+
+/**
+ * Decision H2-2. The measurement profile of a program exercise:
+ * { loadType, weightMode, persisted }. A persisted, valid
+ * programExercise.loadType / weightMode wins; otherwise the profile is derived
+ * exactly as before H2 (built-in config, then Library equipment, then the
+ * defaults), so legacy programs keep their view models unchanged.
+ * `libraryExercise` may be passed to avoid a storage read.
+ */
+export function resolveProgramExerciseLoadProfile(programExercise, libraryExercise) {
+  const exerciseId = programExercise?.exerciseId;
+  const legacyExercise = exerciseId ? getLegacyExerciseConfig(exerciseId) : null;
+  const library =
+    libraryExercise === undefined && exerciseId ? getExerciseById(exerciseId) : libraryExercise;
+  const persistedLoadType = isValidLoadType(programExercise?.loadType) ? programExercise.loadType : null;
+  const persistedWeightMode = isValidWeightMode(programExercise?.weightMode)
+    ? programExercise.weightMode
+    : null;
+
+  return {
+    loadType:
+      persistedLoadType ??
+      legacyExercise?.loadType ??
+      (library?.equipment === "bodyweight" ? "bodyweight" : DEFAULT_LOAD_TYPE),
+    weightMode: persistedWeightMode ?? legacyExercise?.weightMode ?? DEFAULT_WEIGHT_MODE,
+    persisted: Boolean(persistedLoadType || persistedWeightMode),
+  };
 }
 
 function getRepsLabel(targetReps = {}) {
@@ -997,7 +1067,7 @@ export function updateProgramMetadata(programId, patch) {
   return updateProgramMetadataChecked(programId, patch).program;
 }
 
-function cleanNumber(value, fallback = null) {
+export function cleanNumber(value, fallback = null) {
   if (value === null || value === undefined || value === "") {
     return fallback;
   }
@@ -1006,7 +1076,7 @@ function cleanNumber(value, fallback = null) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function cleanWeight(value) {
+export function cleanWeight(value) {
   if (value === null || value === undefined || value === "") {
     return null;
   }
@@ -1032,7 +1102,7 @@ function isPositiveFiniteNumber(value) {
  * Returns the cleaned value or `fallback` when the input is not usable.
  * Stored ranges are never rewritten into scalars.
  */
-function cleanRestTime(value, fallback = null) {
+export function cleanRestTime(value, fallback = null) {
   if (Array.isArray(value)) {
     const [min, max] = value.map((entry) => cleanNumber(entry, null));
 
@@ -1684,6 +1754,7 @@ export function getProgramDayViewModels(programId) {
       const mainMuscles = libraryExercise?.mainMuscles?.length
         ? libraryExercise.mainMuscles.join(" / ")
         : legacyExercise?.muscleGroup ?? "";
+      const loadProfile = resolveProgramExerciseLoadProfile(programExercise, libraryExercise);
 
       return {
         ...(legacyExercise ?? {}),
@@ -1708,10 +1779,10 @@ export function getProgramDayViewModels(programId) {
         targetRPE: programExercise.targetRPE,
         restSeconds: programExercise.restTime,
         recommendedWeight: programExercise.targetWeight,
-        loadType:
-          legacyExercise?.loadType ??
-          (libraryExercise?.equipment === "bodyweight" ? "bodyweight" : "external"),
-        weightMode: legacyExercise?.weightMode ?? "kg",
+        loadType: loadProfile.loadType,
+        weightMode: loadProfile.weightMode,
+        // Decision H2-4: a source-listed weight is reference text only.
+        sourceWeight: programExercise.sourceWeight ?? null,
         incrementKg: legacyExercise?.incrementKg,
         roundToKg: legacyExercise?.roundToKg,
         mainMuscles: libraryExercise?.mainMuscles ?? [],
@@ -1911,7 +1982,7 @@ const PROGRAM_EXERCISE_TARGET_FIELDS = Object.freeze([
  * (a target edit only validates what the patch touched).
  * Returns message bodies (lower-case start, no label).
  */
-function collectProgramExerciseTargetErrors(programExercise, fields = PROGRAM_EXERCISE_TARGET_FIELDS) {
+export function collectProgramExerciseTargetErrors(programExercise, fields = PROGRAM_EXERCISE_TARGET_FIELDS) {
   const errors = [];
   const checks = new Set(fields);
 
@@ -1963,6 +2034,29 @@ function collectProgramExerciseTargetErrors(programExercise, fields = PROGRAM_EX
 
   if (checks.has("targetWeight") && !isValidShareWeight(programExercise.targetWeight)) {
     errors.push('target weight must be empty, a number of kg (0 or more) or "BW".');
+  }
+
+  return errors;
+}
+
+/**
+ * Decision H2-2: loadType / weightMode are optional on a ProgramExercise (legacy
+ * records derive them) but when present they must be one of the known values.
+ * Returns message bodies like collectProgramExerciseTargetErrors.
+ */
+export function collectProgramExerciseProfileErrors(programExercise) {
+  const errors = [];
+
+  if (!isNullish(programExercise?.loadType) && !isValidLoadType(programExercise.loadType)) {
+    errors.push(`load type must be one of ${LOAD_TYPES.join(", ")}.`);
+  }
+
+  if (!isNullish(programExercise?.weightMode) && !isValidWeightMode(programExercise.weightMode)) {
+    errors.push(`weight mode must be one of ${WEIGHT_MODES.join(", ")}.`);
+  }
+
+  if (!isNullish(programExercise?.sourceWeight) && typeof programExercise.sourceWeight !== "string") {
+    errors.push("source weight must be reference text.");
   }
 
   return errors;
@@ -2065,8 +2159,14 @@ export function validateProgramShareStrict(share) {
     collectProgramExerciseTargetErrors(programExercise).forEach((message) => {
       errors.push(`${label}: ${message}`);
     });
+
+    collectProgramExerciseProfileErrors(programExercise).forEach((message) => {
+      errors.push(`${label}: ${message}`);
+    });
   });
 
+  // Unknown envelope fields such as `draftMeta` (draftToShare provenance) are
+  // ignored here and by importProgramShare.
   if (errors.length) {
     return { valid: false, error: errors.join(" "), errors };
   }
@@ -2379,4 +2479,730 @@ export function duplicateProgram(programId) {
   }
 
   return { ok: true, program: duplicate, programId: newProgramId };
+}
+
+// ---------------------------------------------------------------------------
+// Phase H2: program drafts -> program storage (decisions H2-1..H2-4)
+// ---------------------------------------------------------------------------
+
+const DRAFT_WRITE_STORAGE_KEYS = [
+  STORAGE_KEYS.programs,
+  STORAGE_KEYS.programDays,
+  STORAGE_KEYS.programSections,
+  STORAGE_KEYS.exerciseLibrary,
+  STORAGE_KEYS.programExercises,
+  STORAGE_KEYS.baselines,
+  STORAGE_KEYS.programProgressions,
+  STORAGE_KEYS.programStates,
+];
+
+function getCorruptKeys(keys) {
+  return keys.filter((key) => readStorageResult(key, null).corrupt);
+}
+
+function corruptKeysResult(corruptKeys, extra = {}) {
+  return {
+    ok: false,
+    error: `Unreadable data in ${corruptKeys.join(", ")}. Nothing was written.`,
+    code: "corrupt",
+    corruptKeys,
+    ...extra,
+  };
+}
+
+function draftValidationResult(validation, extra = {}) {
+  const messages = validation.errors.map((entry) => entry.message);
+
+  return {
+    ok: false,
+    error: messages.join(" "),
+    errors: validation.errors,
+    code: "invalid",
+    ...extra,
+  };
+}
+
+// Persisted records that still point at a program exercise / day id after the
+// record itself was removed: workout sessions, workout drafts, baselines,
+// progressions, program states and the day-keyed next plans. Such an id stays
+// reserved, so a later apply never mints it again for a new occurrence that
+// would silently inherit the removed one's history (H2-1: added ones are new).
+const REFERENCED_ID_FIELDS = new Set(["programExerciseId", "dayId", "lastCompletedDayId", "nextRecommendedDayId"]);
+const REFERENCED_ID_STORAGE_KEYS = [
+  STORAGE_KEYS.sessions,
+  STORAGE_KEYS.workoutDrafts,
+  STORAGE_KEYS.baselines,
+  STORAGE_KEYS.programProgressions,
+  STORAGE_KEYS.programStates,
+];
+
+// Every key applyProgramDraft reads or writes: refused while any is unreadable.
+const APPLY_DRAFT_GUARDED_STORAGE_KEYS = [
+  ...new Set([...DRAFT_WRITE_STORAGE_KEYS, ...REFERENCED_ID_STORAGE_KEYS, STORAGE_KEYS.nextPlans]),
+];
+
+function collectReferencedIds(value, into, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 8) {
+    return into;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectReferencedIds(entry, into, depth + 1));
+    return into;
+  }
+
+  Object.entries(value).forEach(([field, entry]) => {
+    if (REFERENCED_ID_FIELDS.has(field) && (typeof entry === "string" || typeof entry === "number") && String(entry)) {
+      into.add(String(entry));
+    } else if (entry && typeof entry === "object") {
+      collectReferencedIds(entry, into, depth + 1);
+    }
+  });
+
+  return into;
+}
+
+function getReferencedRecordIds() {
+  const reserved = new Set();
+
+  REFERENCED_ID_STORAGE_KEYS.forEach((key) => collectReferencedIds(readStorage(key, null), reserved));
+  Object.keys(readStorage(STORAGE_KEYS.nextPlans, null) ?? {}).forEach((dayId) => reserved.add(String(dayId)));
+
+  return reserved;
+}
+
+function uniqueId(candidate, taken) {
+  let id = candidate;
+  let suffix = 2;
+
+  while (taken.has(id)) {
+    id = `${candidate}-${suffix}`;
+    suffix += 1;
+  }
+
+  taken.add(id);
+  return id;
+}
+
+/**
+ * Turns a (validated) draft into storage records for `programId`. `ids`
+ * resolves the record ids: { day(draftDay, index), section(draftSection, dayId, sectionIndex),
+ * exercise(draftExercise, ordinal) }. orderIndex follows the array order; an
+ * exercise's orderIndex is day-wide (sections in order) because the day view
+ * lists exercises by orderIndex. Warm-up stays on the day record. Pure.
+ */
+function buildProgramRecordsFromDraft(draft, programId, ids) {
+  const days = [];
+  const sections = [];
+  const programExercises = [];
+  const proposedById = new Map(
+    asArray(draft.libraryExercises)
+      .filter((entry) => entry && entry.id)
+      .map((entry) => [String(entry.id), entry]),
+  );
+  const libraryExercises = new Map();
+  let ordinal = 0;
+
+  asArray(draft.days).forEach((draftDay, dayIndex) => {
+    const dayId = ids.day(draftDay, dayIndex);
+    const day = {
+      id: dayId,
+      programId,
+      name: String(draftDay.name ?? "").trim(),
+      focus: String(draftDay.focus ?? "").trim(),
+      orderIndex: dayIndex,
+    };
+    const warmup = normalizeWarmup(draftDay.warmup);
+
+    if (warmup) {
+      day.warmup = warmup;
+    }
+
+    if (draftDay.isOptional) {
+      day.isOptional = true;
+    }
+
+    if (String(draftDay.notes ?? "").trim()) {
+      day.notes = String(draftDay.notes).trim();
+    }
+
+    days.push(day);
+
+    let dayOrderIndex = 0;
+
+    asArray(draftDay.sections).forEach((draftSection, sectionIndex) => {
+      const sectionId = ids.section(draftSection, dayId, sectionIndex);
+
+      sections.push({
+        id: sectionId,
+        programId,
+        dayId,
+        name: String(draftSection.name ?? "").trim() || "Main Work",
+        orderIndex: sectionIndex,
+      });
+
+      asArray(draftSection.exercises).forEach((draftExercise) => {
+        ordinal += 1;
+        const exerciseId = String(draftExercise.exerciseId);
+        const record = {
+          id: ids.exercise(draftExercise, ordinal),
+          programId,
+          dayId,
+          sectionId,
+          exerciseId,
+          orderIndex: dayOrderIndex,
+          targetSets: draftExercise.targetSets,
+          targetReps: {
+            min: draftExercise.targetReps?.min ?? null,
+            max: draftExercise.targetReps?.max ?? null,
+            label: draftExercise.targetReps?.label ?? null,
+          },
+          targetWeight: cleanWeight(draftExercise.targetWeight),
+          targetRPE: draftExercise.targetRPE,
+          restTime: draftExercise.restTime,
+          notes: String(draftExercise.notes ?? "").trim(),
+          type: String(draftExercise.type ?? "").trim() || "hypertrophy",
+          isOptional: Boolean(draftExercise.isOptional),
+          loadType: draftExercise.loadType,
+          weightMode: draftExercise.weightMode,
+        };
+
+        // Decision H2-4: reference text only, never a target or a recommendation.
+        if (String(draftExercise.sourceWeight ?? "").trim()) {
+          record.sourceWeight = String(draftExercise.sourceWeight).trim();
+        }
+
+        dayOrderIndex += 1;
+        programExercises.push(record);
+
+        if (draftExercise.libraryStatus === "new" && !libraryExercises.has(exerciseId)) {
+          // Whitelist copy: only technique/identity text reaches the Library,
+          // whatever a component attached to the draft object (H2-3).
+          const entry =
+            normalizeDraftLibraryEntry(proposedById.get(exerciseId)) ??
+            normalizeDraftLibraryEntry(draftExercise.newLibraryExercise);
+
+          if (entry && entry.id === exerciseId) {
+            libraryExercises.set(exerciseId, entry);
+          }
+        }
+      });
+    });
+  });
+
+  return { days, sections, programExercises, libraryExercises: [...libraryExercises.values()] };
+}
+
+/**
+ * Decision H2-1. Saves a draft as a NEW inactive custom program (isDefault
+ * false, isArchived false, fresh ProgramState, no baselines / progressions:
+ * the targets are the fallback until a session earns a recommendation, exactly
+ * like importProgramShare). Proposed Library entries are added add-only; an
+ * existing entry is never overwritten. Every key is written in ONE batch.
+ *
+ * Returns { ok: true, programId, program, addedLibraryExerciseCount } or
+ *         { ok: false, error, code, errors?, corruptKeys?, failedKey?, programId: null }.
+ */
+export function saveProgramDraft(draft) {
+  const corruptKeys = getCorruptKeys(DRAFT_WRITE_STORAGE_KEYS);
+
+  if (corruptKeys.length) {
+    return corruptKeysResult(corruptKeys, { programId: null, program: null });
+  }
+
+  const validation = validateProgramDraft(draft);
+
+  if (!validation.valid) {
+    return draftValidationResult(validation, { programId: null, program: null });
+  }
+
+  const createdAt = nowIso();
+  const programId = makeCopyId("program-draft");
+  const records = buildProgramRecordsFromDraft(draft, programId, {
+    day: (draftDay, index) => `${programId}:day-${index + 1}`,
+    section: (draftSection, dayId, index) => `${dayId}:section-${index + 1}`,
+    exercise: (draftExercise, ordinal) => `${programId}:exercise-${ordinal}-${draftExercise.exerciseId}`,
+  });
+  const name = String(draft.program?.name ?? "").trim();
+  const program = {
+    id: programId,
+    name,
+    nickname: String(draft.program?.nickname ?? "").trim() || name,
+    description: String(draft.program?.description ?? "").trim(),
+    goal: String(draft.program?.goal ?? "").trim(),
+    isDefault: false,
+    isArchived: false,
+    createdAt,
+    updatedAt: createdAt,
+  };
+  const programState = {
+    programId,
+    lastCompletedDayId: null,
+    nextRecommendedDayId: records.days[0]?.id ?? null,
+    currentWeek: 1,
+    currentCycle: 1,
+    lastWorkoutDate: null,
+    updatedAt: createdAt,
+  };
+  const existingLibrary = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, []));
+  const existingLibraryIds = new Set(existingLibrary.map((exercise) => String(exercise.id)));
+  const newLibraryExercises = records.libraryExercises.filter(
+    (exercise) => !existingLibraryIds.has(String(exercise.id)),
+  );
+
+  const entries = [
+    { key: STORAGE_KEYS.programs, value: [...getAllPrograms(), program] },
+    {
+      key: STORAGE_KEYS.programDays,
+      value: [...asArray(readStorage(STORAGE_KEYS.programDays, [])), ...records.days],
+    },
+    {
+      key: STORAGE_KEYS.programSections,
+      value: [...asArray(readStorage(STORAGE_KEYS.programSections, [])), ...records.sections],
+    },
+    {
+      key: STORAGE_KEYS.programExercises,
+      value: [...asArray(readStorage(STORAGE_KEYS.programExercises, [])), ...records.programExercises],
+    },
+  ];
+
+  if (newLibraryExercises.length) {
+    entries.push({
+      key: STORAGE_KEYS.exerciseLibrary,
+      value: [...existingLibrary, ...newLibraryExercises],
+    });
+  }
+
+  entries.push({ key: STORAGE_KEYS.programStates, value: [...getProgramStates(), programState] });
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      rolledBack: writeResult.rolledBack,
+      programId: null,
+      program: null,
+    };
+  }
+
+  return {
+    ok: true,
+    programId,
+    program,
+    dayCount: records.days.length,
+    exerciseCount: records.programExercises.length,
+    addedLibraryExerciseCount: newLibraryExercises.length,
+  };
+}
+
+const DRAFT_PRESCRIPTION_COMPARE_FIELDS = [
+  "exerciseId",
+  "targetSets",
+  "targetReps",
+  "targetWeight",
+  "targetRPE",
+  "restTime",
+  "loadType",
+  "weightMode",
+];
+
+function comparablePrescription(record, libraryExercise) {
+  const profile = resolveProgramExerciseLoadProfile(record, libraryExercise);
+
+  return {
+    exerciseId: String(record.exerciseId ?? ""),
+    targetSets: record.targetSets ?? null,
+    // A label that only repeats the range ("8-12") equals no label: an AI
+    // echo or share round trip that adds it is not a prescription change.
+    targetReps: comparableTargetReps(record.targetReps),
+    targetWeight: cleanWeight(record.targetWeight),
+    targetRPE: record.targetRPE ?? null,
+    restTime: record.restTime ?? null,
+    loadType: profile.loadType,
+    weightMode: profile.weightMode,
+  };
+}
+
+function prescriptionChanged(existing, next, libraryById) {
+  const before = comparablePrescription(existing, libraryById.get(String(existing.exerciseId)) ?? null);
+  const after = comparablePrescription(next, libraryById.get(String(next.exerciseId)) ?? null);
+
+  return DRAFT_PRESCRIPTION_COMPARE_FIELDS.some(
+    (field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]),
+  );
+}
+
+/**
+ * Decision H2-1. Applies a draft to the EXISTING custom program it edits
+ * (draft.sourceProgramId; default programs are refused) in ONE batch:
+ * - exercises whose draft id equals a stored programExerciseId AND still
+ *   point at the same Library exercise keep that id (and their baseline);
+ *   added ones get new ids; removed ones lose their baseline and progression
+ *   rows. A kept id whose Library exercise changed (remap) is a remove + add:
+ *   the old occurrence keeps its history under the old id, the new one
+ *   starts from its targets (H2-5);
+ * - a new id is never one that a session, draft, baseline, progression or
+ *   state still references (a removed id stays retired);
+ * - an exercise whose prescription changed (library id, sets, reps, weight,
+ *   RPE, rest, loadType, weightMode) loses its stored progression (19.4-2),
+ *   unchanged ones keep it;
+ * - days / sections / orderIndex are rebuilt (day and section ids that still
+ *   exist are kept), program id / createdAt / isArchived and the ProgramState
+ *   are kept, except that lastCompletedDayId / nextRecommendedDayId pointing
+ *   at a removed day become null / the first day;
+ * - workout sessions are never touched.
+ *
+ * The pending next-plan entries live in App state: the caller runs
+ * removeExerciseFromNextPlans for every id in removedProgramExerciseIds and
+ * changedProgramExerciseIds.
+ *
+ * Returns { ok: true, programId, program, summary: { added, removed, changed, kept },
+ *           removedProgramExerciseIds, changedProgramExerciseIds, removedDayIds,
+ *           addedLibraryExerciseCount }
+ *      or { ok: false, error, code, errors?, corruptKeys?, failedKey?, programId }.
+ */
+export function applyProgramDraft(draft) {
+  const programId = String(draft?.sourceProgramId ?? "").trim();
+  // Before the lookup: an unreadable programs key must report "corrupt",
+  // not "not found" from the empty fallback (new-U). The keys that reserve
+  // retired ids (H2-6: sessions, workout drafts, next plans) count too: an
+  // unreadable sessions key would otherwise reserve nothing, and a minted id
+  // could re-attach the quarantined history once the user restores it.
+  const corruptKeys = getCorruptKeys(APPLY_DRAFT_GUARDED_STORAGE_KEYS);
+
+  if (corruptKeys.length) {
+    return corruptKeysResult(corruptKeys, { programId: programId || null });
+  }
+
+  const program = programId ? getAllPrograms().find((entry) => entry.id === programId) : null;
+
+  if (!program) {
+    return {
+      ok: false,
+      error: "The draft does not edit an existing program.",
+      code: "not-found",
+      programId: programId || null,
+    };
+  }
+
+  if (program.isDefault || program.id === DEFAULT_PROGRAM_ID) {
+    return {
+      ok: false,
+      error: "Default programs are protected. Duplicate the program first.",
+      code: "protected",
+      programId,
+    };
+  }
+
+  const validation = validateProgramDraft(draft);
+
+  if (!validation.valid) {
+    return draftValidationResult(validation, { programId });
+  }
+
+  const updatedAt = nowIso();
+  const allDays = asArray(readStorage(STORAGE_KEYS.programDays, []));
+  const allSections = asArray(readStorage(STORAGE_KEYS.programSections, []));
+  const allExercises = asArray(readStorage(STORAGE_KEYS.programExercises, []));
+  const existingDayIds = new Set(allDays.filter((day) => day.programId === programId).map((day) => String(day.id)));
+  const existingSectionIds = new Set(
+    allSections.filter((section) => section.programId === programId).map((section) => String(section.id)),
+  );
+  const existingExerciseById = new Map(
+    allExercises
+      .filter((exercise) => exercise.programId === programId)
+      .map((exercise) => [String(exercise.id), exercise]),
+  );
+  const referencedIds = getReferencedRecordIds();
+  const takenDayIds = new Set([...allDays.map((day) => String(day.id)), ...referencedIds]);
+  const takenSectionIds = new Set(allSections.map((section) => String(section.id)));
+  const takenExerciseIds = new Set([...allExercises.map((exercise) => String(exercise.id)), ...referencedIds]);
+  const keepsStoredIdentity = (draftExercise) => {
+    const existing = existingExerciseById.get(String(draftExercise.id));
+    // H2-5: same occurrence only while it is the same Library exercise.
+    return Boolean(existing) && String(existing.exerciseId ?? "") === String(draftExercise.exerciseId ?? "");
+  };
+
+  const records = buildProgramRecordsFromDraft(draft, programId, {
+    day: (draftDay, index) =>
+      existingDayIds.has(String(draftDay.id))
+        ? String(draftDay.id)
+        : uniqueId(`${programId}:day-${index + 1}`, takenDayIds),
+    section: (draftSection, dayId, index) =>
+      existingSectionIds.has(String(draftSection.id))
+        ? String(draftSection.id)
+        : uniqueId(`${dayId}:section-${index + 1}`, takenSectionIds),
+    exercise: (draftExercise, ordinal) =>
+      keepsStoredIdentity(draftExercise)
+        ? String(draftExercise.id)
+        : uniqueId(`${programId}:exercise-${ordinal}-${draftExercise.exerciseId}`, takenExerciseIds),
+  });
+
+  const existingLibrary = asArray(readStorage(STORAGE_KEYS.exerciseLibrary, []));
+  const libraryById = new Map(existingLibrary.map((exercise) => [String(exercise.id), exercise]));
+  const keptIds = new Set();
+  const changedIds = [];
+  let addedCount = 0;
+
+  const nextProgramExercises = records.programExercises.map((record) => {
+    const existing = existingExerciseById.get(record.id);
+
+    if (!existing) {
+      addedCount += 1;
+      return record;
+    }
+
+    keptIds.add(record.id);
+
+    if (prescriptionChanged(existing, record, libraryById)) {
+      changedIds.push(record.id);
+    }
+
+    const merged = { ...existing, ...record };
+
+    if (!record.sourceWeight) {
+      delete merged.sourceWeight;
+    }
+
+    return merged;
+  });
+  const removedIds = [...existingExerciseById.keys()].filter((id) => !keptIds.has(id));
+  const removedIdSet = new Set(removedIds);
+  const progressionResetIds = new Set([...removedIds, ...changedIds]);
+  const newDayIds = new Set(records.days.map((day) => day.id));
+  const removedDayIds = [...existingDayIds].filter((id) => !newDayIds.has(id));
+
+  const nextLibraryExercises = records.libraryExercises.filter(
+    (exercise) => !libraryById.has(String(exercise.id)),
+  );
+  const baselines = getBaselines();
+  const nextBaselines = baselines.filter(
+    (baseline) => !(baseline.programId === programId && removedIdSet.has(String(baseline.programExerciseId))),
+  );
+  const progressions = getProgramProgressions();
+  const nextProgressions = progressions.filter(
+    (progression) =>
+      !(progression.programId === programId && progressionResetIds.has(String(progression.programExerciseId))),
+  );
+
+  const programs = getAllPrograms();
+  const programIndex = programs.findIndex((entry) => entry.id === programId);
+  const name = String(draft.program?.name ?? "").trim() || program.name;
+  const nextPrograms = [...programs];
+  nextPrograms[programIndex] = {
+    ...program,
+    name,
+    nickname: String(draft.program?.nickname ?? "").trim() || name,
+    description: String(draft.program?.description ?? "").trim(),
+    goal: String(draft.program?.goal ?? "").trim(),
+    updatedAt,
+  };
+
+  const entries = [
+    { key: STORAGE_KEYS.programs, value: nextPrograms },
+    {
+      key: STORAGE_KEYS.programDays,
+      value: [...allDays.filter((day) => day.programId !== programId), ...records.days],
+    },
+    {
+      key: STORAGE_KEYS.programSections,
+      value: [...allSections.filter((section) => section.programId !== programId), ...records.sections],
+    },
+    {
+      key: STORAGE_KEYS.programExercises,
+      value: [...allExercises.filter((exercise) => exercise.programId !== programId), ...nextProgramExercises],
+    },
+  ];
+
+  if (nextLibraryExercises.length) {
+    entries.push({ key: STORAGE_KEYS.exerciseLibrary, value: [...existingLibrary, ...nextLibraryExercises] });
+  }
+
+  if (nextBaselines.length !== baselines.length) {
+    entries.push({ key: STORAGE_KEYS.baselines, value: nextBaselines });
+  }
+
+  if (nextProgressions.length !== progressions.length) {
+    entries.push({ key: STORAGE_KEYS.programProgressions, value: nextProgressions });
+  }
+
+  const states = getProgramStates();
+  const stateIndex = states.findIndex((state) => state.programId === programId);
+
+  if (stateIndex >= 0) {
+    const state = states[stateIndex];
+    const statePatch = {};
+
+    if (state.lastCompletedDayId && !newDayIds.has(String(state.lastCompletedDayId))) {
+      statePatch.lastCompletedDayId = null;
+    }
+
+    if (!state.nextRecommendedDayId || !newDayIds.has(String(state.nextRecommendedDayId))) {
+      statePatch.nextRecommendedDayId = records.days[0]?.id ?? null;
+    }
+
+    if (Object.keys(statePatch).length) {
+      const nextStates = [...states];
+      nextStates[stateIndex] = { ...state, ...statePatch, updatedAt };
+      entries.push({ key: STORAGE_KEYS.programStates, value: nextStates });
+    }
+  }
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey,
+      rolledBack: writeResult.rolledBack,
+      programId,
+    };
+  }
+
+  return {
+    ok: true,
+    programId,
+    program: nextPrograms[programIndex],
+    summary: {
+      added: addedCount,
+      removed: removedIds.length,
+      changed: changedIds.length,
+      kept: keptIds.size - changedIds.length,
+    },
+    removedProgramExerciseIds: removedIds,
+    changedProgramExerciseIds: changedIds,
+    removedDayIds,
+    addedLibraryExerciseCount: nextLibraryExercises.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Saved drafts (decision H2-3): at most MAX_STORED_PROGRAM_DRAFTS entries
+// { draftId, origin, sourceProgramId, updatedAt, draft } under
+// PROGRAM_DRAFTS_STORAGE_KEY. A stored draft is the whitelist-normalised
+// draft only: never a raw upload, image data or the Gemini key.
+// ---------------------------------------------------------------------------
+
+function readStoredDraftEntries() {
+  return asArray(readStorage(PROGRAM_DRAFTS_STORAGE_KEY, [])).filter(
+    (entry) => entry && typeof entry === "object" && entry.draftId && entry.draft && typeof entry.draft === "object",
+  );
+}
+
+function byUpdatedAtDesc(left, right) {
+  return String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""));
+}
+
+/**
+ * Returns { ok: true, draftId, storedCount, droppedDraftIds, droppedDrafts } or
+ *         { ok: false, error, code }.
+ * Upserts by draftId, newest first, and drops the oldest beyond the cap;
+ * droppedDrafts lists them as { draftId, origin, programName }.
+ */
+export function saveDraftToStorage(draft) {
+  if (readStorageResult(PROGRAM_DRAFTS_STORAGE_KEY, null).corrupt) {
+    return corruptKeysResult([PROGRAM_DRAFTS_STORAGE_KEY]);
+  }
+
+  if (!draft || typeof draft !== "object") {
+    return { ok: false, error: "There is no draft to save.", code: "invalid" };
+  }
+
+  const clean = normalizeProgramDraft(draft, { keepNulls: true });
+  const serialized = JSON.stringify(clean);
+
+  if (serialized.length > MAX_STORED_PROGRAM_DRAFT_BYTES) {
+    return {
+      ok: false,
+      error: "This draft is too large to keep. Drafts hold program text only, not source files.",
+      code: "too-large",
+    };
+  }
+
+  const updatedAt = nowIso();
+  const entry = {
+    draftId: clean.draftId,
+    origin: clean.origin,
+    sourceProgramId: clean.sourceProgramId,
+    updatedAt,
+    draft: { ...clean, updatedAt },
+  };
+  const others = readStoredDraftEntries().filter((stored) => stored.draftId !== clean.draftId);
+  const ordered = [entry, ...others].sort(byUpdatedAtDesc);
+  const kept = ordered.slice(0, MAX_STORED_PROGRAM_DRAFTS);
+  // Beyond the cap the oldest entries go; the caller gets their ids and
+  // names so the eviction can be told to the user instead of happening silently.
+  const droppedDrafts = ordered.slice(MAX_STORED_PROGRAM_DRAFTS).map((stored) => ({
+    draftId: stored.draftId,
+    origin: stored.origin ?? stored.draft?.origin ?? "blank",
+    programName: String(stored.draft?.program?.name ?? "").trim(),
+  }));
+  const droppedDraftIds = droppedDrafts.map((stored) => stored.draftId);
+  const writeResult = writeStorage(PROGRAM_DRAFTS_STORAGE_KEY, kept);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code };
+  }
+
+  return { ok: true, draftId: clean.draftId, storedCount: kept.length, droppedDraftIds, droppedDrafts };
+}
+
+/**
+ * Newest first: [{ draftId, origin, sourceProgramId, updatedAt, programName, dayCount, exerciseCount }].
+ */
+export function listStoredDrafts() {
+  return readStoredDraftEntries()
+    .sort(byUpdatedAtDesc)
+    .map((entry) => {
+      const days = asArray(entry.draft.days);
+
+      return {
+        draftId: entry.draftId,
+        origin: entry.origin ?? entry.draft.origin ?? "blank",
+        sourceProgramId: entry.sourceProgramId ?? entry.draft.sourceProgramId ?? null,
+        updatedAt: entry.updatedAt ?? entry.draft.updatedAt ?? null,
+        programName: String(entry.draft.program?.name ?? "").trim(),
+        dayCount: days.length,
+        exerciseCount: days.reduce(
+          (total, day) =>
+            total +
+            asArray(day?.sections).reduce((dayTotal, section) => dayTotal + asArray(section?.exercises).length, 0),
+          0,
+        ),
+      };
+    });
+}
+
+/** The normalised draft, or null when no draft has that id. */
+export function loadStoredDraft(draftId) {
+  const entry = readStoredDraftEntries().find((stored) => stored.draftId === draftId);
+  return entry ? normalizeProgramDraft(entry.draft, { keepNulls: true }) : null;
+}
+
+/** Returns { ok: true, removed } or { ok: false, error, code }. */
+export function deleteStoredDraft(draftId) {
+  if (readStorageResult(PROGRAM_DRAFTS_STORAGE_KEY, null).corrupt) {
+    return corruptKeysResult([PROGRAM_DRAFTS_STORAGE_KEY]);
+  }
+
+  const entries = readStoredDraftEntries();
+  const remaining = entries.filter((stored) => stored.draftId !== draftId);
+
+  if (remaining.length === entries.length) {
+    return { ok: true, removed: false };
+  }
+
+  const writeResult = writeStorage(PROGRAM_DRAFTS_STORAGE_KEY, remaining);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code };
+  }
+
+  return { ok: true, removed: true };
 }
