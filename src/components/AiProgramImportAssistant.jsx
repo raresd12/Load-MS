@@ -21,6 +21,7 @@ import {
   setGeminiApiKey,
   UNSUPPORTED_SOURCE_FALLBACK,
 } from "../lib/aiProgram.js";
+import { draftFromShare, validateProgramDraft } from "../lib/programDraft.js";
 
 const SOURCE_MODES = [
   { id: "text", label: "Paste Text", icon: ClipboardList },
@@ -80,7 +81,33 @@ function readFileAsText(file) {
 // uploaded files and drafts are never written to storage.
 let cachedDraft = null;
 
-export default function AiProgramImportAssistant({ onImportProgramShare }) {
+/**
+ * Counts the AI preview's per-field provenance ("source" / "default") so the
+ * user sees how much of the draft came from the source before importing.
+ */
+function countPreviewProvenance(preview) {
+  const counts = { source: 0, default: 0 };
+
+  (preview?.days ?? []).forEach((day) => {
+    (day.exercises ?? []).forEach((exercise) => {
+      Object.values(exercise.provenance ?? {}).forEach((value) => {
+        if (value in counts) {
+          counts[value] += 1;
+        }
+      });
+    });
+  });
+
+  return counts;
+}
+
+/**
+ * Phase H2: both "Add to my programs" and "Edit draft in Studio" go through
+ * the shared draft model (draftFromShare -> validateProgramDraft ->
+ * saveProgramDraft). `onSaveProgramDraft(draft)` returns the writer result;
+ * `onReviewDraft(draft, review)` opens the Studio in review mode.
+ */
+export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewDraft }) {
   const [isOpen, setIsOpen] = useState(false);
   const [savedKeyMask, setSavedKeyMask] = useState(() => maskKey(getGeminiApiKey()));
   const [isKeySectionOpen, setIsKeySectionOpen] = useState(false);
@@ -239,22 +266,66 @@ export default function AiProgramImportAssistant({ onImportProgramShare }) {
     }
   }
 
-  function handleImport() {
+  function convertDraft() {
     if (!draft?.share) {
+      return null;
+    }
+
+    const converted = draftFromShare(draft.share, { origin: "ai-import" });
+
+    if (!converted.ok) {
+      setExtractionError(converted.error ?? "The draft could not be converted.");
+      return null;
+    }
+
+    return converted.draft;
+  }
+
+  function handleImport() {
+    const programDraft = convertDraft();
+
+    if (!programDraft) {
       return;
     }
 
-    const result = onImportProgramShare(draft.share);
+    const validation = validateProgramDraft(programDraft);
 
-    if (!result.valid) {
-      setExtractionError(result.error ?? "The draft could not be imported.");
+    if (!validation.valid) {
+      setExtractionError(
+        `The draft needs a review before it can be saved: ${validation.errors
+          .slice(0, 3)
+          .map((entry) => entry.message)
+          .join(" ")}${validation.errors.length > 3 ? ` (+${validation.errors.length - 3} more)` : ""} Open it in the Studio to fix these.`,
+      );
+      return;
+    }
+
+    const result = onSaveProgramDraft(programDraft);
+
+    if (!result?.ok) {
+      setExtractionError(result?.error ?? "The draft could not be saved.");
       return;
     }
 
     setDraft(null);
     setImportMessage(
-      `Added "${result.program.name}" with ${result.importedDayCount} ${result.importedDayCount === 1 ? "day" : "days"} and ${result.importedExerciseCount} ${result.importedExerciseCount === 1 ? "exercise" : "exercises"} as an inactive program. Review it in the program list and set it active when ready.`,
+      `Added "${result.program.name}" with ${result.dayCount} ${result.dayCount === 1 ? "day" : "days"} and ${result.exerciseCount} ${result.exerciseCount === 1 ? "exercise" : "exercises"} as an inactive program. Review it in the program list and set it active when ready.`,
     );
+  }
+
+  function handleEditInStudio() {
+    const programDraft = convertDraft();
+
+    if (!programDraft) {
+      return;
+    }
+
+    setDraft(null);
+    onReviewDraft(programDraft, {
+      title: `AI import review${draft.model ? ` (${draft.model})` : ""}`,
+      origin: "ai-import",
+      uncertainty: draft.preview.uncertainty ?? [],
+    });
   }
 
   return (
@@ -587,9 +658,20 @@ export default function AiProgramImportAssistant({ onImportProgramShare }) {
                       </div>
                     )}
 
+                    {day.exercises.length === 0 && (
+                      <p className="mt-2 text-xs font-bold text-zinc-500">
+                        No working exercises on this day (kept as a rest / recovery day).
+                      </p>
+                    )}
                     <ul className="mt-2 space-y-1.5">
                       {day.exercises.map((exercise, exerciseIndex) => (
                         <li key={`${day.id}-${exerciseIndex}`} className="text-xs">
+                          {exercise.section &&
+                            (exerciseIndex === 0 || day.exercises[exerciseIndex - 1].section !== exercise.section) && (
+                              <p className="mb-1 text-[10px] font-black uppercase tracking-[0.12em] text-lime-300">
+                                {exercise.section}
+                              </p>
+                            )}
                           <p className="flex flex-wrap items-center gap-1.5">
                             <span className="break-words font-black text-zinc-100">
                               {exercise.name}
@@ -606,8 +688,13 @@ export default function AiProgramImportAssistant({ onImportProgramShare }) {
                           </p>
                           <p className="font-bold text-zinc-400">
                             {exercise.targetSets} × {exercise.repsLabel} · RPE {exercise.targetRPE} ·
-                            rest {exercise.restTime}s
+                            rest {exercise.restLabel ?? `${exercise.restTime}s`}
                           </p>
+                          {exercise.sourceWeight && (
+                            <p className="break-words font-bold text-zinc-500">
+                              Source load: {exercise.sourceWeight} (info only, not a target)
+                            </p>
+                          )}
                           {exercise.notes && (
                             <p className="break-words font-bold text-zinc-500">{exercise.notes}</p>
                           )}
@@ -623,7 +710,32 @@ export default function AiProgramImportAssistant({ onImportProgramShare }) {
                 ))}
               </ul>
 
-              <p className="mt-3 text-xs font-bold leading-5 text-zinc-500">
+              {draft.preview.uncertainty?.length > 0 && (
+                <div className="mt-3 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-2">
+                  <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-200">
+                    Uncertainty disclosed by the assistant ({draft.preview.uncertainty.length})
+                  </p>
+                  <ul className="mt-1 ml-3 list-disc space-y-0.5">
+                    {draft.preview.uncertainty.map((line, index) => (
+                      <li key={`${index}-${line}`} className="break-words text-xs font-bold text-amber-100">
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <p className="mt-3 text-xs font-bold leading-5 text-zinc-400">
+                {(() => {
+                  const counts = countPreviewProvenance(draft.preview);
+                  return `${counts.source} ${counts.source === 1 ? "value" : "values"} read from the source, ${counts.default} filled with app defaults.`;
+                })()}
+                {draft.summary.emptyDayCount > 0
+                  ? ` ${draft.summary.emptyDayCount} ${draft.summary.emptyDayCount === 1 ? "day has" : "days have"} no working exercises.`
+                  : ""}
+              </p>
+
+              <p className="mt-2 text-xs font-bold leading-5 text-zinc-500">
                 {draft.summary.reusedExerciseCount}{" "}
                 {draft.summary.reusedExerciseCount === 1 ? "exercise matches" : "exercises match"}{" "}
                 your library
@@ -640,8 +752,15 @@ export default function AiProgramImportAssistant({ onImportProgramShare }) {
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
-                  onClick={handleImport}
+                  onClick={handleEditInStudio}
                   className="focus-ring flex min-h-11 flex-1 items-center justify-center rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+                >
+                  Edit draft in Studio
+                </button>
+                <button
+                  type="button"
+                  onClick={handleImport}
+                  className="focus-ring flex min-h-11 flex-1 items-center justify-center rounded-[8px] border border-lime-300/60 px-4 text-sm font-black text-lime-200 hover:bg-lime-300/10"
                 >
                   Add to my programs
                 </button>

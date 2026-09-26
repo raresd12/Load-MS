@@ -17,19 +17,26 @@ import {
   MoreHorizontal,
   Moon,
   Pencil,
+  Plus,
   Save,
   Settings,
+  Sparkles,
   Trash2,
   TriangleAlert,
   Upload,
   Smile,
+  X,
   Zap,
 } from "lucide-react";
 import AiProgramImportAssistant from "./components/AiProgramImportAssistant.jsx";
-import { clearGeminiApiKey } from "./lib/aiProgram.js";
+import ProgramStudio from "./components/ProgramStudio.jsx";
+import { clearGeminiApiKey, extractProgramEditWithAi, getGeminiApiKey } from "./lib/aiProgram.js";
+import { createBlankProgramDraft, draftFromProgram, draftFromShare } from "./lib/programDraft.js";
+import { openStudioSession, resolveStudioModeForDraft, updateStudioSessionDraft } from "./lib/programStudio.js";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
 import { getPrescriptionSourceLabel, resolvePrescription } from "./lib/prescription.js";
 import { getBestComparablePerformance } from "./lib/readinessPerformance.js";
+import { saveReadinessCheckIn } from "./lib/readinessSave.js";
 import {
   formatRestClock,
   formatRestEditorValue,
@@ -47,6 +54,8 @@ import {
   wellnessMetrics,
 } from "./lib/progression.js";
 import {
+  applyProgramDraft,
+  deleteStoredDraft,
   deriveProgramStatePatchFromSessions,
   duplicateProgram,
   exportProgramShare,
@@ -59,14 +68,18 @@ import {
   getProgramState,
   getPrograms,
   importProgramShare,
+  listStoredDrafts,
+  loadStoredDraft,
   MAX_TARGET_SETS,
   persistWorkoutSave,
   removeExerciseFromNextPlans,
+  saveProgramDraft,
   seedDefaultProgramIfNeeded,
   setActiveProgramChecked,
   setProgramArchived,
   updateProgramExerciseTargetChecked,
   updateProgramMetadataChecked,
+  validateProgramShareStrict,
 } from "./lib/programStorage.js";
 import {
   getAverageNumericWeight,
@@ -88,6 +101,7 @@ import {
   subscribeStorageIssues,
   useLocalStorageState,
   validateLocalBackup,
+  writeStorage,
 } from "./lib/storage.js";
 import {
   getPlanSlotSignature,
@@ -1538,6 +1552,10 @@ export default function App() {
     () => (isValidTab(appUiState.activeTab) ? appUiState.activeTab : "dashboard"),
   );
   const [lastGeneratedPlan, setLastGeneratedPlan] = useState(null);
+  // Phase H2: open Program Studio session { draft, mode, review, isResumed } and
+  // the outcome line shown on the Program page after a save / apply.
+  const [programStudio, setProgramStudio] = useState(null);
+  const [programStudioMessage, setProgramStudioMessage] = useState("");
   const [validationErrors, setValidationErrors] = useState([]);
   const [workoutLogTarget, setWorkoutLogTarget] = useState(null);
   const [postWorkoutRecap, setPostWorkoutRecap] = useState(null);
@@ -1744,21 +1762,25 @@ export default function App() {
 
   function saveTodayReadiness() {
     const wellness = normalizeWellness(readinessDraft);
-    const readiness = interpretWellness(wellness);
-    const now = new Date().toISOString();
+    // H1 follow-up (decision H2-19): success UI only after the durable write
+    // succeeded. saveReadinessCheckIn (src/lib/readinessSave.js) writes the
+    // value through the checked writer and decides the message; the hook
+    // state is mirrored only on success (its own effect re-writes the
+    // identical value) and the form keeps the user's values on failure.
+    const result = saveReadinessCheckIn({
+      readinessByDate,
+      dateKey: todayDateKey,
+      wellness,
+      readiness: interpretWellness(wellness),
+      now: new Date().toISOString(),
+      write: (value) => writeStorage(STORAGE_KEYS.readinessByDate, value),
+    });
 
-    setReadinessByDate((currentReadiness) => ({
-      ...currentReadiness,
-      [todayDateKey]: {
-        schemaVersion: 1,
-        date: todayDateKey,
-        savedAt: currentReadiness[todayDateKey]?.savedAt ?? now,
-        updatedAt: now,
-        wellness,
-        readiness,
-      },
-    }));
-    setReadinessSaveMessage("Today's readiness saved.");
+    if (result.ok) {
+      setReadinessByDate(result.readinessByDate);
+    }
+
+    setReadinessSaveMessage(result.message);
   }
 
   function handleSelectDay(dayId) {
@@ -1898,6 +1920,82 @@ export default function App() {
       refreshProgramData();
     }
 
+    return result;
+  }
+
+  // Phase H2: the Program Studio session lives in App state so switching tabs
+  // does not lose an open draft. The Studio reports every edit back
+  // (handleProgramStudioDraftChange) because the Program page unmounts on a
+  // tab switch: on remount the Studio starts from the latest working copy,
+  // while `initialDraft` stays the draft the session opened with (dirty /
+  // diff baseline). The working copy is also autosaved.
+  function handleOpenProgramStudio(session) {
+    setProgramStudioMessage("");
+    setProgramStudio(openStudioSession(session));
+  }
+
+  function handleProgramStudioDraftChange(draft) {
+    setProgramStudio((current) => updateStudioSessionDraft(current, draft));
+  }
+
+  function handleCloseProgramStudio() {
+    setProgramStudio(null);
+    refreshProgramData();
+  }
+
+  /**
+   * Decision H2-1: a draft without sourceProgramId becomes a NEW inactive
+   * program (saveProgramDraft); one that edits a custom program is applied to
+   * it (applyProgramDraft) and the pending plan entries of removed / changed
+   * exercises are dropped so the next session starts from the new targets
+   * (19.4-2, same pattern as handleUpdateProgramExerciseTarget).
+   */
+  function handleSaveProgramStudioDraft(draft) {
+    if (draft?.sourceProgramId) {
+      const result = applyProgramDraft(draft);
+
+      if (!result.ok) {
+        return result;
+      }
+
+      const affectedIds = [...result.removedProgramExerciseIds, ...result.changedProgramExerciseIds];
+
+      if (affectedIds.length) {
+        setNextPlans((currentPlans) =>
+          affectedIds.reduce((plans, programExerciseId) => removeExerciseFromNextPlans(plans, programExerciseId), currentPlans),
+        );
+      }
+
+      if (result.programId === activeProgramId) {
+        setLastGeneratedPlan(null);
+      }
+
+      const { added, removed, changed, kept } = result.summary;
+      setProgramStudioMessage(
+        `Applied changes to "${result.program.name}": ${added} added, ${removed} removed, ${changed} changed, ${kept} kept.${
+          changed || removed
+            ? " Progression and pending plans were reset for the changed or removed exercises, so the next session starts from the new targets."
+            : ""
+        }${result.addedLibraryExerciseCount ? ` ${result.addedLibraryExerciseCount} new Library ${result.addedLibraryExerciseCount === 1 ? "entry" : "entries"} added.` : ""}`,
+      );
+      setProgramStudio(null);
+      refreshProgramData();
+      return result;
+    }
+
+    const result = saveProgramDraft(draft);
+
+    if (!result.ok) {
+      return result;
+    }
+
+    setProgramStudioMessage(
+      `Saved "${result.program.name}" as a new inactive program with ${result.dayCount} ${result.dayCount === 1 ? "day" : "days"} and ${result.exerciseCount} ${result.exerciseCount === 1 ? "exercise" : "exercises"}.${
+        result.addedLibraryExerciseCount ? ` ${result.addedLibraryExerciseCount} new Library ${result.addedLibraryExerciseCount === 1 ? "entry" : "entries"} added.` : ""
+      } Use "Set Active" on its card when you are ready to train it.`,
+    );
+    setProgramStudio(null);
+    refreshProgramData();
     return result;
   }
 
@@ -2349,6 +2447,13 @@ export default function App() {
             onUpdateProgramMetadata={handleUpdateProgramMetadata}
             onUpdateProgramExerciseTarget={handleUpdateProgramExerciseTarget}
             onImportProgramShare={handleImportProgramShare}
+            studio={programStudio}
+            studioMessage={programStudioMessage}
+            onOpenStudio={handleOpenProgramStudio}
+            onCloseStudio={handleCloseProgramStudio}
+            onStudioDraftChange={handleProgramStudioDraftChange}
+            onSaveStudioDraft={handleSaveProgramStudioDraft}
+            onDismissStudioMessage={() => setProgramStudioMessage("")}
           />
         )}
 
@@ -6197,7 +6302,10 @@ function ReadinessTrend({ entries }) {
             const width = Math.max(8, Math.min(100, (entry.readiness.averageScore / 5) * 100));
 
             return (
-              <div key={entry.date} className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+              <div
+                key={entry.sessionId ? `${entry.date}:${entry.sessionId}` : entry.date}
+                className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2"
+              >
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-black text-white">{formatDateKey(entry.date)}</p>
                   <p className="text-xs font-black text-zinc-300">
@@ -7377,6 +7485,9 @@ function buildReadinessEntries(readinessByDate, sessions) {
       if (readiness && session.date) {
         entries.push({
           date: getLocalDateKey(new Date(session.date)),
+          // H1 follow-up: a training and a recovery session can share a date,
+          // so the list key carries the session id (see ReadinessTrend).
+          sessionId: session.id ?? null,
           readiness,
         });
       }
@@ -8007,6 +8118,13 @@ function ProgramPage({
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
   onImportProgramShare,
+  studio = null,
+  studioMessage = "",
+  onOpenStudio,
+  onCloseStudio,
+  onStudioDraftChange,
+  onSaveStudioDraft,
+  onDismissStudioMessage,
 }) {
   const visiblePrograms = programs.filter((program) => !program.isArchived);
   const activeProgram = visiblePrograms.find((program) => program.id === activeProgramId);
@@ -8014,6 +8132,13 @@ function ProgramPage({
   const [importMessage, setImportMessage] = useState("");
   const [importError, setImportError] = useState("");
   const [archiveError, setArchiveError] = useState("");
+  const [studioError, setStudioError] = useState("");
+  // Phase H2: a validated share waiting for "Review in Studio" / "Import as is".
+  const [pendingImport, setPendingImport] = useState(null);
+  const [draftsRevision, setDraftsRevision] = useState(0);
+  // Stored (autosaved) drafts the user can resume; re-read when the studio
+  // closes or a draft is discarded.
+  const storedDrafts = useMemo(() => (studio ? [] : listStoredDrafts()), [studio, programs, draftsRevision]);
 
   function handleRestoreProgram(programId) {
     const result = onArchiveProgram?.(programId, false);
@@ -8036,6 +8161,7 @@ function ProgramPage({
 
     setImportMessage("");
     setImportError("");
+    setPendingImport(null);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -8048,21 +8174,145 @@ function ProgramPage({
         return;
       }
 
-      const result = onImportProgramShare(share);
+      const validation = validateProgramShareStrict(share);
 
-      if (!result.valid) {
-        setImportError(result.error ?? "The program file could not be imported.");
+      if (!validation.valid) {
+        setImportError(validation.error ?? "The program file could not be imported.");
         return;
       }
 
-      setImportMessage(
-        `Imported "${result.program.name}" with ${result.importedDayCount} ${result.importedDayCount === 1 ? "day" : "days"} and ${result.importedExerciseCount} exercises. It was added as a new program - your existing programs were not touched.`,
-      );
+      const dayCount = Array.isArray(share.days) ? share.days.length : 0;
+      const exerciseCount = Array.isArray(share.programExercises) ? share.programExercises.length : 0;
+      setPendingImport({ share, fileName: file.name, programName: share.program?.name ?? "", dayCount, exerciseCount });
     };
     reader.onerror = () => {
       setImportError("The file could not be read.");
     };
     reader.readAsText(file);
+  }
+
+  function importPendingAsIs() {
+    if (!pendingImport) {
+      return;
+    }
+
+    const result = onImportProgramShare(pendingImport.share);
+
+    if (!result.valid) {
+      setImportError(result.error ?? "The program file could not be imported.");
+      return;
+    }
+
+    setPendingImport(null);
+    setImportMessage(
+      `Imported "${result.program.name}" with ${result.importedDayCount} ${result.importedDayCount === 1 ? "day" : "days"} and ${result.importedExerciseCount} exercises. It was added as a new program - your existing programs were not touched.`,
+    );
+  }
+
+  function reviewPendingInStudio() {
+    if (!pendingImport) {
+      return;
+    }
+
+    const converted = draftFromShare(pendingImport.share, { origin: "file-import" });
+
+    if (!converted.ok) {
+      setImportError(converted.error ?? "The program file could not be opened in the Studio.");
+      return;
+    }
+
+    setPendingImport(null);
+    onOpenStudio({
+      draft: converted.draft,
+      mode: "review",
+      review: { title: `Imported file: ${pendingImport.fileName}`, origin: "file-import" },
+    });
+  }
+
+  function openNewProgram() {
+    setStudioError("");
+    onOpenStudio({ draft: createBlankProgramDraft(), mode: "create" });
+  }
+
+  function openEditProgram(programId) {
+    const result = draftFromProgram(programId);
+
+    if (!result.ok) {
+      setStudioError(result.error ?? "This program cannot be edited.");
+      return;
+    }
+
+    setStudioError("");
+    onOpenStudio({ draft: result.draft, mode: "edit" });
+  }
+
+  function resumeStoredDraft(draftId) {
+    const draft = loadStoredDraft(draftId);
+
+    if (!draft) {
+      setStudioError("That draft is no longer stored.");
+      setDraftsRevision((current) => current + 1);
+      return;
+    }
+
+    const mode = resolveStudioModeForDraft(draft);
+    // The AI's change / removed / uncertainty notes travel with the stored
+    // draft (draft.reviewNotes), so a resumed review shows them again.
+    const notes = draft.reviewNotes ?? {};
+    const review =
+      mode === "review"
+        ? {
+            title:
+              draft.origin === "ai-edit"
+                ? "AI edit review (resumed draft)"
+                : draft.origin === "ai-import"
+                  ? "AI import review (resumed draft)"
+                  : "Resumed draft review",
+            instruction: draft.aiInstruction,
+            origin: draft.origin,
+            changes: notes.changes ?? [],
+            removed: (notes.removed ?? []).map((name) => ({ name })),
+            uncertainty: notes.uncertainty ?? [],
+          }
+        : null;
+    setStudioError("");
+    onOpenStudio({ draft, mode, review, isResumed: true });
+  }
+
+  function discardStoredDraft(draftId) {
+    // One tap next to "Resume" must not silently delete the only copy of an
+    // autosaved edit: same confirmation as the Studio's own Cancel.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.confirm === "function" &&
+      !window.confirm("Discard this unsaved draft? It cannot be recovered. Your saved programs are not affected.")
+    ) {
+      return;
+    }
+
+    const result = deleteStoredDraft(draftId);
+
+    if (!result.ok) {
+      setStudioError(result.error ?? "The draft could not be discarded.");
+    }
+
+    setDraftsRevision((current) => current + 1);
+  }
+
+  if (studio) {
+    return (
+      <ProgramStudio
+        key={studio.draft.draftId}
+        draft={studio.draft}
+        initialDraft={studio.initialDraft ?? studio.draft}
+        mode={studio.mode}
+        review={studio.review ?? null}
+        isResumed={Boolean(studio.isResumed)}
+        onSave={onSaveStudioDraft}
+        onCancel={onCloseStudio}
+        onDraftChange={onStudioDraftChange}
+      />
+    );
   }
 
   return (
@@ -8086,9 +8336,84 @@ function ProgramPage({
           )}
         </div>
         <p className="mt-3 text-sm leading-6 text-zinc-400">
-          Manage local guest-mode programs. Full exercise editing and drag-and-drop ordering come later.
+          Manage local guest-mode programs. Build a program from scratch or edit a custom program day by
+          day in the Program Studio; defaults stay protected (duplicate them first).
         </p>
-        <div className="mt-4">
+        {studioMessage && (
+          <div
+            role="status"
+            className="mt-3 flex items-start justify-between gap-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2"
+          >
+            <p className="min-w-0 break-words text-sm font-bold text-lime-100">{studioMessage}</p>
+            <button
+              type="button"
+              onClick={onDismissStudioMessage}
+              aria-label="Dismiss message"
+              className="focus-ring shrink-0 rounded-[8px] p-1 text-lime-200 hover:text-white"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          </div>
+        )}
+        {studioError && (
+          <p
+            role="alert"
+            className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+          >
+            {studioError}
+          </p>
+        )}
+        {storedDrafts.length > 0 && (
+          <div className="mt-4 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-3">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+              Resume unsaved draft
+            </p>
+            <ul className="mt-2 space-y-2">
+              {storedDrafts.map((entry) => (
+                <li
+                  key={entry.draftId}
+                  className="flex flex-col gap-2 rounded-[8px] border border-zinc-800 bg-[#111111] p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-black text-white">
+                      {entry.programName || "Untitled program"}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-zinc-500">
+                      {entry.sourceProgramId ? "Edit of a saved program" : "New program draft"} | {entry.dayCount}{" "}
+                      {entry.dayCount === 1 ? "day" : "days"} | {entry.exerciseCount}{" "}
+                      {entry.exerciseCount === 1 ? "exercise" : "exercises"} | kept {formatProgramDate(entry.updatedAt)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => resumeStoredDraft(entry.draftId)}
+                      className="focus-ring min-h-10 rounded-[8px] bg-amber-300 px-3 text-xs font-black text-zinc-950"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => discardStoredDraft(entry.draftId)}
+                      className="focus-ring min-h-10 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={openNewProgram}
+            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+          >
+            <Plus aria-hidden="true" size={16} />
+            New Program
+          </button>
           <input
             ref={importInputRef}
             type="file"
@@ -8104,6 +8429,45 @@ function ProgramPage({
             <Upload aria-hidden="true" size={16} />
             Import Program File
           </button>
+        </div>
+        <div>
+          {pendingImport && (
+            <div className="mt-3 rounded-[8px] border border-lime-300/30 bg-lime-300/5 px-3 py-3">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-200/80">
+                Program file checked - nothing imported yet
+              </p>
+              <p className="mt-1 break-words text-sm font-black text-white">
+                {pendingImport.programName || "Untitled program"}
+              </p>
+              <p className="mt-1 text-xs font-semibold text-zinc-400">
+                {pendingImport.fileName} | {pendingImport.dayCount} {pendingImport.dayCount === 1 ? "day" : "days"} |{" "}
+                {pendingImport.exerciseCount} {pendingImport.exerciseCount === 1 ? "exercise" : "exercises"}
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={reviewPendingInStudio}
+                  className="focus-ring min-h-11 flex-1 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+                >
+                  Review in Studio
+                </button>
+                <button
+                  type="button"
+                  onClick={importPendingAsIs}
+                  className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+                >
+                  Import as is
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingImport(null)}
+                  className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-300 hover:bg-zinc-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {importMessage && (
             <p
               role="status"
@@ -8134,6 +8498,8 @@ function ProgramPage({
                 onArchiveProgram={onArchiveProgram}
                 onUpdateProgramMetadata={onUpdateProgramMetadata}
                 onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+                onEditProgram={openEditProgram}
+                onOpenStudio={onOpenStudio}
               />
             );
           })}
@@ -8187,7 +8553,10 @@ function ProgramPage({
         )}
       </section>
 
-      <AiProgramImportAssistant onImportProgramShare={onImportProgramShare} />
+      <AiProgramImportAssistant
+        onSaveProgramDraft={onSaveStudioDraft}
+        onReviewDraft={(draft, review) => onOpenStudio({ draft, mode: "review", review })}
+      />
     </div>
   );
 }
@@ -8200,10 +8569,13 @@ function ProgramCard({
   onArchiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
+  onEditProgram,
+  onOpenStudio,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [isAiEditOpen, setIsAiEditOpen] = useState(false);
   // One card-level error line: archive, set-active and metadata-save failures.
   const [archiveError, setArchiveError] = useState("");
   const [form, setForm] = useState(() => createProgramMetadataForm(program));
@@ -8316,6 +8688,27 @@ function ProgramCard({
           >
             {isEditing ? "Close Edit" : "Edit Details"}
           </button>
+          {!isDefaultProgram && onEditProgram && (
+            <button
+              type="button"
+              onClick={() => onEditProgram(program.id)}
+              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-200 hover:bg-lime-300/10"
+            >
+              <Pencil aria-hidden="true" size={15} />
+              Edit Program
+            </button>
+          )}
+          {!isDefaultProgram && onOpenStudio && (
+            <button
+              type="button"
+              onClick={() => setIsAiEditOpen((current) => !current)}
+              aria-expanded={isAiEditOpen}
+              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+            >
+              <Sparkles aria-hidden="true" size={15} />
+              {isAiEditOpen ? "Close AI Edit" : "Edit with AI"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => downloadProgramShareFile(program)}
@@ -8352,6 +8745,14 @@ function ProgramCard({
         <Metric label="Week" value={programState.currentWeek} />
         <Metric label="Cycle" value={programState.currentCycle} />
       </div>
+
+      {isAiEditOpen && !isDefaultProgram && (
+        <ProgramAiEditForm
+          program={program}
+          onOpenStudio={onOpenStudio}
+          onClose={() => setIsAiEditOpen(false)}
+        />
+      )}
 
       {isEditing && (
         <ProgramMetadataForm
@@ -8406,6 +8807,133 @@ function ProgramCard({
         <ProgramPreview days={days} />
       </details>
     </article>
+  );
+}
+
+/**
+ * Phase H2 "Edit with AI": one instruction -> Track B's extractProgramEditWithAi
+ * on the exported share -> draftFromShare (origin "ai-edit") -> Studio review.
+ * Nothing is written until the user applies the reviewed draft.
+ */
+function ProgramAiEditForm({ program, onOpenStudio, onClose }) {
+  const [instruction, setInstruction] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+  const [error, setError] = useState("");
+  const hasKey = Boolean(getGeminiApiKey());
+
+  async function askAi() {
+    const cleanInstruction = instruction.trim();
+    setError("");
+
+    if (!hasKey) {
+      setError("Save your Gemini API key first (AI Program Import Assistant section below).");
+      return;
+    }
+
+    if (!cleanInstruction) {
+      setError("Describe the change you want first.");
+      return;
+    }
+
+    const share = exportProgramShare(program.id);
+
+    if (!share) {
+      setError("This program could not be exported for editing.");
+      return;
+    }
+
+    setIsBusy(true);
+
+    try {
+      const result = await extractProgramEditWithAi({ share, instruction: cleanInstruction });
+
+      if (!result.valid) {
+        setError(result.error);
+        return;
+      }
+
+      const converted = draftFromShare(result.share, {
+        origin: "ai-edit",
+        sourceProgramId: program.id,
+        aiInstruction: cleanInstruction,
+      });
+
+      if (!converted.ok) {
+        setError(converted.error ?? "The AI result could not be opened as a draft.");
+        return;
+      }
+
+      onOpenStudio({
+        draft: converted.draft,
+        mode: "review",
+        review: {
+          title: `AI edit review (${result.model})`,
+          instruction: cleanInstruction,
+          origin: "ai-edit",
+          changes: result.preview.changes ?? [],
+          removed: result.preview.removed ?? [],
+          uncertainty: result.preview.uncertainty ?? [],
+        },
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+      <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Edit with AI</p>
+      <p className="mt-1 text-sm leading-6 text-zinc-400">
+        Describe one change (for example "swap the second day's rows for pull-ups" or "add face pulls
+        at the end of Day 3"). The AI returns a revised draft you review in the Studio before anything is applied.
+        Your targets and history stay as they are until you press Apply Changes. No weights are ever
+        invented.
+      </p>
+      <label htmlFor={`ai-edit-${program.id}`} className="mt-3 block text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+        Instruction
+      </label>
+      <textarea
+        id={`ai-edit-${program.id}`}
+        value={instruction}
+        onChange={(event) => setInstruction(event.target.value)}
+        rows={3}
+        maxLength={2000}
+        placeholder="Replace barbell rows with dumbbell rows and add a finisher to Day 1"
+        className="focus-ring mt-1 min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-bold text-white placeholder:text-zinc-600"
+      />
+      {!hasKey && (
+        <p className="mt-2 text-xs font-bold text-amber-200">
+          A saved Gemini API key is required (see the AI Program Import Assistant section).
+        </p>
+      )}
+      {error && (
+        <p
+          role="alert"
+          className="mt-2 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+        >
+          {error}
+        </p>
+      )}
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={askAi}
+          disabled={isBusy}
+          className="focus-ring flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <Sparkles aria-hidden="true" size={16} />
+          {isBusy ? "Asking AI..." : "Ask AI"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={isBusy}
+          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 

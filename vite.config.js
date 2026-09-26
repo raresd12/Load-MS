@@ -8,8 +8,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      // Registration happens in src/main.jsx (virtual:pwa-register) so the app
+      // can show "A new version is available" and let the user pick when to
+      // reload; "auto" detects that import and injects nothing extra.
       injectRegister: "auto",
-      registerType: "autoUpdate",
+      registerType: "prompt",
       includeAssets: ["icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"],
       manifest: {
         name: "Load MS / RPE Tracker",
@@ -48,8 +51,10 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
-        clientsClaim: true,
-        skipWaiting: true,
+        // No skipWaiting / clientsClaim: with the prompt flow the new worker
+        // must stay waiting until the banner's Reload posts SKIP_WAITING
+        // (updateServiceWorker(true)); skipWaiting would activate it
+        // immediately and the prompt would never be shown.
         navigateFallback: "index.html",
         globPatterns: ["**/*.{js,css,html,png,svg,webmanifest}"],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
