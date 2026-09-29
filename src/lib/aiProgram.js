@@ -1,4 +1,11 @@
-import { readStorage, STORAGE_KEYS } from "./storage.js";
+import {
+  clearSecret,
+  readSecret,
+  readStorage,
+  SECRET_STORAGE_KEYS,
+  STORAGE_KEYS,
+  writeSecret,
+} from "./storage.js";
 import {
   MAX_TARGET_SETS,
   normalizeWarmup,
@@ -7,8 +14,9 @@ import {
 } from "./programStorage.js";
 
 // The Gemini key is deliberately NOT part of STORAGE_KEYS: backups and program
-// share files must never carry the user's API key.
-export const GEMINI_API_KEY_STORAGE_KEY = "rpe-tracker.gemini-api-key.v1";
+// share files must never carry the user's API key. Since H4 it is a registered
+// secret of storage.js (decision H4-4): raw text, no write notification.
+export const GEMINI_API_KEY_STORAGE_KEY = SECRET_STORAGE_KEYS.geminiApiKey;
 
 export const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-2.5-flash"];
 const GEMINI_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -34,39 +42,29 @@ export const USER_INSTRUCTION_START = "USER INSTRUCTION START";
 export const USER_INSTRUCTION_END = "USER INSTRUCTION END";
 
 export function getGeminiApiKey() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  try {
-    return window.localStorage.getItem(GEMINI_API_KEY_STORAGE_KEY) ?? "";
-  } catch {
-    return "";
-  }
+  return readSecret(GEMINI_API_KEY_STORAGE_KEY);
 }
 
+export const GEMINI_API_KEY_SAVE_ERROR = "Could not save the API key to local storage.";
+
+/**
+ * Returns { ok: true } or { ok: false, error, code } (writeSecret's codes).
+ * An empty key removes the stored one. The error is shown to the user as it
+ * is, so it never names the storage key: the quota message is kept, every
+ * other failure reads GEMINI_API_KEY_SAVE_ERROR (the wording before H4).
+ */
 export function setGeminiApiKey(key) {
-  if (typeof window === "undefined") {
-    return { ok: false, error: "Local storage is not available." };
+  const result = writeSecret(GEMINI_API_KEY_STORAGE_KEY, String(key ?? "").trim());
+
+  if (result.ok || result.code === "quota") {
+    return result;
   }
 
-  const cleanKey = String(key ?? "").trim();
-
-  try {
-    if (cleanKey) {
-      window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, cleanKey);
-    } else {
-      window.localStorage.removeItem(GEMINI_API_KEY_STORAGE_KEY);
-    }
-
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "Could not save the API key to local storage." };
-  }
+  return { ...result, error: GEMINI_API_KEY_SAVE_ERROR };
 }
 
 export function clearGeminiApiKey() {
-  return setGeminiApiKey("");
+  return clearSecret(GEMINI_API_KEY_STORAGE_KEY);
 }
 
 // ---------------------------------------------------------------------------

@@ -126,8 +126,14 @@ console.warn = () => {};
 const React = await import("react");
 assert.equal(typeof React.__render, "function", "react stub is in place");
 
-const { discardCorruptStorageValue, getStorageIssues, STORAGE_KEYS, useLocalStorageState } =
-  await import("../src/lib/storage.js");
+const {
+  discardCorruptStorageValue,
+  getStorageIssues,
+  STORAGE_KEYS,
+  subscribeStorageWrites,
+  useLocalStorageState,
+  writeStorage,
+} = await import("../src/lib/storage.js");
 
 try {
   // ------------------------------------------------------------------
@@ -276,6 +282,73 @@ try {
     assert.equal(recoveredStatus.lastWriteOk, true);
     assert.equal(recoveredStatus.lastWriteError, null);
     assert.deepEqual(JSON.parse(storage.getItem(STORAGE_KEYS.sessions)), [{ id: "saved" }]);
+  }
+
+  // ------------------------------------------------------------------
+  // H4 fix round 1 (decision H4-9): the mount write is not a change. It is
+  // still written (stored value unchanged, fallback persisted on a fresh
+  // device) but emits no write notification; a setState write does.
+  // ------------------------------------------------------------------
+  {
+    const events = [];
+    const unsubscribe = subscribeStorageWrites((event) => events.push(event));
+
+    // Stored data: six hook keys mount like App does, nothing is announced.
+    const storage = installStorage(new MemoryLocalStorage());
+    const storedSessions = JSON.stringify([{ id: "s1" }]);
+    storage.setItem(STORAGE_KEYS.sessions, storedSessions);
+    storage.writes = [];
+    React.__reset();
+    const hookKeys = [
+      [STORAGE_KEYS.sessions, []],
+      [STORAGE_KEYS.nextPlans, {}],
+      [STORAGE_KEYS.setupCues, {}],
+      [STORAGE_KEYS.readinessByDate, {}],
+      [STORAGE_KEYS.workoutDrafts, {}],
+      [STORAGE_KEYS.appUiState, {}],
+    ];
+    const renderApp = () => hookKeys.map(([key, fallback]) => useLocalStorageState(key, fallback));
+    let hooks = React.__render(renderApp);
+    assert.deepEqual(events, [], "mounting the hooks emits no write event");
+    assert.equal(storage.getItem(STORAGE_KEYS.sessions), storedSessions, "stored value unchanged by the mount");
+    assert.deepEqual(
+      [...storage.writes].sort(),
+      hookKeys.map(([key]) => key).sort(),
+      "the mount write itself still happens for every hook key",
+    );
+    assert.equal(storage.getItem(STORAGE_KEYS.nextPlans), "{}", "fallback persisted on a fresh key");
+    hooks.forEach(([, , status]) => assert.equal(status.lastWriteOk, true));
+
+    // A re-render without a change writes nothing and announces nothing.
+    storage.writes = [];
+    hooks = React.__render(renderApp);
+    assert.deepEqual(storage.writes, []);
+    assert.deepEqual(events, []);
+
+    // A change made through setState is announced, once, for its key only.
+    hooks[0][1]((current) => [{ id: "s2" }, ...current]);
+    hooks = React.__render(renderApp);
+    assert.equal(events.length, 1, "a setState write notifies");
+    assert.deepEqual([...events[0].keys], [STORAGE_KEYS.sessions]);
+    assert.equal(events[0].source, "local");
+    assert.deepEqual(JSON.parse(storage.getItem(STORAGE_KEYS.sessions)), [{ id: "s2" }, { id: "s1" }]);
+
+    // Later changes keep notifying (the quiet write is the mount write only).
+    hooks[1][1]({ "day-1": { id: "plan" } });
+    React.__render(renderApp);
+    assert.equal(events.length, 2);
+    assert.deepEqual([...events[1].keys], [STORAGE_KEYS.nextPlans]);
+
+    // writeStorage: notify defaults to on; only an explicit false is quiet.
+    events.length = 0;
+    assert.deepEqual(writeStorage(STORAGE_KEYS.setupCues, { a: 1 }), { ok: true });
+    assert.deepEqual(writeStorage(STORAGE_KEYS.setupCues, { a: 2 }, { notify: undefined }), { ok: true });
+    assert.equal(events.length, 2);
+    assert.deepEqual(writeStorage(STORAGE_KEYS.setupCues, { a: 3 }, { notify: false }), { ok: true });
+    assert.equal(events.length, 2, "notify: false writes quietly");
+    assert.deepEqual(JSON.parse(storage.getItem(STORAGE_KEYS.setupCues)), { a: 3 });
+
+    unsubscribe();
   }
 
   console.warn = originalWarn;
