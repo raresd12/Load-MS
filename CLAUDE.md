@@ -26,8 +26,8 @@ decisions taken after the handoff; they win over the handoff where they differ.
 ## Engineering rules
 
 - Evolve, do not rewrite. Keep UI broadly intact during correctness work; fix affected surfaces only.
-- Look for an existing helper before adding one. `src/App.jsx` is ~8.6k lines: one owner per task edits it; other tracks stay in `src/lib/*`.
-- The v1 engine at the bottom of `progression.js` (`calculateExerciseRecommendation`, `progress*Exercise`) is dead; do not edit it expecting behaviour changes.
+- Look for an existing helper before adding one. `src/App.jsx` (~1.3k lines) is the shell: state, effects, handlers and nav. Pages live in `src/pages/*`, shared UI in `src/components/*`, pure logic in `src/lib/*` (decisions H4-1, H4-6). One owner per task edits `App.jsx`; other tracks stay in `src/lib/*`.
+- The v1 engine was deleted in H4 (decision H4-3). `generateNextPlan` -> `calculateExerciseRecommendationV2` is the only engine; its golden output is pinned in `scripts/verify-progression-h4-retired.mjs`.
 - Do not commit, push or merge unless the task explicitly says so. Never commit `dist/`.
 - Report: files changed, behaviour changed, automated checks actually run with results, browser checks actually performed with viewport, what remains unverified.
 - UI copy is English. Library technique content may be Romanian (see `EXERCISE_LIBRARY_SPEC.md`).

@@ -149,6 +149,72 @@ export function clearStorageIssue(key, kind) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Write notifications (Phase H4, decision H4-4). After every SUCCESSFUL
+// writeStorage / writeStorageBatch call the listeners receive one event
+// { keys, at, source: "local" } naming the keys that were written (a batch is
+// one event with all of its keys). A failed, refused or rolled-back write
+// emits nothing, and neither does a secret (writeSecret). This is the hook a
+// sync queue (Phase H6) attaches to; the app itself does not consume it yet.
+// Decision H4-9: an event means "the user's data changed on this device".
+// The write useLocalStorageState does when it mounts puts back the value it
+// just read (or the fallback on a fresh device), so it is written with
+// `{ notify: false }` and emits nothing.
+// Decision H4-12: restoreLocalBackup and resetLocalAppData replace or remove
+// tracked keys without going through writeStorage, so on success they emit
+// one event themselves, naming only the tracked keys whose stored text
+// actually changed. `reason` tells a listener which of the three it was.
+// ---------------------------------------------------------------------------
+
+export const STORAGE_WRITE_SOURCE_LOCAL = "local";
+
+export const STORAGE_WRITE_REASONS = Object.freeze({
+  // writeStorage / writeStorageBatch.
+  write: "write",
+  // restoreLocalBackup replaced the tracked keys with a backup.
+  restore: "restore",
+  // resetLocalAppData removed the tracked keys.
+  reset: "reset",
+});
+
+const storageWriteSubscribers = new Set();
+
+export function subscribeStorageWrites(listener) {
+  if (typeof listener !== "function") {
+    return () => {};
+  }
+
+  storageWriteSubscribers.add(listener);
+
+  return () => {
+    storageWriteSubscribers.delete(listener);
+  };
+}
+
+function notifyStorageWriteSubscribers(keys, reason = STORAGE_WRITE_REASONS.write) {
+  if (!keys.length || !storageWriteSubscribers.size) {
+    return;
+  }
+
+  const event = Object.freeze({
+    keys: Object.freeze([...keys]),
+    at: new Date().toISOString(),
+    source: STORAGE_WRITE_SOURCE_LOCAL,
+    reason,
+  });
+
+  // Iterate over a copy so a listener that unsubscribes itself (or another
+  // listener) during the notification does not skip anyone, and a listener
+  // that throws never prevents the others from running or fails the write.
+  [...storageWriteSubscribers].forEach((listener) => {
+    try {
+      listener(event);
+    } catch (error) {
+      warnStorageError("A storage write subscriber threw.", error);
+    }
+  });
+}
+
 export function isQuotaError(error) {
   if (!error) {
     return false;
@@ -486,6 +552,10 @@ function clearWriteIssues(key) {
  * `{ overwriteCorrupt: true }` only for an explicit user action that replaces
  * the unreadable data; the read-corrupt issue is cleared on success so the
  * warning no longer claims the original is still in place.
+ *
+ * Decision H4-9: `{ notify: false }` writes without a write notification. It
+ * is only for a write that re-states what storage already means (the mount
+ * write of useLocalStorageState), never for a change made by the user.
  */
 export function writeStorage(key, value, options = {}) {
   if (typeof window === "undefined") {
@@ -516,6 +586,10 @@ export function writeStorage(key, value, options = {}) {
 
     if (inspected.corrupt) {
       clearReadCorruptIssue(key);
+    }
+
+    if (options?.notify !== false) {
+      notifyStorageWriteSubscribers([key]);
     }
 
     return { ok: true };
@@ -688,6 +762,7 @@ export function writeStorageBatch(entries, options = {}) {
 
   uniqueKeys.forEach((key) => clearWriteIssues(key));
   corruptKeys.forEach((key) => clearReadCorruptIssue(key));
+  notifyStorageWriteSubscribers(uniqueKeys);
 
   return { ok: true, writtenKeys };
 }
@@ -805,6 +880,21 @@ function snapshotTrackedStorageValues(keys) {
   });
 }
 
+/**
+ * The keys of `snapshot` ([key, rawTextOrNull] pairs, tracked-key order)
+ * whose stored text differs from `nextRawByKey` (a Map of key -> raw text; a
+ * key that is absent from it is absent from storage afterwards).
+ */
+function getChangedSnapshotKeys(snapshot, nextRawByKey) {
+  return snapshot
+    .filter(([key, previous]) => {
+      const next = nextRawByKey.has(key) ? nextRawByKey.get(key) : null;
+
+      return previous !== next;
+    })
+    .map(([key]) => key);
+}
+
 function rollbackTrackedStorageValues(snapshot) {
   try {
     getTrackedStorageKeys().forEach((key) => {
@@ -886,6 +976,15 @@ export function restoreLocalBackup(backup) {
     };
   }
 
+  // Decision H4-12: the restore is durable here, so tell the write
+  // subscribers which tracked keys now hold different text (replaced, added
+  // or removed). Restoring what is already stored changes nothing and stays
+  // silent.
+  notifyStorageWriteSubscribers(
+    getChangedSnapshotKeys(previousSnapshot, new Map(serializedEntries)),
+    STORAGE_WRITE_REASONS.restore,
+  );
+
   return {
     ...validation,
     restoredKeys: validation.recognizedKeys,
@@ -910,6 +1009,7 @@ export function resetLocalAppData() {
   }
 
   const trackedKeys = getTrackedStorageKeys();
+  const previousSnapshot = snapshotTrackedStorageValues(trackedKeys);
 
   try {
     trackedKeys.forEach((key) => {
@@ -927,12 +1027,104 @@ export function resetLocalAppData() {
       notifyStorageIssueSubscribers();
     }
 
+    // Decision H4-12: one event naming the tracked keys that held data and
+    // are gone now; resetting an already empty device stays silent.
+    notifyStorageWriteSubscribers(
+      getChangedSnapshotKeys(previousSnapshot, new Map()),
+      STORAGE_WRITE_REASONS.reset,
+    );
+
     return { ok: true };
   } catch (error) {
     const message = getStorageErrorMessage(error, "Could not reset local app data.");
     warnStorageError(message, error);
     return { ok: false, error: message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Secrets (Phase H4, decision H4-4). Device-only credentials such as the
+// Gemini key. A secret key is never part of STORAGE_KEYS /
+// getTrackedStorageKeys, so it is never in a backup, a program share, a
+// repository collection or a write notification (restore and reset events
+// name tracked keys only, H4-12), and restoreLocalBackup /
+// resetLocalAppData leave it untouched (the Settings reset removes the Gemini
+// key through clearGeminiApiKey afterwards, as before H4). Values are stored
+// as raw text, not JSON, so a key saved before H4 stays readable.
+// ---------------------------------------------------------------------------
+
+export const SECRET_STORAGE_KEYS = Object.freeze({
+  geminiApiKey: "rpe-tracker.gemini-api-key.v1",
+});
+
+export function getSecretStorageKeys() {
+  return Object.values(SECRET_STORAGE_KEYS);
+}
+
+export function isSecretStorageKey(key) {
+  return getSecretStorageKeys().includes(key);
+}
+
+/**
+ * Returns the stored secret text, or "" when the key is absent, not a
+ * registered secret key, or storage is unavailable. Never records an issue.
+ */
+export function readSecret(key) {
+  if (typeof window === "undefined" || !isSecretStorageKey(key)) {
+    return "";
+  }
+
+  try {
+    return window.localStorage.getItem(key) ?? "";
+  } catch (error) {
+    warnStorageError(`Could not read ${key} from local storage.`, error);
+    return "";
+  }
+}
+
+/**
+ * Stores `value` as raw text; an empty value removes the key. Returns
+ * { ok: true } or { ok: false, error, code } with the same quota handling and
+ * codes as writeStorage, but records no storage issue and emits no write
+ * notification. Only registered secret keys are accepted.
+ */
+export function writeSecret(key, value) {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Local storage is not available.",
+      code: STORAGE_ERROR_CODES.unavailable,
+    };
+  }
+
+  if (!isSecretStorageKey(key)) {
+    return {
+      ok: false,
+      error: `${key} is not a secret storage key.`,
+      code: STORAGE_ERROR_CODES.write,
+    };
+  }
+
+  const text = value === null || value === undefined ? "" : String(value);
+
+  try {
+    if (text) {
+      window.localStorage.setItem(key, text);
+    } else {
+      window.localStorage.removeItem(key);
+    }
+
+    return { ok: true };
+  } catch (error) {
+    const code = getStorageErrorCode(error);
+    const message = getStorageErrorMessage(error, `Could not save ${key} to local storage.`);
+    warnStorageError(message, error);
+    return { ok: false, error: message, code };
+  }
+}
+
+export function clearSecret(key) {
+  return writeSecret(key, "");
 }
 
 function createInitialStorageStatus(readResult) {
@@ -958,13 +1150,16 @@ export function useLocalStorageState(key, fallbackValue) {
   const [value, setValue] = useState(initialRead.value);
   const [status, setStatus] = useState(() => createInitialStorageStatus(initialRead));
   const deferWriteRef = useRef(!initialRead.ok);
+  // Decision H4-9: until setState is called the hook only holds what it read
+  // (or the fallback), so its write is not a change and notifies nobody.
+  const changedByAppRef = useRef(false);
 
   useEffect(() => {
     if (deferWriteRef.current) {
       return;
     }
 
-    const result = writeStorage(key, value);
+    const result = writeStorage(key, value, { notify: changedByAppRef.current });
     const lastWriteOk = result.ok;
     const lastWriteError = result.ok ? null : result.error;
 
@@ -977,8 +1172,104 @@ export function useLocalStorageState(key, fallbackValue) {
 
   const setStoredValue = useCallback((nextValue) => {
     deferWriteRef.current = false;
+    changedByAppRef.current = true;
     setValue(nextValue);
   }, []);
 
   return [value, setStoredValue, status];
+}
+
+// ---------------------------------------------------------------------------
+// Storage status copy (Phase H4): moved verbatim from src/App.jsx so the
+// save-error and storage-warning texts have a fixture
+// (scripts/verify-storage-h4-messages.mjs).
+// ---------------------------------------------------------------------------
+
+export function buildSaveErrorMessage(result) {
+  const detail = String(result?.error ?? "").trim();
+
+  if (result?.code === "quota") {
+    return {
+      code: "quota",
+      title: "Workout not saved - storage is full.",
+      message:
+        "Your draft is kept. Export a backup in Settings, delete old data, then press Save Workout again.",
+      detail,
+    };
+  }
+
+  if (result?.code === "corrupt") {
+    // Decision new-U: saving would replace stored data the app could not read.
+    return {
+      code: "corrupt",
+      title: "Workout not saved - stored data could not be read.",
+      message: `Your draft is kept. Saving would overwrite the unreadable data under "${
+        result?.failedKey ?? "a storage key"
+      }". Use the storage warning at the top to restore a backup or discard that data, then press Save Workout again.`,
+      detail,
+    };
+  }
+
+  return {
+    code: result?.code ?? "write",
+    title: "Workout not saved.",
+    message: `The browser refused the write${detail ? ` (${detail})` : ""}. Your draft is kept - try again, and export a backup in Settings if this repeats.`,
+    detail,
+  };
+}
+
+/**
+ * Persistent storage warnings (decision new-G / review finding F2): storage
+ * issues recorded by src/lib/storage.js plus failed writes reported by the
+ * localStorage hooks. Each entry has a stable id used for dismissal.
+ */
+export function buildStorageWarnings({ storageIssues, hookStatuses }) {
+  const warnings = (storageIssues ?? []).map((issue) => {
+    const isCorrupt = issue.kind === STORAGE_ISSUE_KINDS.readCorrupt;
+    const isQuota = issue.kind === STORAGE_ISSUE_KINDS.quota;
+
+    return {
+      id: `issue|${issue.key}|${issue.kind}|${issue.at}`,
+      key: issue.key,
+      kind: issue.kind,
+      fromIssue: true,
+      corruptCopyKey: issue.corruptCopyKey ?? null,
+      title: isCorrupt
+        ? "Stored data could not be read"
+        : isQuota
+          ? "Browser storage is full"
+          : "A save failed",
+      canDiscard: isCorrupt,
+      message: isCorrupt
+        ? `The data under "${issue.key}" is not valid JSON, so the app is using defaults for it.${
+            issue.corruptCopyKey ? ` The original was kept as "${issue.corruptCopyKey}".` : ""
+          } Nothing was overwritten, and nothing will be saved over it until you restore a backup or discard it.`
+        : isQuota
+          ? `Saving "${issue.key}" failed because storage is full. Export a backup in Settings and delete old data before logging more.`
+          : `Saving "${issue.key}" failed${issue.message ? `: ${issue.message}` : "."} Recent changes may not be on disk - export a backup in Settings.`,
+    };
+  });
+  // A hook write refused because the key is unreadable (decision new-U) is
+  // already explained by the read-corrupt warning of that key.
+  const coveredKeys = new Set(warnings.map((warning) => warning.key));
+
+  (hookStatuses ?? []).forEach(({ key, status }) => {
+    if (!status || status.lastWriteOk !== false || coveredKeys.has(key)) {
+      return;
+    }
+
+    warnings.push({
+      id: `hook|${key}|${status.lastWriteError ?? ""}`,
+      key,
+      kind: STORAGE_ISSUE_KINDS.writeFailed,
+      fromIssue: false,
+      corruptCopyKey: null,
+      title: "A save failed",
+      message: `The latest change to "${key}" was not written${
+        status.lastWriteError ? `: ${status.lastWriteError}` : "."
+      } Export a backup in Settings before continuing.`,
+    });
+  });
+
+  return warnings;
 }

@@ -376,14 +376,14 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
               <span className="flex items-center gap-2 text-sm font-black text-white">
                 <KeyRound aria-hidden="true" size={16} className="text-lime-300" />
                 Gemini API key
-                <span className="text-xs font-bold text-zinc-500">
+                <span className="text-xs font-bold text-zinc-400">
                   {hasSavedKey ? `saved (${savedKeyMask})` : "required"}
                 </span>
               </span>
               {showKeyForm ? (
-                <ChevronUp aria-hidden="true" size={16} className="shrink-0 text-zinc-500" />
+                <ChevronUp aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
               ) : (
-                <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-500" />
+                <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
               )}
             </button>
             {showKeyForm && (
@@ -533,7 +533,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   <div className="mt-2 flex items-center justify-between gap-2 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2">
                     <p className="min-w-0 break-words text-sm font-bold text-white">
                       {selectedFile.file.name}{" "}
-                      <span className="font-bold text-zinc-500">
+                      <span className="font-bold text-zinc-400">
                         ({formatFileSize(selectedFile.file.size)})
                       </span>
                     </p>
@@ -556,7 +556,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   </p>
                 )}
                 {sourceMode === "file" && (
-                  <p className="mt-2 text-xs leading-5 text-zinc-500">
+                  <p className="mt-2 text-xs leading-5 text-zinc-400">
                     Word/Excel files are not supported yet. {UNSUPPORTED_SOURCE_FALLBACK}
                   </p>
                 )}
@@ -564,7 +564,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
             )}
           </div>
 
-          <p className="mt-3 text-xs leading-5 text-zinc-500">
+          <p className="mt-3 text-xs leading-5 text-zinc-400">
             Files/text are sent to Gemini using your API key to extract a draft. Do not upload
             sensitive medical or personal documents. Uploaded files are used only for this draft
             and are never stored, backed up or shared. The assistant extracts only what is in the
@@ -647,10 +647,10 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                             <li key={item.id} className="break-words text-xs font-bold text-zinc-300">
                               {item.name}
                               {item.prescription ? (
-                                <span className="text-zinc-500"> - {item.prescription}</span>
+                                <span className="text-zinc-400"> - {item.prescription}</span>
                               ) : null}
                               {item.notes ? (
-                                <span className="font-normal text-zinc-500"> ({item.notes})</span>
+                                <span className="font-normal text-zinc-400"> ({item.notes})</span>
                               ) : null}
                             </li>
                           ))}
@@ -659,7 +659,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                     )}
 
                     {day.exercises.length === 0 && (
-                      <p className="mt-2 text-xs font-bold text-zinc-500">
+                      <p className="mt-2 text-xs font-bold text-zinc-400">
                         No working exercises on this day (kept as a rest / recovery day).
                       </p>
                     )}
@@ -691,12 +691,12 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                             rest {exercise.restLabel ?? `${exercise.restTime}s`}
                           </p>
                           {exercise.sourceWeight && (
-                            <p className="break-words font-bold text-zinc-500">
+                            <p className="break-words font-bold text-zinc-400">
                               Source load: {exercise.sourceWeight} (info only, not a target)
                             </p>
                           )}
                           {exercise.notes && (
-                            <p className="break-words font-bold text-zinc-500">{exercise.notes}</p>
+                            <p className="break-words font-bold text-zinc-400">{exercise.notes}</p>
                           )}
                           {exercise.missingFields.length > 0 && (
                             <p className="font-bold text-amber-200/90">
@@ -735,7 +735,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   : ""}
               </p>
 
-              <p className="mt-2 text-xs font-bold leading-5 text-zinc-500">
+              <p className="mt-2 text-xs font-bold leading-5 text-zinc-400">
                 {draft.summary.reusedExerciseCount}{" "}
                 {draft.summary.reusedExerciseCount === 1 ? "exercise matches" : "exercises match"}{" "}
                 your library
