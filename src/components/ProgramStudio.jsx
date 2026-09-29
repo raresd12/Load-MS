@@ -111,7 +111,7 @@ function useSyncedText(value) {
 function FieldLabel({ label, tag, htmlFor }) {
   return (
     <span className="mb-2 flex items-center justify-between gap-2">
-      <label htmlFor={htmlFor} className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
+      <label htmlFor={htmlFor} className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
         {label}
       </label>
       {tag ? <ProvenanceTag label={tag} /> : null}
@@ -125,7 +125,7 @@ function ProvenanceTag({ label }) {
   }
 
   return (
-    <span className="rounded-[4px] border border-zinc-800 px-1.5 py-0.5 text-[10px] font-bold lowercase tracking-[0.04em] text-zinc-500">
+    <span className="rounded-[4px] border border-zinc-800 px-1.5 py-0.5 text-[10px] font-bold lowercase tracking-[0.04em] text-zinc-400">
       {label}
     </span>
   );
@@ -267,7 +267,7 @@ function Panel({ title, tone = "zinc", children, defaultOpen = true }) {
         className="focus-ring flex min-h-10 w-full items-center justify-between gap-3 text-left"
       >
         <span className={`text-xs font-black uppercase tracking-[0.14em] ${titleColor}`}>{title}</span>
-        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-zinc-500 transition ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-zinc-400 transition ${isOpen ? "rotate-180" : ""}`} />
       </button>
       {isOpen ? <div className="mt-2 border-t border-zinc-800/80 pt-2">{children}</div> : null}
     </div>
@@ -292,7 +292,7 @@ function DiffPanel({ diff, mode }) {
   const Group = ({ title, lines }) =>
     lines.length ? (
       <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">{title}</p>
+        <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">{title}</p>
         <ul className="mt-1 space-y-0.5">
           {lines.map((line, index) => (
             <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-zinc-200">
@@ -324,7 +324,7 @@ function DiffPanel({ diff, mode }) {
           <Group title="Moved exercises" lines={described.moved} />
           {described.changed.length ? (
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">Changed exercises</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Changed exercises</p>
               <ul className="mt-1 space-y-1.5">
                 {described.changed.map((entry, index) => (
                   <li key={`${index}-${entry.title}`}>
@@ -341,7 +341,7 @@ function DiffPanel({ diff, mode }) {
               </ul>
             </div>
           ) : null}
-          <p className="text-xs font-semibold leading-5 text-zinc-500">
+          <p className="text-xs font-semibold leading-5 text-zinc-400">
             Exercises whose prescription changed lose their earned progression and pending plan, so the next
             session starts from the new target. Workout history is never touched.
           </p>
@@ -364,7 +364,7 @@ function ReviewNotesPanel({ review, draft }) {
       <div className="space-y-3">
         {review?.instruction ? (
           <p className="break-words text-sm font-semibold text-zinc-300">
-            <span className="text-zinc-500">Instruction: </span>
+            <span className="text-zinc-400">Instruction: </span>
             {review.instruction}
           </p>
         ) : null}
@@ -377,7 +377,7 @@ function ReviewNotesPanel({ review, draft }) {
         </p>
         {changes.length ? (
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">What the AI changed</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">What the AI changed</p>
             <ul className="mt-1 ml-3 list-disc space-y-0.5">
               {changes.map((line, index) => (
                 <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-zinc-200">
@@ -389,7 +389,7 @@ function ReviewNotesPanel({ review, draft }) {
         ) : null}
         {removed.length ? (
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-500">Not echoed by the AI (removed)</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Not echoed by the AI (removed)</p>
             <ul className="mt-1 ml-3 list-disc space-y-0.5">
               {removed.map((entry, index) => (
                 <li key={`${index}-${entry.refId ?? entry.name}`} className="break-words text-sm font-semibold text-zinc-200">
@@ -414,7 +414,7 @@ function ReviewNotesPanel({ review, draft }) {
         {!hasAiNotes && review?.origin !== "file-import" ? (
           <p className="text-sm font-semibold text-zinc-400">No changes or uncertainty were reported.</p>
         ) : null}
-        <p className="text-xs font-semibold leading-5 text-zinc-500">
+        <p className="text-xs font-semibold leading-5 text-zinc-400">
           Nothing is saved until you press the save button below. Cancel discards this draft and leaves your
           programs untouched.
         </p>
@@ -467,7 +467,7 @@ function WarmupEditor({ day, onChange }) {
           {rows.map((row, index) => (
             <div key={row.id} className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-zinc-500">Item {index + 1}</p>
+                <p className="text-xs font-black uppercase tracking-[0.12em] text-zinc-400">Item {index + 1}</p>
                 <button
                   type="button"
                   onClick={() => commit(title, rows.filter((entry) => entry.id !== row.id))}
@@ -712,7 +712,7 @@ function DayScreen({
                             <ErrorBadge count={errorCount} />
                           </span>
                           <span className="mt-1 block text-xs font-semibold leading-5 text-zinc-400">{formatDraftPrescription(exercise)}</span>
-                          {exercise.sourceWeight ? <span className="block text-xs font-semibold text-zinc-500">Source listed: {exercise.sourceWeight}</span> : null}
+                          {exercise.sourceWeight ? <span className="block text-xs font-semibold text-zinc-400">Source listed: {exercise.sourceWeight}</span> : null}
                         </span>
                         <span className="shrink-0 rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">Edit</span>
                       </button>
@@ -846,7 +846,7 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
                   >
                     <span className="min-w-0">
                       <span className="block break-words text-sm font-black text-white">{entry.name}</span>
-                      <span className="block text-xs font-semibold text-zinc-500">
+                      <span className="block text-xs font-semibold text-zinc-400">
                         {[entry.equipment, entry.category, (entry.mainMuscles ?? []).slice(0, 2).join(", ")].filter(Boolean).join(" - ")}
                       </span>
                     </span>
@@ -971,11 +971,11 @@ function ExerciseScreen({ draft, day, exercise, library, grouped, onBack, onPatc
           {exercise.sourceWeight ? (
             <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
               <span className="flex items-center justify-between gap-2">
-                <span className="text-xs font-black uppercase tracking-[0.14em] text-zinc-500">Source listed</span>
+                <span className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">Source listed</span>
                 <ProvenanceTag label={tag("sourceWeight")} />
               </span>
               <p className="mt-1 break-words text-sm font-bold text-zinc-200">{exercise.sourceWeight}</p>
-              <p className="text-xs font-semibold text-zinc-500">Reference only - never used as a target or by the coach.</p>
+              <p className="text-xs font-semibold text-zinc-400">Reference only - never used as a target or by the coach.</p>
             </div>
           ) : null}
         </div>
@@ -1225,7 +1225,7 @@ export default function ProgramStudio({
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">Program Studio</p>
           <h2 className="mt-1 break-words text-2xl font-black text-white">{title}</h2>
-          <p className="mt-1 text-xs font-semibold text-zinc-500">
+          <p className="mt-1 text-xs font-semibold text-zinc-400">
             {ORIGIN_LABELS[working.origin] ?? "Draft"} | {summary.dayCount} {summary.dayCount === 1 ? "day" : "days"} | {summary.exerciseCount}{" "}
             {summary.exerciseCount === 1 ? "exercise" : "exercises"}
             {dirty ? " | unsaved changes" : ""}
@@ -1270,11 +1270,11 @@ export default function ProgramStudio({
           </ul>
         </div>
       ) : (
-        <p className="mt-3 text-xs font-semibold text-zinc-500">
+        <p className="mt-3 text-xs font-semibold text-zinc-400">
           Draft is valid. Nothing is written until you press {saveLabel}.
         </p>
       )}
-      {autosaveState ? <p className="mt-1 text-xs font-semibold text-zinc-600">{autosaveState}</p> : null}
+      {autosaveState ? <p className="mt-1 text-xs font-semibold text-zinc-400">{autosaveState}</p> : null}
 
       <div className="mt-4">
         {screen.kind === "program" || !currentDay ? (

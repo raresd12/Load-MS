@@ -42,7 +42,7 @@ export default class ErrorBoundary extends Component {
             <summary className="cursor-pointer text-xs font-black text-zinc-400">
               Technical details
             </summary>
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-zinc-500">
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-zinc-400">
               {String(this.state.error?.stack ?? this.state.error)}
             </pre>
           </details>

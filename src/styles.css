@@ -30,21 +30,29 @@ body {
   color: #f8f8f8;
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
+/*
+ * Decision H4-7: these base rules sit in the base layer so Tailwind's
+ * utilities (text-sm, font-black, text-[10px] ...) win on buttons and fields.
+ * Unlayered, the `font: inherit` reset beat every utility and rendered all
+ * controls at 16px / 400, which truncated the bottom-nav labels at 360 px.
+ */
+@layer base {
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
 
-input[type="number"] {
-  appearance: textfield;
-}
+  input[type="number"] {
+    appearance: textfield;
+  }
 
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-  margin: 0;
-  appearance: none;
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    margin: 0;
+    appearance: none;
+  }
 }
 
 .focus-ring {
@@ -54,4 +62,37 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .focus-ring:focus-visible {
   outline-color: #bef264;
+}
+
+/*
+ * Decision H4-7: every interactive element shows the same lime focus ring for
+ * keyboard users, whether or not it carries the .focus-ring class.
+ */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #bef264;
+  outline-offset: 2px;
+}
+
+/*
+ * Decision H4-7: fixed bars and the page edges keep clear of the phone's
+ * notch and home indicator (viewport-fit=cover in index.html). The padding
+ * the element would have had anyway goes into the custom property; the inset
+ * falls back to 0 on browsers that do not know env().
+ */
+.safe-bottom {
+  padding-bottom: calc(var(--safe-bottom-pad, 0px) + env(safe-area-inset-bottom, 0px));
+}
+
+.safe-top {
+  padding-top: calc(var(--safe-top-pad, 0px) + env(safe-area-inset-top, 0px));
+}
+
+.rest-timer-safe {
+  bottom: calc(var(--rest-timer-bottom, 84px) + env(safe-area-inset-bottom, 0px));
 }

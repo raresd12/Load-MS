@@ -51,6 +51,10 @@ const { draftFromProgram, removeExercise, updateExercise } = await import("../sr
 
 try {
   const app = read("src/App.jsx");
+  // H4 (decision H4-6): the pages and program components moved out of App.jsx.
+  const programPage = read("src/pages/ProgramPage.jsx");
+  const programCard = read("src/components/program/ProgramCard.jsx");
+  const progressPage = read("src/pages/ProgressPage.jsx");
   const main = read("src/main.jsx");
   const banner = read("src/components/PwaUpdateBanner.jsx");
   const viteConfig = read("vite.config.js");
@@ -78,9 +82,10 @@ try {
   // ------------------------------------------------------------------
   // H1 follow-up (b): readiness trend keys are unique per session
   // ------------------------------------------------------------------
-  assert.ok(!app.includes("key={entry.date}"), "the readiness trend no longer keys on the date alone");
-  assert.ok(app.includes("key={entry.sessionId ? `${entry.date}:${entry.sessionId}` : entry.date}"));
-  assert.ok(app.includes("sessionId: session.id ?? null"), "session-derived entries carry the session id");
+  assert.ok(!progressPage.includes("key={entry.date}"), "the readiness trend no longer keys on the date alone");
+  assert.ok(progressPage.includes("key={entry.sessionId ? `${entry.date}:${entry.sessionId}` : entry.date}"));
+  // H4: buildReadinessEntries lives in src/lib/sessionAnalytics.js (fixture verify-session-analytics.mjs).
+  assert.ok(read("src/lib/sessionAnalytics.js").includes("sessionId: session.id ?? null"), "session-derived entries carry the session id");
 
   // ------------------------------------------------------------------
   // PWA update prompt
@@ -123,14 +128,14 @@ try {
   assert.ok(assistant.includes("exercise.restLabel"), "rest ranges use the preview's restLabel");
   assert.ok(assistant.includes("Source load:"), "source loads are shown as info only");
   assert.ok(assistant.includes("draft.preview.uncertainty"), "uncertainty list is shown");
-  assert.ok(app.includes('draftFromShare(pendingImport.share, { origin: "file-import" })'), "file import can open the Studio");
-  assert.ok(app.includes("Review in Studio") && app.includes("Import as is"), "file import offers both paths");
-  assert.ok(app.includes("validateProgramShareStrict(share)"), "file import validates before offering the choice");
+  assert.ok(programPage.includes('draftFromShare(pendingImport.share, { origin: "file-import" })'), "file import can open the Studio");
+  assert.ok(programPage.includes("Review in Studio") && programPage.includes("Import as is"), "file import offers both paths");
+  assert.ok(programPage.includes("validateProgramShareStrict(share)"), "file import validates before offering the choice");
   assert.ok(app.includes("saveProgramDraft(draft)") && app.includes("applyProgramDraft(draft)"), "studio save uses the H2 writers");
-  assert.ok(app.includes("!isDefaultProgram && onEditProgram"), "Edit Program only on custom programs");
-  assert.ok(app.includes("!isDefaultProgram && onOpenStudio"), "Edit with AI only on custom programs");
-  assert.ok(app.includes("Duplicate to Edit"), "defaults keep Duplicate to edit");
-  assert.ok(app.includes('origin: "ai-edit"') && app.includes("extractProgramEditWithAi({ share, instruction: cleanInstruction })"));
+  assert.ok(programCard.includes("!isDefaultProgram && onEditProgram"), "Edit Program only on custom programs");
+  assert.ok(programCard.includes("!isDefaultProgram && onOpenStudio"), "Edit with AI only on custom programs");
+  assert.ok(programCard.includes("Duplicate to Edit"), "defaults keep Duplicate to edit");
+  assert.ok(programCard.includes('origin: "ai-edit"') && programCard.includes("extractProgramEditWithAi({ share, instruction: cleanInstruction })"));
   assert.ok(app.includes("...result.removedProgramExerciseIds, ...result.changedProgramExerciseIds"), "nextPlans cleared for removed + changed exercises");
   assert.ok(studio.includes("saveDraftToStorage(working)"), "the working copy is autosaved");
   assert.ok(studio.includes("deleteStoredDraft(working.draftId)"), "the stored copy is removed on save / cancel");
@@ -183,8 +188,8 @@ try {
   // from the start, Discard / Cancel ask first, help text stays honest
   // ------------------------------------------------------------------
   assert.ok(app.includes("onStudioDraftChange={handleProgramStudioDraftChange}"), "App keeps the Studio's working copy");
-  assert.ok(app.includes("onDraftChange={onStudioDraftChange}"), "the Studio reports every edit to App");
-  assert.ok(app.includes("initialDraft={studio.initialDraft ?? studio.draft}"), "a remount starts from the working copy with the original as baseline");
+  assert.ok(programPage.includes("onDraftChange={onStudioDraftChange}"), "the Studio reports every edit to App");
+  assert.ok(programPage.includes("initialDraft={studio.initialDraft ?? studio.draft}"), "a remount starts from the working copy with the original as baseline");
   assert.ok(studio.includes("onDraftChange?.(nextDraft)"), "every edit is reported to the parent");
   assert.ok(studio.includes("const initialRef = useRef(initialDraft ?? draft)"), "dirty / diff compare against the draft the session opened with");
   assert.ok(studio.includes("planDraftStore({"), "the stored copy follows planDraftStore (review at once, edits after a pause, reverted edits removed)");
@@ -195,11 +200,11 @@ try {
   assert.ok(studio.includes("cancelStudioSession({") && studio.includes("discard: closeStudio"), "Cancel asks (cancelStudioSession) before closeStudio removes the stored copy");
   assert.ok(app.includes("setProgramStudio(openStudioSession(session))"), "App opens sessions through the helper");
   assert.ok(app.includes("updateStudioSessionDraft(current, draft)"), "App records the working copy through the helper");
-  const discardStart = app.indexOf("function discardStoredDraft(");
-  const discardFn = app.slice(discardStart, app.indexOf("deleteStoredDraft(draftId)", discardStart));
+  const discardStart = programPage.indexOf("function discardStoredDraft(");
+  const discardFn = programPage.slice(discardStart, programPage.indexOf("deleteStoredDraft(draftId)", discardStart));
   assert.ok(discardFn.includes("window.confirm("), "Discard asks for confirmation before deleting a stored draft");
-  assert.ok(!/make Day 3\s+optional/.test(app), "the AI edit help text does not suggest an edit the schema cannot express");
-  assert.ok(app.includes("draft.reviewNotes"), "a resumed review draft shows the AI notes again");
+  assert.ok(!/make Day 3\s+optional/.test(programCard), "the AI edit help text does not suggest an edit the schema cannot express");
+  assert.ok(programPage.includes("draft.reviewNotes"), "a resumed review draft shows the AI notes again");
 
   console.log("verify-ui-h2-wiring: ok");
 } catch (error) {
