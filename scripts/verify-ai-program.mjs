@@ -99,15 +99,28 @@ assert.equal(classifySourceFile("plan.txt", "text/plain", 1024).kind, "text");
 assert.equal(classifySourceFile("plan.md", "", 1024).kind, "text");
 assert.equal(classifySourceFile("plan.csv", "text/csv", 1024).kind, "text");
 
-const docxResult = classifySourceFile("plan.docx", "application/vnd.openxmlformats", 1024);
-assert.equal(docxResult.ok, false, "docx is rejected");
-assert.ok(
-  docxResult.error.includes(UNSUPPORTED_SOURCE_FALLBACK),
-  "docx rejection shows the copy/paste or PDF/text fallback message",
+// H3 (decisions H3-1 / H3-2): DOCX and XLSX are read natively by
+// sourceFiles.js, so the H2 expectation "docx / xlsx is rejected" is wrong by
+// decision. aiProgram.js re-exports the classifier; the legacy Office formats
+// are still refused, with guidance.
+const sourceFilesModule = await import("../src/lib/sourceFiles.js");
+assert.equal(
+  classifySourceFile,
+  sourceFilesModule.classifySourceFile,
+  "aiProgram.js re-exports the sourceFiles.js classifier (one implementation)",
 );
+assert.equal(UNSUPPORTED_SOURCE_FALLBACK, sourceFilesModule.UNSUPPORTED_SOURCE_FALLBACK);
+const docxResult = classifySourceFile("plan.docx", "application/vnd.openxmlformats", 1024);
+assert.equal(docxResult.ok, true, "docx is accepted since H3");
+assert.equal(docxResult.kind, "docx");
 const xlsxResult = classifySourceFile("plan.xlsx", "", 1024);
-assert.equal(xlsxResult.ok, false, "xlsx is rejected");
-assert.ok(xlsxResult.error.includes(UNSUPPORTED_SOURCE_FALLBACK));
+assert.equal(xlsxResult.ok, true, "xlsx is accepted since H3");
+assert.equal(xlsxResult.kind, "xlsx");
+for (const legacyName of ["plan.doc", "plan.xls", "plan.odt", "plan.rtf", "plan.pages", "plan.numbers"]) {
+  const legacyResult = classifySourceFile(legacyName, "", 1024);
+  assert.equal(legacyResult.ok, false, `${legacyName} is rejected`);
+  assert.ok(legacyResult.error.length > 20, `${legacyName} rejection explains what to do`);
+}
 const zipResult = classifySourceFile("plan.zip", "application/zip", 1024);
 assert.equal(zipResult.ok, false, "unknown type is rejected");
 assert.ok(zipResult.error.includes(UNSUPPORTED_SOURCE_FALLBACK));
@@ -846,7 +859,12 @@ const geminiFail = (status, message) => ({ ok: false, status, json: async () => 
 
 const beforeE2e = storageSnapshot();
 e2eResponses = [geminiOk(fidelityInput)];
-const e2e = await extractProgramDraftWithAi({ kind: "text", text: pastedSource });
+// H3 fix round 1: the warm-up of an extraction is checked against a text
+// source, so the source of this run lists the warm-up the canned answer holds.
+const e2eSource = `${pastedSource}
+Day 2 - Recovery
+Mobility: Hip circles 2 x 10`;
+const e2e = await extractProgramDraftWithAi({ kind: "text", text: e2eSource });
 assertStorageUnchanged(beforeE2e, "end-to-end extraction");
 assert.equal(e2e.valid, true, e2e.error);
 assert.equal(e2e.model, GEMINI_MODELS[0]);
@@ -867,6 +885,18 @@ assert.ok(e2e.share.programExercises.every((exercise) => !("refId" in exercise))
 assert.ok(!("changes" in e2e.share.draftMeta) && !("removed" in e2e.share.draftMeta), "extraction has no edit diff data");
 assert.deepEqual(e2e.share.draftMeta.uncertainty, fidelity.share.draftMeta.uncertainty, "same converter output as the direct conversion");
 assert.equal(validateProgramShareStrict(e2e.share).valid, true);
+// H3 (source privacy in code): the result is { valid, share, preview, summary,
+// model } and carries nothing of the source it was read from.
+assert.deepEqual(Object.keys(e2e).sort(), ["model", "preview", "share", "summary", "valid"]);
+assert.ok(!e2eJson.includes("Unique-Marker-XYZ-123"), "the pasted source text is not part of the result");
+assert.ok(!e2eJson.includes("dataBase64") && !e2eJson.includes("SOURCE TEXT START"));
+assert.equal(e2eBody.generationConfig.temperature, 0.2);
+const e2eExerciseSchema = AI_PROGRAM_RESPONSE_SCHEMA.properties.days.items.properties.exercises.items;
+assert.ok(!("targetWeight" in e2eExerciseSchema.properties), "the response schema has no target weight field");
+assert.ok(
+  ["groupLabel", "unsupported", "sourceWeight", "repsLabel"].every((field) => field in e2eExerciseSchema.properties),
+  "H3 fields sit next to the H2 ones",
+);
 
 // Already-cancelled signal: no request is started.
 e2eFetchCalls.length = 0;

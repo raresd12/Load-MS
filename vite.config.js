@@ -85,6 +85,14 @@ export default defineConfig({
               test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
               priority: 20,
             },
+            // Decision H3-23: the zip library behind DOCX / XLSX reading is
+            // reached only through a dynamic import(), so this chunk is
+            // fetched when such a file is picked, never at startup.
+            {
+              name: "vendor-fflate",
+              test: /[\\/]node_modules[\\/]fflate[\\/]/,
+              priority: 10,
+            },
             {
               name: "vendor-icons",
               test: /[\\/]node_modules[\\/]lucide-react[\\/]/,

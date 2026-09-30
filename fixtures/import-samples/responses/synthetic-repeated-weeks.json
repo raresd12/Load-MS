@@ -1,0 +1,173 @@
+{
+  "sample": null,
+  "sourceKind": "text",
+  "about": "A model that ignored the 'extract once' rule: Day A comes back once per week with the same prescription, Day B with a different prescription per week.",
+  "sourceText": "THREE WEEK WAVE\n\nWeek 1\nDay A: Squat 3 x 5 RPE 7, rest 3 min\nDay B: Press 3 x 8 RPE 7, rest 2 min\n\nWeek 2\nDay A: Squat 3 x 5 RPE 7, rest 3 min\nDay B: Press 4 x 6 RPE 8, rest 2 min\n\nWeek 3\nDay A: Squat 3 x 5 RPE 7, rest 3 min",
+  "response": {
+    "name": "THREE WEEK WAVE",
+    "structureNotes": "Three weeks; Day B changes from 3 x 8 to 4 x 6 in week 2.",
+    "days": [
+      {
+        "name": "Week 1 - Day A",
+        "focus": "",
+        "block": "Week 1",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Squat",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 5,
+            "repsMax": 5,
+            "repsLabel": "",
+            "targetRPE": 7,
+            "targetRPEMax": null,
+            "restSeconds": 180,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      },
+      {
+        "name": "Week 1 - Day B",
+        "focus": "",
+        "block": "Week 1",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Press",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 8,
+            "repsMax": 8,
+            "repsLabel": "",
+            "targetRPE": 7,
+            "targetRPEMax": null,
+            "restSeconds": 120,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      },
+      {
+        "name": "Week 2 - Day A",
+        "focus": "",
+        "block": "Week 2",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Squat",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 5,
+            "repsMax": 5,
+            "repsLabel": "",
+            "targetRPE": 7,
+            "targetRPEMax": null,
+            "restSeconds": 180,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      },
+      {
+        "name": "Week 2 - Day B",
+        "focus": "",
+        "block": "Week 2",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Press",
+            "isNew": true,
+            "section": "",
+            "sets": 4,
+            "repsMin": 6,
+            "repsMax": 6,
+            "repsLabel": "",
+            "targetRPE": 8,
+            "targetRPEMax": null,
+            "restSeconds": 120,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      },
+      {
+        "name": "Week 3 - Day A",
+        "focus": "",
+        "block": "Week 3",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Squat",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 5,
+            "repsMax": 5,
+            "repsLabel": "",
+            "targetRPE": 7,
+            "targetRPEMax": null,
+            "restSeconds": 180,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      }
+    ],
+    "uncertainty": []
+  }
+}

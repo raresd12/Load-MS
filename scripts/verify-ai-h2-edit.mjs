@@ -973,4 +973,87 @@ assert.equal(disguised.instructionBlock.split(USER_INSTRUCTION_END).length, 2, "
 assert.equal(disguised.instructionBlock.split(USER_INSTRUCTION_START).length, 2, "only the real opening delimiter remains");
 assert.ok(disguised.instructionBlock.includes("USER-INSTRUCTION-END") && disguised.instructionBlock.includes("USER-INSTRUCTION-START"));
 
+// --- H3 (decision H3-3): an edit of a program imported with a block, a
+// superset label and a percent load keeps them and repeats no disclosure ---
+{
+  const h3Row = {
+    exerciseId: "",
+    isNew: true,
+    sets: 3,
+    repsMin: 8,
+    repsMax: 8,
+    targetRPE: 8,
+    restSeconds: 120,
+    progressionType: "hypertrophy",
+  };
+  const imported = convertAiProgramToShare(
+    {
+      name: "H3 Base",
+      structureNotes: "Four weeks.",
+      days: [
+        {
+          name: "Day 1",
+          block: "Week 1-4",
+          notes: "Heavy day",
+          exercises: [
+            { ...h3Row, name: "Tempo Squat H3", section: "Superset A", groupLabel: "A1", sourceWeight: "75% 1RM", notes: "Tempo 3-1-1-0" },
+            { ...h3Row, name: "Ring Row H3", section: "Superset A", groupLabel: "A2", sourceWeight: "45 lb" },
+          ],
+        },
+      ],
+    },
+    catalog,
+    "2026-09-29T00:00:00.000Z",
+  );
+  assert.equal(imported.valid, true, imported.error);
+  assert.equal(imported.share.days[0].notes, "[Week 1-4] Heavy day");
+  assert.deepEqual(
+    imported.share.programExercises.map((exercise) => exercise.notes),
+    ["[A1] Tempo 3-1-1-0", "[A2]"],
+  );
+  assert.equal(imported.share.draftMeta.uncertainty.length, 4, imported.share.draftMeta.uncertainty.join(" | "));
+
+  const h3Request = buildProgramEditRequest({ share: imported.share, instruction: "Rename the program to H3 Edited", catalog });
+  assert.ok(h3Request.programBlock.includes("[Week 1-4] Heavy day"), "the block label travels in the day notes");
+  assert.ok(h3Request.programBlock.includes("[A1] Tempo 3-1-1-0"), "the group label travels in the exercise notes");
+  assert.ok(h3Request.programBlock.includes('"sourceWeight":"75% 1RM"'), "a percent load is sent as reference text");
+  assert.ok(!/"targetWeight"/.test(h3Request.programBlock), "no target weight is sent");
+  assert.ok(!/"block"|"structureNotes"/.test(h3Request.programBlock));
+
+  const h3Echo = JSON.parse(JSON.stringify(h3Request.data));
+  h3Echo.name = "H3 Edited";
+  h3Echo.changes = ["Renamed the program."];
+  // A model that also fills the H3 fields it was never asked for.
+  h3Echo.structureNotes = "Invented structure";
+  h3Echo.days[0].block = "Week 9";
+  h3Echo.days[0].exercises[0].groupLabel = "A1";
+  const h3Edited = convertAiProgramToShare(h3Echo, catalog, "2026-09-29T00:00:00.000Z", { baseShare: imported.share });
+  assert.equal(h3Edited.valid, true, h3Edited.error);
+  assert.equal(h3Edited.share.program.name, "H3 Edited");
+  assert.equal(h3Edited.share.days[0].notes, "[Week 1-4] Heavy day", "an edit never re-labels a day");
+  assert.deepEqual(
+    h3Edited.share.programExercises.map((exercise) => [exercise.notes, exercise.sourceWeight, exercise.targetWeight, exercise.refId]),
+    imported.share.programExercises.map((exercise) => [exercise.notes, exercise.sourceWeight, null, exercise.id]),
+    "notes, group labels and source loads are kept as they are; the label is not doubled",
+  );
+  assert.deepEqual(h3Edited.share.draftMeta.uncertainty, [], "an echo repeats no percent / unit / block / construct disclosure");
+  assert.ok(!("structureNotes" in h3Edited.share.draftMeta), "an edit takes no structure notes from the model");
+  assert.equal(h3Edited.share.program.description, imported.share.program.description);
+  assert.equal(h3Edited.summary.keptExerciseCount, 2);
+  assert.equal(validateProgramShareStrict(h3Edited.share).valid, true);
+
+  // A load or a note the edit changes is disclosed like a new one.
+  const h3Changed = JSON.parse(JSON.stringify(h3Request.data));
+  h3Changed.changes = ["Changed loads."];
+  h3Changed.days[0].exercises[1].sourceWeight = "60% 1RM";
+  h3Changed.days[0].exercises[1].notes = "[A2] EMOM 6 min";
+  const h3ChangedResult = convertAiProgramToShare(h3Changed, catalog, "2026-09-29T00:00:00.000Z", { baseShare: imported.share });
+  assert.equal(h3ChangedResult.share.programExercises[1].sourceWeight, "60% 1RM");
+  assert.equal(h3ChangedResult.share.programExercises[1].targetWeight, null, "a percent load never becomes a target");
+  assert.deepEqual(h3ChangedResult.share.draftMeta.uncertainty, [
+    'Day 1: "Ring Row H3": percent-based load kept as reference, no 1RM known ("60% 1RM").',
+    'Day 1: "Ring Row H3": unsupported construct kept as notes: EMOM format ("[A2] EMOM 6 min").',
+  ]);
+}
+
 console.log("AI H2 edit verification passed.");
