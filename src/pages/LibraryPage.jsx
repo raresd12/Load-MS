@@ -1,10 +1,16 @@
 import { useMemo, useState } from "react";
 import { Info } from "lucide-react";
-import ExerciseInfoPanel from "../components/workout/ExerciseInfoPanel.jsx";
+import ExerciseInfoPanel, { AiTechniqueBadge } from "../components/workout/ExerciseInfoPanel.jsx";
+import {
+  getVisibleGoalTags,
+  isAiTechniqueDraftEntry,
+  markLibraryTechniqueReviewed,
+  TECHNIQUE_REVIEW_HINT,
+} from "../lib/libraryReview.js";
 import { formatTechnicalValue } from "../lib/prescriptionView.js";
 import { getStoredSetupCue } from "../lib/sessionNormalize.js";
 
-export default function LibraryPage({ exercises, setupCues }) {
+export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [filters, setFilters] = useState({
     category: "",
@@ -14,6 +20,7 @@ export default function LibraryPage({ exercises, setupCues }) {
     goalTag: "",
   });
   const [openExerciseId, setOpenExerciseId] = useState(null);
+  const [reviewError, setReviewError] = useState(null);
 
   const filterOptions = useMemo(() => buildLibraryFilterOptions(exercises), [exercises]);
   const filteredExercises = useMemo(
@@ -23,6 +30,20 @@ export default function LibraryPage({ exercises, setupCues }) {
 
   function updateFilter(filterId, value) {
     setFilters((currentFilters) => ({ ...currentFilters, [filterId]: value }));
+  }
+
+  // The owner's review of AI technique notes (H3-9). The badge goes only
+  // after the write succeeded: it is read from the stored entry.
+  function handleMarkReviewed(exerciseId) {
+    const result = markLibraryTechniqueReviewed(exerciseId);
+
+    if (!result.ok) {
+      setReviewError({ exerciseId, message: result.error });
+      return;
+    }
+
+    setReviewError(null);
+    onLibraryChange?.();
   }
 
   function clearFilters() {
@@ -60,7 +81,7 @@ export default function LibraryPage({ exercises, setupCues }) {
           />
         </label>
 
-        <div className="-mx-3 mt-3 overflow-x-auto px-3 pb-1 min-[430px]:-mx-4 min-[430px]:px-4">
+        <div className="relative -mx-3 mt-3 overflow-x-auto px-3 pb-1 min-[430px]:-mx-4 min-[430px]:px-4">
           <div className="flex min-w-max gap-2">
             <LibraryFilterSelect
               label="Category"
@@ -125,6 +146,7 @@ export default function LibraryPage({ exercises, setupCues }) {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <h3 className="text-lg font-black text-white">{exercise.name}</h3>
+                    {isAiTechniqueDraftEntry(exercise) && <AiTechniqueBadge className="mt-1" />}
                     <p className="mt-1 text-sm font-semibold text-zinc-400">
                       {formatLibraryList(exercise.mainMuscles, "No main muscle")}
                     </p>
@@ -156,6 +178,27 @@ export default function LibraryPage({ exercises, setupCues }) {
                   <Info aria-hidden="true" size={16} />
                   {isOpen ? "Close Details" : "View Details"}
                 </button>
+
+                {isOpen && isAiTechniqueDraftEntry(exercise) && (
+                  <div
+                    data-testid="ai-technique-review"
+                    className="mt-3 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-2"
+                  >
+                    <p className="text-sm font-semibold leading-5 text-amber-100">{TECHNIQUE_REVIEW_HINT}</p>
+                    <button
+                      type="button"
+                      onClick={() => handleMarkReviewed(exercise.id)}
+                      className="focus-ring mt-2 min-h-11 rounded-[8px] border border-amber-300/60 px-3 text-sm font-black text-amber-100 hover:bg-amber-300/10"
+                    >
+                      Mark notes as reviewed
+                    </button>
+                    {reviewError?.exerciseId === exercise.id && (
+                      <p role="alert" className="mt-2 break-words text-sm font-bold text-red-200">
+                        {reviewError.message}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {isOpen && (
                   <ExerciseInfoPanel
@@ -212,7 +255,7 @@ function buildLibraryFilterOptions(exercises) {
     ),
     equipment: uniqueSorted(exercises.map((exercise) => exercise.equipment)),
     difficulties: uniqueSorted(exercises.map((exercise) => exercise.difficulty)),
-    goalTags: uniqueSorted(exercises.flatMap((exercise) => exercise.goalTags ?? [])),
+    goalTags: uniqueSorted(exercises.flatMap((exercise) => getVisibleGoalTags(exercise.goalTags))),
   };
 }
 

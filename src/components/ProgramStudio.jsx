@@ -57,6 +57,13 @@ import {
   planDraftStore,
   searchLibraryEntries,
 } from "../lib/programStudio.js";
+import {
+  acceptTechniqueDraftIntoDraft,
+  describeNewExercises,
+  hasTechniqueNotes,
+  setNewLibraryEntryInDraft,
+} from "../lib/importAssistant.js";
+import TechniqueNotesSection from "./import/TechniqueNotesSection.jsx";
 
 const AUTOSAVE_DELAY_MS = 800;
 
@@ -354,6 +361,7 @@ function DiffPanel({ diff, mode }) {
 function ReviewNotesPanel({ review, draft }) {
   const counts = useMemo(() => countDraftProvenance(draft), [draft]);
   const summary = useMemo(() => summarizeProgramDraft(draft), [draft]);
+  const newExercises = useMemo(() => describeNewExercises(draft), [draft]);
   const changes = review?.changes ?? [];
   const removed = review?.removed ?? [];
   const uncertainty = review?.uncertainty ?? [];
@@ -371,7 +379,7 @@ function ReviewNotesPanel({ review, draft }) {
         <p className="text-sm font-semibold leading-6 text-zinc-300">
           {summary.exerciseCount} {summary.exerciseCount === 1 ? "exercise" : "exercises"} on {summary.dayCount}{" "}
           {summary.dayCount === 1 ? "day" : "days"}
-          {summary.newCount ? ` - ${summary.newCount} new (no technique content yet)` : ""}
+          {newExercises ? ` - ${newExercises}` : ""}
           {summary.unresolvedCount ? ` - ${summary.unresolvedCount} unmatched` : ""}. Values: {counts.source} from
           source, {counts.default} default, {counts.edited} edited.
         </p>
@@ -805,7 +813,7 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
           {exercise.libraryStatus === "library" && matched
             ? `${matched.name}${matched.equipment ? ` - ${matched.equipment}` : ""}${matched.category ? ` - ${matched.category}` : ""}`
             : exercise.libraryStatus === "new"
-              ? `${exercise.name} (new exercise, no technique content yet)`
+              ? `${exercise.name} (new exercise, ${hasTechniqueNotes(exercise.newLibraryExercise) ? "technique notes added below" : "no technique content yet"})`
               : "Pick a Library exercise or create it as a new one."}
         </p>
       </div>
@@ -860,7 +868,8 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
           <div className="rounded-[8px] border border-amber-400/30 bg-amber-400/5 p-3">
             <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">New exercise (no technique content yet)</p>
             <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
-              Adds a private Library entry with this name when the program is saved. Technique content can be added later in the Library.
+              Adds a private Library entry with this name when the program is saved. Technique notes can be added here,
+              under "Technique notes", before you save; the Library shows them but cannot edit them yet.
             </p>
             <div className="mt-2 flex flex-col gap-2 sm:flex-row">
               <input
@@ -891,7 +900,20 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
   );
 }
 
-function ExerciseScreen({ draft, day, exercise, library, grouped, onBack, onPatch, onRemap, onProposeNew, onRemove }) {
+function ExerciseScreen({
+  draft,
+  day,
+  exercise,
+  library,
+  grouped,
+  onBack,
+  onPatch,
+  onRemap,
+  onProposeNew,
+  onRemove,
+  onTechniqueEntry,
+  onAcceptTechnique,
+}) {
   const [form, setForm] = useState(() => createExerciseForm(exercise));
   const [fieldErrors, setFieldErrors] = useState({});
   const errors = grouped.byExerciseId[exercise.id] ?? [];
@@ -953,6 +975,16 @@ function ExerciseScreen({ draft, day, exercise, library, grouped, onBack, onPatc
       </section>
 
       <LibraryPicker draft={draft} exercise={exercise} library={library} onPick={onRemap} onProposeNew={onProposeNew} />
+
+      {/* Decision H3-6: technique notes and AI drafts exist for NEW exercises only. */}
+      {exercise.libraryStatus === "new" ? (
+        <TechniqueNotesSection
+          key={exercise.exerciseId}
+          exercise={exercise}
+          onChangeEntry={onTechniqueEntry}
+          onAcceptDraft={onAcceptTechnique}
+        />
+      ) : null}
 
       <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
         <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Prescription</p>
@@ -1326,6 +1358,16 @@ export default function ProgramStudio({
             onRemove={() => {
               apply(removeExercise(working, currentDay.id, currentExercise.id));
               setScreen({ kind: "day", dayId: currentDay.id });
+            }}
+            onTechniqueEntry={(entry) => apply(setNewLibraryEntryInDraft(working, entry))}
+            onAcceptTechnique={(techniqueDraft, options) => {
+              const result = acceptTechniqueDraftIntoDraft(working, currentExercise.id, techniqueDraft, options);
+
+              if (result.ok) {
+                apply(result.draft);
+              }
+
+              return result;
             }}
           />
         )}

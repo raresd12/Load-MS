@@ -20,6 +20,27 @@ body,
   overflow-x: hidden;
 }
 
+/*
+ * Decision H3-24: the shell cuts what is wider than the screen without
+ * becoming a scroll container. `overflow-x: hidden` turns the other axis into
+ * `auto`, and a box that scrolls (even one that never has anything to scroll)
+ * is what `position: sticky` sticks to: nothing inside it could stay in view
+ * while the page scrolls. `clip` cuts the same way and leaves the viewport as
+ * the only scroller. `html` keeps `hidden`: its overflow is the viewport's.
+ * Engines without `clip` keep `hidden` (sticky is then a plain block).
+ */
+.app-clip-x {
+  overflow-x: hidden;
+}
+
+@supports (overflow: clip) {
+  body,
+  #root,
+  .app-clip-x {
+    overflow-x: clip;
+  }
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;
