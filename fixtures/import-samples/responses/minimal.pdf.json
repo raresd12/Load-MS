@@ -1,0 +1,49 @@
+{
+  "sample": "minimal.pdf",
+  "sourceKind": "pdf",
+  "about": "One-line PDF: a single exercise with a percent-based load and a rest range, no program title.",
+  "response": {
+    "name": "Imported 1-Day Program",
+    "nickname": "",
+    "description": "",
+    "goal": "",
+    "structureNotes": "",
+    "days": [
+      {
+        "name": "Day 1",
+        "focus": "",
+        "block": "",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Back Squat",
+            "isNew": true,
+            "section": "",
+            "sets": 5,
+            "repsMin": 5,
+            "repsMax": 5,
+            "repsLabel": "",
+            "targetRPE": null,
+            "targetRPEMax": null,
+            "restSeconds": 180,
+            "restSecondsMax": 240,
+            "sourceWeight": "75% 1RM",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          }
+        ]
+      }
+    ],
+    "uncertainty": [
+      "The PDF has one line only and no program title; a factual title was used."
+    ]
+  }
+}

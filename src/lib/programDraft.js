@@ -305,6 +305,13 @@ export function normalizeDraftLibraryEntry(entry) {
     }
   });
 
+  // Decision H3-21: an accepted AI technique draft marks its entry as not
+  // reviewed. Only that `false` is kept: a draft or a share file can never
+  // claim the owner's review, which happens in the Library.
+  if (hasOwn(entry, "reviewedByUser") && entry.reviewedByUser === false) {
+    clean.reviewedByUser = false;
+  }
+
   if (!clean.name) {
     return null;
   }

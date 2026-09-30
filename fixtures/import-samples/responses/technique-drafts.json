@@ -1,0 +1,86 @@
+{
+  "sample": null,
+  "about": "Canned technique drafts for two new exercises (refs E1, E2), Romanian bullets in the seeded Library style.",
+  "response": {
+    "drafts": [
+      {
+        "ref": "E1",
+        "mainCue": "Hips back, chest long, bar close.",
+        "setup": [
+          "picioarele la lățimea șoldurilor, sub bară",
+          "prinde bara puțin mai lat decât picioarele",
+          "omoplații trași în jos, abdomenul încordat"
+        ],
+        "howToDoIt": [
+          "împinge șoldurile înapoi cu genunchii ușor flexați",
+          "coboară bara aproape de picioare, cu spatele neutru",
+          "oprește când simți întinderea în hamstrings",
+          "revino împingând șoldurile în față"
+        ],
+        "whatYouShouldFeel": [
+          "hamstrings și fesieri întinși pe coborâre",
+          "lower back stabil, fără durere ascuțită"
+        ],
+        "executionTips": [
+          "ține bara lipită de coapse",
+          "privirea ușor în față, gâtul neutru",
+          "mișcarea pornește din șold, nu din spate"
+        ],
+        "commonMistakes": [
+          "spate rotunjit",
+          "genunchi flexați ca la squat",
+          "bară departe de corp"
+        ],
+        "whyItsThere": [
+          "construiește lanțul posterior",
+          "învață mișcarea de hip hinge"
+        ],
+        "progressionRegression": [
+          "mai ușor: dumbbell romanian deadlift, hip hinge cu bandă",
+          "mai greu: deficit romanian deadlift, single-leg romanian deadlift"
+        ],
+        "safetyNotes": [
+          "oprește dacă simți durere ascuțită în lower back"
+        ]
+      },
+      {
+        "ref": "E2",
+        "mainCue": "Ribs down, squeeze and pull the floor.",
+        "setup": [
+          "antebrațele pe podea, coatele sub umeri",
+          "picioarele întinse, vârfurile pe podea",
+          "corpul în linie dreaptă de la cap la călcâie"
+        ],
+        "howToDoIt": [
+          "încordează abdomenul și fesierii",
+          "împinge antebrațele în podea",
+          "respiră scurt, fără să pierzi poziția"
+        ],
+        "whatYouShouldFeel": [
+          "abdomenul tensionat pe toată durata",
+          "nu presiune în lower back"
+        ],
+        "executionTips": [
+          "trage coatele spre picioare",
+          "ține bazinul ușor retroversat"
+        ],
+        "commonMistakes": [
+          "șolduri lăsate",
+          "fund ridicat prea sus",
+          "respirație blocată"
+        ],
+        "whyItsThere": [
+          "construiește stabilitatea trunchiului"
+        ],
+        "progressionRegression": [
+          "mai ușor: plank pe genunchi",
+          "mai greu: long-lever plank, weighted plank"
+        ],
+        "safetyNotes": [
+          "oprește când nu mai poți ține linia dreaptă"
+        ]
+      }
+    ],
+    "uncertainty": []
+  }
+}

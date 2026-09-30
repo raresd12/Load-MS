@@ -1,0 +1,90 @@
+{
+  "sample": null,
+  "sourceKind": "text",
+  "about": "A source written in lb only.",
+  "sourceText": "GARAGE PLAN (all weights in lb)\n\nDay A\n1. Deadlift - 3 x 5 @ 315 lb, rest 3 min\n2. Dumbbell Bench Press - 3 x 8-10 @ 70 lbs per dumbbell, rest 2 min\n3. Sled Drag - 4 x 40 m, rest 90 s",
+  "response": {
+    "name": "GARAGE PLAN",
+    "structureNotes": "",
+    "days": [
+      {
+        "name": "Day A",
+        "focus": "",
+        "block": "",
+        "notes": "",
+        "warmup": null,
+        "exercises": [
+          {
+            "exerciseId": "",
+            "name": "Deadlift",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 5,
+            "repsMax": 5,
+            "repsLabel": "",
+            "targetRPE": null,
+            "targetRPEMax": null,
+            "restSeconds": 180,
+            "restSecondsMax": null,
+            "sourceWeight": "315 lb",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "strength",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "barbell"
+          },
+          {
+            "exerciseId": "",
+            "name": "Dumbbell Bench Press",
+            "isNew": true,
+            "section": "",
+            "sets": 3,
+            "repsMin": 8,
+            "repsMax": 10,
+            "repsLabel": "",
+            "targetRPE": null,
+            "targetRPEMax": null,
+            "restSeconds": 120,
+            "restSecondsMax": null,
+            "sourceWeight": "70 lbs per dumbbell",
+            "loadType": null,
+            "weightMode": "per dumbbell",
+            "progressionType": "hypertrophy",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "compound",
+            "equipment": "dumbbell"
+          },
+          {
+            "exerciseId": "",
+            "name": "Sled Drag",
+            "isNew": true,
+            "section": "",
+            "sets": 4,
+            "repsMin": null,
+            "repsMax": null,
+            "repsLabel": "40 m",
+            "targetRPE": null,
+            "targetRPEMax": null,
+            "restSeconds": 90,
+            "restSecondsMax": null,
+            "sourceWeight": "",
+            "loadType": null,
+            "weightMode": null,
+            "progressionType": "athletic",
+            "groupLabel": "",
+            "unsupported": [],
+            "notes": "",
+            "category": "athletic"
+          }
+        ]
+      }
+    ],
+    "uncertainty": []
+  }
+}

@@ -9,6 +9,7 @@ import {
 import AiProgramImportAssistant from "../components/AiProgramImportAssistant.jsx";
 import ProgramCard, { formatProgramDate } from "../components/program/ProgramCard.jsx";
 import ProgramStudio from "../components/ProgramStudio.jsx";
+import { getProgramFileRejection, PROGRAM_FILE_DOCUMENT_HINT } from "../lib/importAssistant.js";
 import { createBlankProgramDraft, draftFromProgram, draftFromShare } from "../lib/programDraft.js";
 import {
   deleteStoredDraft,
@@ -73,6 +74,15 @@ export default function ProgramPage({
     setImportError("");
     setPendingImport(null);
 
+    // Program files are the JSON shares this app exports. A document or an
+    // image (a .docx dropped here) is never read: it belongs to the assistant.
+    const rejection = getProgramFileRejection(file.name, file.type);
+
+    if (rejection) {
+      setImportError(rejection);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       let share;
@@ -80,7 +90,7 @@ export default function ProgramPage({
       try {
         share = JSON.parse(String(reader.result));
       } catch {
-        setImportError("That file is not valid JSON.");
+        setImportError(`That file is not valid JSON. Program files are the .json files exported by this app. ${PROGRAM_FILE_DOCUMENT_HINT}.`);
         return;
       }
 

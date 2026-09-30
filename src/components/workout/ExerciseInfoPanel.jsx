@@ -1,6 +1,23 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { formatTechnicalValue, getExerciseVideoUrl } from "../../lib/prescriptionView.js";
+import {
+  getTechniqueBullets,
+  isAiTechniqueDraftEntry,
+  TECHNIQUE_DRAFT_BADGE,
+} from "../../lib/libraryReview.js";
+
+/** Shown wherever AI technique notes are read before the owner reviewed them (H3-6, H3-9). */
+export function AiTechniqueBadge({ className = "" }) {
+  return (
+    <span
+      data-testid="ai-technique-badge"
+      className={`${className} inline-block rounded-[4px] border border-amber-400/50 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-black text-amber-200`}
+    >
+      {TECHNIQUE_DRAFT_BADGE}
+    </span>
+  );
+}
 
 export function CheckVideoLink({ exercise, className = "", emptyLabel = "Check Video not added yet." }) {
   const videoUrl = getExerciseVideoUrl(exercise);
@@ -42,6 +59,7 @@ export default function ExerciseInfoPanel({ exercise, setupCue, className = "", 
 
   return (
     <div className={`${className} rounded-[8px] border border-zinc-800 bg-[#141414] p-2`}>
+      {isAiTechniqueDraftEntry(exercise) && <AiTechniqueBadge className="mb-2" />}
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)]">
         <ExerciseDetailField
           label="Main Cue"
@@ -109,7 +127,8 @@ function ExerciseDetailsCloseButton({ onClose }) {
 }
 
 function ExerciseDetailField({ label, value, className = "bg-zinc-900", compact = false, maxItems = 4 }) {
-  const text = formatTechnicalValue(value);
+  const bullets = getTechniqueBullets(value);
+  const text = bullets ? bullets.join(", ") : formatTechnicalValue(value);
 
   return (
     <div className={`rounded-[8px] px-3 ${compact ? "py-2" : "py-2.5"} ${className}`}>
@@ -124,39 +143,39 @@ function ExerciseDetailField({ label, value, className = "bg-zinc-900", compact 
 function TechnicalContent({ value, fallback, maxItems = 4 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  if (Array.isArray(value)) {
-    const items = value.map((item) => String(item ?? "").trim()).filter(Boolean);
+  // A list, or text with one "- bullet" per line (imported entries): both
+  // are shown as the same bullet list.
+  const items = getTechniqueBullets(value);
 
-    if (items.length) {
-      const visibleItems = isExpanded ? items : items.slice(0, maxItems);
-      const hasHiddenItems = items.length > maxItems;
+  if (items) {
+    const visibleItems = isExpanded ? items : items.slice(0, maxItems);
+    const hasHiddenItems = items.length > maxItems;
 
-      return (
-        <>
-          <ul className="mt-1 space-y-0.5 text-[13px] font-semibold leading-5 text-zinc-200">
-            {visibleItems.map((item) => (
-              <li key={item} className="flex gap-2">
-                <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-lime-300" />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-          {hasHiddenItems && (
-            <button
-              type="button"
-              onClick={() => setIsExpanded((current) => !current)}
-              className="focus-ring mt-1 min-h-8 rounded-[8px] px-2 text-xs font-black text-lime-200 hover:bg-lime-300/10"
-            >
-              {isExpanded ? "Show less" : `Show ${items.length - maxItems} more`}
-            </button>
-          )}
-        </>
-      );
-    }
+    return (
+      <>
+        <ul className="mt-1 space-y-0.5 text-[13px] font-semibold leading-5 text-zinc-200">
+          {visibleItems.map((item, index) => (
+            <li key={`${index}-${item}`} className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-lime-300" />
+              <span className="min-w-0 break-words">{item}</span>
+            </li>
+          ))}
+        </ul>
+        {hasHiddenItems && (
+          <button
+            type="button"
+            onClick={() => setIsExpanded((current) => !current)}
+            className="focus-ring mt-1 min-h-8 rounded-[8px] px-2 text-xs font-black text-lime-200 hover:bg-lime-300/10"
+          >
+            {isExpanded ? "Show less" : `Show ${items.length - maxItems} more`}
+          </button>
+        )}
+      </>
+    );
   }
 
   return (
-    <p className="mt-1 text-[13px] font-semibold leading-5 text-zinc-200">
+    <p className="mt-1 whitespace-pre-line break-words text-[13px] font-semibold leading-5 text-zinc-200">
       {fallback}
     </p>
   );

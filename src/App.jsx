@@ -1000,7 +1000,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen overflow-x-hidden">
+    <div className="app-clip-x min-h-screen">
       <header className="safe-top mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 pb-4 [--safe-top-pad:1rem] min-[390px]:px-4 sm:gap-5 sm:px-6 sm:pb-5 sm:[--safe-top-pad:1.25rem] lg:px-8">
         <div className="flex min-w-0 items-start justify-between gap-3 sm:gap-4">
           <div>
@@ -1025,7 +1025,7 @@ export default function App() {
         )}
       </header>
 
-      <main className="safe-bottom mx-auto w-full max-w-6xl overflow-x-hidden px-3 [--safe-bottom-pad:11rem] min-[390px]:px-4 sm:px-6 sm:[--safe-bottom-pad:9rem] lg:px-8">
+      <main className="app-clip-x safe-bottom mx-auto w-full max-w-6xl px-3 [--safe-bottom-pad:11rem] min-[390px]:px-4 sm:px-6 sm:[--safe-bottom-pad:9rem] lg:px-8">
         <StorageWarningBanner
           warnings={storageWarnings}
           onDismiss={dismissStorageWarning}
@@ -1156,7 +1156,11 @@ export default function App() {
         {activeTab === "library" && (
           <LazyPageBoundary pageLabel="Library" onRetry={() => retryLazyPage("library")}>
             <Suspense fallback={<PageLoadingFallback />}>
-              <LibraryPage exercises={exerciseLibrary} setupCues={setupCues} />
+              <LibraryPage
+                exercises={exerciseLibrary}
+                setupCues={setupCues}
+                onLibraryChange={refreshProgramData}
+              />
             </Suspense>
           </LazyPageBoundary>
         )}
