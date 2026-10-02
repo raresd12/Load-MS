@@ -28,6 +28,8 @@ export default function ProgramPage({
   onArchiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
+  onUpdateProgramExerciseProfile,
+  onUpdateProgramProfile,
   onImportProgramShare,
   studio = null,
   studioMessage = "",
@@ -231,6 +233,7 @@ export default function ProgramPage({
         onSave={onSaveStudioDraft}
         onCancel={onCloseStudio}
         onDraftChange={onStudioDraftChange}
+        onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
       />
     );
   }
@@ -418,6 +421,8 @@ export default function ProgramPage({
                 onArchiveProgram={onArchiveProgram}
                 onUpdateProgramMetadata={onUpdateProgramMetadata}
                 onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+                onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
+                onUpdateProgramProfile={onUpdateProgramProfile}
                 onEditProgram={openEditProgram}
                 onOpenStudio={onOpenStudio}
               />

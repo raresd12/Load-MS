@@ -4,6 +4,7 @@ import { getReadinessCopy } from "../components/readiness/readinessCopy.js";
 import Metric from "../components/ui/Metric.jsx";
 import SectionShell from "../components/ui/SectionShell.jsx";
 import CompletedWorkoutTable from "../components/workout/CompletedWorkoutTable.jsx";
+import ExerciseOverrideControls from "../components/workout/ExerciseOverrideControls.jsx";
 import PostWorkoutCoachRecap from "../components/workout/PostWorkoutCoachRecap.jsx";
 import RestTimerBar from "../components/workout/RestTimerBar.jsx";
 import TodayReadinessSummary from "../components/workout/TodayReadinessSummary.jsx";
@@ -83,6 +84,8 @@ export default function WorkoutLogPage({
   onUpdateSessionField,
   onSaveSet,
   onTogglePainFlag,
+  onSetOverride,
+  onClearOverride,
   onGoToReadiness,
   onGoToWorkouts,
   onGoToHistory,
@@ -210,6 +213,15 @@ export default function WorkoutLogPage({
             highlightedExerciseId={highlightedExerciseId}
             onSaveSet={handleSaveSet}
             onTogglePainFlag={onTogglePainFlag}
+            renderExerciseExtras={(exercise, planExercise) => (
+              <ExerciseOverrideControls
+                programId={activeProgram?.id ?? null}
+                exercise={exercise}
+                prescription={planExercise}
+                onSetOverride={onSetOverride}
+                onClearOverride={onClearOverride}
+              />
+            )}
           />
         </>
       )}

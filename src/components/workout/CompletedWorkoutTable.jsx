@@ -2,15 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import SectionShell from "../ui/SectionShell.jsx";
 import StepperInput from "./StepperInput.jsx";
 import UnifiedSetEntry from "./UnifiedSetEntry.jsx";
+import { adjustInputValue } from "../../lib/sessionNormalize.js";
+import { formatRest, formatWeight } from "../../lib/progression.js";
 import {
-  adjustInputValue,
-  getRecommendedSetEntryDefaults,
-  getSetEntryValues,
+  calculateAutoExerciseRpe,
+  getPlanExercise,
   validateSetEntry,
 } from "../../lib/sessionNormalize.js";
-import { formatRest, formatSetsReps, formatWeight } from "../../lib/progression.js";
-import { isBodyweightText } from "../../lib/sessionLog.js";
-import { calculateAutoExerciseRpe, getPlanExercise, isBlank } from "../../lib/sessionNormalize.js";
+import {
+  formatSetEntrySummary,
+  formatSetEntryTotals,
+  formatSetTargetLabel,
+  getSetEntryDefaults,
+  getSetEntryLabels,
+  getSetEntryProfile,
+  hasSetEntryValue,
+  readSetEntryValues,
+  toDraftSetPatch,
+  validateSetEntryValues,
+} from "../../lib/setEntryView.js";
 
 function RpeHelper({ showAthleticNote = false }) {
   const entries = [
@@ -56,6 +66,7 @@ export default function CompletedWorkoutTable({
   highlightedExerciseId,
   onSaveSet,
   onTogglePainFlag,
+  renderExerciseExtras,
 }) {
   return (
     <SectionShell title="Log Completed Workout">
@@ -73,6 +84,7 @@ export default function CompletedWorkoutTable({
           const programExerciseId = exercise.programExerciseId ?? exercise.id;
           const isHighlighted = highlightedExerciseId === programExerciseId;
           const autoExerciseRpe = calculateAutoExerciseRpe(draftExercise);
+          const profile = getSetEntryProfile(exercise);
 
           return (
             <article
@@ -94,16 +106,18 @@ export default function CompletedWorkoutTable({
                 <div>
                   <h3 className="font-black text-white">{exercise.name}</h3>
                   <p className="mt-1 text-xs font-semibold text-zinc-400 sm:hidden">
-                    {formatMobilePlanSummary(planExercise)}
+                    {formatMobilePlanSummary(planExercise, profile)}
                   </p>
                   <p className="hidden text-xs font-semibold text-zinc-400 sm:block">
-                    {formatSetsReps(planExercise)} | {formatWeight(planExercise.recommendedWeight, exercise)} | Target RPE {planExercise.targetRPE} | {formatRest(planExercise.restSeconds)}
+                    {formatPlanTarget(planExercise, profile)} | {formatWeight(planExercise.recommendedWeight, exercise)} | Target RPE {planExercise.targetRPE} | {formatRest(planExercise.restSeconds)}
                   </p>
                 </div>
               </div>
 
+              {renderExerciseExtras?.(exercise, planExercise)}
+
               <div className="mt-3 space-y-3">
-                <SavedSetsSummary exercise={exercise} sets={draftExercise.sets} />
+                <SavedSetsSummary profile={profile} sets={draftExercise.sets} />
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="inline-flex rounded-[8px] border border-lime-300/20 bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
                     Auto Exercise RPE:{" "}
@@ -171,15 +185,18 @@ function DesktopSetCardGrid({ exercise, planExercise, sets, onSave }) {
 }
 
 function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
+  const profile = getSetEntryProfile(exercise);
+  const labels = getSetEntryLabels(profile);
   const [values, setValues] = useState(() =>
-    getSetEntryValues(set ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)),
+    readSetEntryValues(set ?? {}, getSetEntryDefaults(exercise, planExercise, profile), profile),
   );
   const [errors, setErrors] = useState([]);
   const [saveMessage, setSaveMessage] = useState("");
   const justSavedRef = useRef(false);
 
   useEffect(() => {
-    setValues(getSetEntryValues(set ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)));
+    const nextProfile = getSetEntryProfile(exercise);
+    setValues(readSetEntryValues(set ?? {}, getSetEntryDefaults(exercise, planExercise, nextProfile), nextProfile));
     setErrors([]);
     // The save itself updates `set`; keep the confirmation visible in that case.
     if (justSavedRef.current) {
@@ -196,7 +213,12 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
   }
 
   function saveSet() {
-    const nextErrors = validateSetEntry(values, exercise);
+    // Plain reps + kg sets keep the H4 validator byte for byte; time, distance
+    // and bodyweight sets validate per measurement (decision H5-13).
+    const isLegacyRepsEntry = profile.measurement === "reps" && labels.showWeightInput && profile.loadType !== "optionalExternal";
+    const nextErrors = isLegacyRepsEntry
+      ? validateSetEntry({ reps: values.value, weight: values.weight, rpe: values.rpe }, exercise)
+      : validateSetEntryValues(values, exercise, profile);
 
     if (nextErrors.length) {
       setErrors(nextErrors);
@@ -205,7 +227,7 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
     }
 
     justSavedRef.current = true;
-    onSave(setIndex, values);
+    onSave(setIndex, toDraftSetPatch(values, profile));
     setErrors([]);
     setSaveMessage(`Set ${setIndex + 1} saved.`);
   }
@@ -217,7 +239,9 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
     }
   }
 
-  const hasSavedValue = !isBlank(set?.reps) || !isBlank(set?.weight) || !isBlank(set?.rpe);
+  const hasSavedValue = hasSetEntryValue(set);
+  const valueLabel = labels.valueHint ? `${labels.valueLabel} (${labels.valueHint})` : labels.valueLabel;
+  const weightLabel = labels.weightHint ? `${labels.weightLabel} (${labels.weightHint})` : labels.weightLabel;
 
   return (
     <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
@@ -231,31 +255,37 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
       </div>
       <div className="grid gap-2">
         <StepperInput
-          label="Reps"
-          value={values.reps}
-          onChange={(value) => updateValue("reps", value)}
+          label={valueLabel}
+          value={values.value}
+          onChange={(value) => updateValue("value", value)}
           onKeyDown={handleInputKeyDown}
           enterKeyHint="done"
-          onStep={(delta) => updateValue("reps", adjustInputValue(values.reps, delta, { min: 0 }))}
-          stepAmount={1}
+          onStep={(delta) => updateValue("value", adjustInputValue(values.value, delta, { min: 0 }))}
+          stepAmount={labels.valueStep}
           type="number"
           inputMode="numeric"
-          placeholder="reps"
+          placeholder={labels.valuePlaceholder}
         />
-        <StepperInput
-          label="Kg"
-          value={values.weight}
-          onChange={(value) => updateValue("weight", value)}
-          onKeyDown={handleInputKeyDown}
-          enterKeyHint="done"
-          onStep={(delta) =>
-            updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
-          }
-          stepAmount={1}
-          type={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "number"}
-          inputMode={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "decimal"}
-          placeholder={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "BW" : "kg"}
-        />
+        {labels.showWeightInput ? (
+          <StepperInput
+            label={weightLabel}
+            value={values.weight}
+            onChange={(value) => updateValue("weight", value)}
+            onKeyDown={handleInputKeyDown}
+            enterKeyHint="done"
+            onStep={(delta) =>
+              updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
+            }
+            stepAmount={1}
+            type={labels.weightInputType}
+            inputMode={labels.weightInputMode}
+            placeholder={labels.weightPlaceholder}
+          />
+        ) : (
+          <p className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-xs font-black text-zinc-200">
+            Load: BW
+          </p>
+        )}
         <StepperInput
           label="RPE"
           value={values.rpe}
@@ -272,6 +302,11 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
           placeholder="8"
         />
       </div>
+      {labels.notes.length > 0 && (
+        <p className="mt-2 text-[11px] font-semibold leading-4 text-zinc-400">
+          {labels.notes.join(" ")}
+        </p>
+      )}
       {errors.length > 0 && (
         <div className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
           {errors.map((error) => (
@@ -295,15 +330,15 @@ function DesktopSetCard({ exercise, planExercise, set, setIndex, onSave }) {
   );
 }
 
-function SavedSetsSummary({ exercise, sets }) {
+function SavedSetsSummary({ profile, sets }) {
   return (
     <div>
       <p className="rounded-[8px] bg-zinc-900 px-2 py-1 text-[11px] font-bold leading-relaxed text-zinc-400 sm:hidden">
-        {sets.map((set, index) => formatMobileSetSummary(set, index, exercise)).join(" | ")}
+        {sets.map((set, index) => formatSetEntrySummary(set, index, profile)).join(" | ")}
       </p>
       <div className="hidden gap-1.5 sm:grid sm:grid-cols-2">
         {sets.map((set, index) => {
-          const isEmpty = isBlank(set.reps) && isBlank(set.weight) && isBlank(set.rpe);
+          const isEmpty = !hasSetEntryValue(set);
 
           return (
             <p
@@ -312,50 +347,22 @@ function SavedSetsSummary({ exercise, sets }) {
                 isEmpty ? "bg-zinc-900 text-zinc-400" : "bg-lime-300/10 text-lime-100"
               }`}
             >
-              Set {index + 1}:{" "}
-              {isEmpty
-                ? "empty"
-                : `${formatSetWeightSummary(set.weight, exercise)} x ${isBlank(set.reps) ? "reps?" : set.reps} @ RPE ${isBlank(set.rpe) ? "?" : set.rpe}`}
+              {formatSetEntrySummary(set, index, profile).replace(/^S(\d+) /, "Set $1: ")}
             </p>
           );
         })}
       </div>
+      <p className="mt-1 text-[11px] font-semibold text-zinc-400">
+        {formatSetEntryTotals(sets, profile)}
+      </p>
     </div>
   );
 }
 
-function formatMobilePlanSummary(planExercise) {
-  return `${formatSetsReps(planExercise).replace("x ", "x")} | RPE ${planExercise.targetRPE} | Rest ${formatRest(planExercise.restSeconds)}`;
+function formatPlanTarget(planExercise, profile) {
+  return `${planExercise.sets} x ${formatSetTargetLabel(planExercise, profile) || planExercise.repsLabel || "?"}`;
 }
 
-function formatMobileSetSummary(set, index, exercise) {
-  const prefix = `S${index + 1}`;
-  const isEmpty = isBlank(set.reps) && isBlank(set.weight) && isBlank(set.rpe);
-
-  if (isEmpty) {
-    return `${prefix} empty`;
-  }
-
-  return `${prefix} ${formatSetWeightSummary(set.weight, exercise)} x ${isBlank(set.reps) ? "?" : set.reps} @${isBlank(set.rpe) ? "?" : set.rpe}`;
-}
-
-function formatSetWeightSummary(weight, exercise) {
-  if (isBlank(weight)) {
-    return exercise.loadType === "bodyweight" ? "BW?" : "kg?";
-  }
-
-  if (isBodyweightText(weight)) {
-    return "BW";
-  }
-
-  const numericWeight = Number(weight);
-  if (!Number.isFinite(numericWeight)) {
-    return String(weight);
-  }
-
-  const formattedWeight = Number.isInteger(numericWeight)
-    ? numericWeight.toString()
-    : numericWeight.toFixed(1);
-
-  return `${formattedWeight}kg`;
+function formatMobilePlanSummary(planExercise, profile) {
+  return `${planExercise.sets}x${formatSetTargetLabel(planExercise, profile) || planExercise.repsLabel || "?"} | RPE ${planExercise.targetRPE} | Rest ${formatRest(planExercise.restSeconds)}`;
 }

@@ -11,7 +11,7 @@ export default function DaySelect({ days, selectedDayId, onSelectDay }) {
       >
         {days.map((day) => (
           <option key={day.id} value={day.id}>
-            {day.name}
+            {day.isOptional ? `${day.name} (Optional)` : day.name}
           </option>
         ))}
       </select>
