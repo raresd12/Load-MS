@@ -144,7 +144,8 @@ const lateralConservative = recommendation(
   sessionFor({ id: "current", targetExercise: lateralRaise, reps: [15, 15, 15], weight: 8, rpe: 7.5 }),
 );
 assert.equal(lateralConservative.decision, "increase_reps");
-assert.equal(lateralConservative.exerciseProfile.loadIncrementKg, 0.5);
+// Decision H5-4: dumbbells under 10 kg step by 1 kg (was 0.5 for lateral raises).
+assert.equal(lateralConservative.exerciseProfile.loadIncrementKg, 1);
 
 const boxJump = exercise({
   id: "box-jumps",
@@ -256,8 +257,14 @@ const coreControl = recommendation(
   plank,
   sessionFor({ id: "current", targetExercise: plank, reps: [60, 60, 60], weight: null, rpe: 8 }),
 );
-assert.equal(coreControl.progressionMode, "core_control");
-assert.equal(coreControl.decision, "increase_reps");
+// Decision H5-2: a "60 sec" label makes the plank a timed exercise, so it
+// progresses its duration (60 s -> 70 s) before anything else.
+assert.equal(coreControl.progressionMode, "time_first");
+assert.equal(coreControl.decision, "increase_time");
+assert.equal(coreControl.repsMin, 70);
+assert.equal(coreControl.repsMax, 70);
+assert.equal(coreControl.repsLabel, "70 s");
+assert.equal(coreControl.exerciseProfile.measurement, "time");
 
 const unknown = {
   id: "unknown",

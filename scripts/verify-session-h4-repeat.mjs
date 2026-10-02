@@ -300,6 +300,44 @@ try {
   });
   assert.equal(legacy.session.programId, null);
   assert.equal(legacy.programStatePatch, undefined);
+
+  // ------------------------------------------------------------------
+  // Decision H5-28: the bundle's own state patch is the derived one
+  // (H5-5), not the naive "next day in the list": an optional day is never
+  // "up next" and the patch carries week / cycle.
+  // ------------------------------------------------------------------
+  {
+    const dayIndex = programDays.findIndex((candidate) => candidate.id === day.id);
+    const naiveNext = programDays[(dayIndex + 1) % programDays.length];
+    const scheduledNext = programDays[(dayIndex + 2) % programDays.length];
+    assert.ok(programDays.length >= 3 && scheduledNext.id !== day.id, "the program has a day after the next one");
+    const daysWithOptional = programDays.map((candidate) => (candidate.id === naiveNext.id ? { ...candidate, isOptional: true } : candidate));
+    const bundleArgs = {
+      day,
+      draft: first.draft,
+      plan: first.plan,
+      sessions: [],
+      nextPlans: {},
+      workoutDrafts: {},
+      draftKey,
+      program,
+      readinessEntry: null,
+      todayDateKey,
+      setupCues: {},
+      now: new Date("2026-09-29T08:00:00.000Z"),
+      id: "pointer",
+    };
+    const withOptional = buildWorkoutSaveBundle({ ...bundleArgs, programDays: daysWithOptional });
+    assert.equal(withOptional.programStatePatch.nextRecommendedDayId, scheduledNext.id, "the optional day is skipped by the bundle itself");
+    assert.equal(withOptional.programStatePatch.lastCompletedDayId, day.id);
+    assert.equal(withOptional.programStatePatch.lastWorkoutDate, "2026-09-29T08:00:00.000Z");
+    assert.equal(withOptional.programStatePatch.currentWeek, 1);
+    assert.equal(withOptional.programStatePatch.currentCycle, 1);
+    assert.equal(withOptional.persistArgs.programStatePatch, withOptional.programStatePatch);
+    const plain = buildWorkoutSaveBundle({ ...bundleArgs, programDays });
+    assert.equal(plain.programStatePatch.nextRecommendedDayId, naiveNext.id, "without optional days the pointer is the next day, as before");
+    assert.ok(!readFileSync(path.join(root, "src/lib/workoutSave.js"), "utf8").includes("% programDays.length"), "no naive pointer left in workoutSave.js");
+  }
   assert.equal(legacy.persistArgs.programId, null);
   assert.equal(legacy.session.readinessMissing, true);
   assert.equal(legacy.session.readinessSnapshot, null);

@@ -149,6 +149,27 @@ try {
   assert.equal(pull.totalVolume, 0);
   assert.equal(pull.averageRpe, 7);
 
+  // The card's volume is the measurement-aware tonnage of the set record
+  // (H5-10 applied to History, H5-40): a per-dumbbell set counts both
+  // dumbbells, a per-side set both sides, exactly like Progress, the recap,
+  // the Dashboard and the session-volume record.
+  const dumbbellSession = {
+    ...modern,
+    id: "s-db",
+    exercises: {},
+    workoutSets: [
+      { ...workoutSet("pe-db", "lib-db", 1, 10, 20, 8), weightMode: "per dumbbell" },
+      { ...workoutSet("pe-split", "lib-split", 1, 10, 20, 8), weightMode: "per dumbbell", perSide: true },
+      workoutSet("pe-bench", "lib-bench", 1, 10, 50, 8),
+    ],
+  };
+  const dumbbellSummary = buildHistorySessionSummary(dumbbellSession, lookup);
+  assert.equal(dumbbellSummary.totalVolume, 400 + 800 + 500, "20 kg per dumbbell x 10 = 400, per side as well = 800, plain 50 x 10 = 500");
+  assert.deepEqual(
+    dumbbellSummary.exerciseGroups.map((group) => [group.programExerciseId, group.totalVolume]).sort(),
+    [["pe-bench", 500], ["pe-db", 400], ["pe-split", 800]],
+  );
+
   // ------------------------------------------------------------------
   // Legacy shapes stay readable
   // ------------------------------------------------------------------

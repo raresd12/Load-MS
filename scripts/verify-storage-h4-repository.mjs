@@ -139,8 +139,12 @@ try {
     "programStates",
     "programProgressions",
     "programDrafts",
+    // Phase H5, decision H5-6: hold / manual overrides are user data.
+    "programOverrides",
   ];
   assert.deepEqual([...syncable].sort(), [...expectedSyncable].sort());
+  assert.equal(getCollection("programOverrides").idField, "id");
+  assert.equal(getCollection("programOverrides").backedUp, true);
   assert.equal(getCollection("appUiState").scope, COLLECTION_SCOPES.uiState);
   assert.equal(getCollection("appUiState").syncable, false);
   assert.equal(getCollection("programStorageMeta").scope, COLLECTION_SCOPES.meta);

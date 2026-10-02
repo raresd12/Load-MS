@@ -1,3 +1,11 @@
+import {
+  formatMeasurementRange,
+  getMeasurementProfile,
+  getMeasurementTargetRange,
+  normalizeSetEntry,
+} from "./measurement.js";
+import { HOLD_REASON, isOverrideActive } from "./overrides.js";
+
 function toNumber(value, fallback = 0) {
   if (value === null || value === undefined || value === "") {
     return fallback;
@@ -5,6 +13,148 @@ function toNumber(value, fallback = 0) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Equipment-realistic increments (Phase H5, decision H5-4)
+//
+// Step table by equipment class: barbell / smith / plate-loaded machine /
+// cable 2.5, selectorized stack 5, dumbbell 1 under 10 kg, 2 from 10 to under
+// 30 kg, 2.5 from 30 kg (per dumbbell), kettlebell 4, additional load 2.5,
+// bodyweight none. An explicit incrementKg (profile override or the built-in
+// config of a default program) wins; rounding uses the same step so no
+// recommendation lands on a load the equipment cannot make.
+// ---------------------------------------------------------------------------
+
+export const EQUIPMENT_STEPS_KG = Object.freeze({
+  barbell: 2.5,
+  smith: 2.5,
+  machine: 2.5,
+  selectorized: 5,
+  cable: 2.5,
+  kettlebell: 4,
+  additional: 2.5,
+});
+
+export const DUMBBELL_STEP_BANDS_KG = Object.freeze([
+  { below: 10, step: 1 },
+  { below: 30, step: 2 },
+  { below: Infinity, step: 2.5 },
+]);
+
+export const PROGRESSION_MODES = Object.freeze([
+  "double_progression",
+  "reps_first",
+  "quality_first",
+  "core_control",
+  "time_first",
+  "distance_first",
+]);
+
+export const PROGRAM_AGGRESSIONS = Object.freeze(["conservative", "standard"]);
+export const PROFILE_PRIORITIES = Object.freeze(["main", "accessory"]);
+
+/**
+ * The equipment class the step table keys on, from the free-text equipment
+ * of the Library entry or config ("Dumbbells, bench" -> dumbbell,
+ * "Smith machine" -> smith, "Cable machine, rope" -> cable, "Pec deck
+ * machine" -> machine, "Selectorized stack" -> selectorized).
+ */
+export function resolveEquipmentClass(exercise = {}) {
+  const text = String(exercise?.equipment ?? "").trim().toLowerCase();
+
+  if (!text) {
+    return "unknown";
+  }
+
+  if (/dumbbell/.test(text)) {
+    return "dumbbell";
+  }
+
+  if (/kettlebell/.test(text)) {
+    return "kettlebell";
+  }
+
+  if (/smith/.test(text)) {
+    return "smith";
+  }
+
+  if (/selectori|stack|pin[- ]loaded/.test(text)) {
+    return "selectorized";
+  }
+
+  if (/cable|pulley|rope attachment/.test(text)) {
+    return "cable";
+  }
+
+  if (/barbell|ez bar|ez-bar|trap bar|hex bar/.test(text)) {
+    return "barbell";
+  }
+
+  if (/machine|pec deck|hack squat|leg press|plate[- ]loaded/.test(text)) {
+    return "machine";
+  }
+
+  if (/bodyweight|body weight|pull-?up bar|dip station|parallel bars|plyo|box|mat|floor|none/.test(text)) {
+    return "bodyweight";
+  }
+
+  if (/band/.test(text)) {
+    return "band";
+  }
+
+  return "unknown";
+}
+
+export function getDumbbellStep(weight) {
+  if (weight === null || weight === undefined || weight === "") {
+    return null;
+  }
+
+  const value = Number(weight);
+
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  return DUMBBELL_STEP_BANDS_KG.find((band) => value < band.below)?.step ?? 2.5;
+}
+
+/**
+ * The load step of an equipment class at a given weight (dumbbells depend on
+ * the weight band). null for bodyweight / band / unknown.
+ */
+export function getEquipmentStep(equipmentClass, weight = null) {
+  if (equipmentClass === "dumbbell") {
+    return getDumbbellStep(weight);
+  }
+
+  return EQUIPMENT_STEPS_KG[equipmentClass] ?? null;
+}
+
+/**
+ * Rounds a load to what the equipment can make: dumbbells to the step of the
+ * band the value falls in, everything else to `step`. `mode` is "round"
+ * (nearest), "floor" or "ceil".
+ */
+export function roundToEquipment(value, { equipmentClass = "unknown", step = null, mode = "round" } = {}) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  const apply = (input, gridStep) =>
+    mode === "floor" ? floorTo(input, gridStep) : mode === "ceil" ? ceilTo(input, gridStep) : roundTo(input, gridStep);
+
+  if (equipmentClass === "dumbbell" && !(step > 0)) {
+    const bandStep = getDumbbellStep(value) ?? 1;
+    const rounded = apply(value, bandStep);
+    // Rounding can cross a band boundary (29.6 -> 30); the result is then
+    // re-checked against the band it landed in.
+    const landingStep = getDumbbellStep(rounded) ?? bandStep;
+    return landingStep === bandStep ? rounded : apply(rounded, landingStep);
+  }
+
+  return apply(value, step);
 }
 
 function average(values) {
@@ -44,6 +194,19 @@ function floorTo(value, step) {
   return Number((Math.floor(value / step) * step).toFixed(2));
 }
 
+function ceilTo(value, step) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  if (!step || step <= 0) {
+    return Number(value.toFixed(1));
+  }
+
+  // 1e-9 absorbs float noise so an on-grid value stays where it is.
+  return Number((Math.ceil(value / step - 1e-9) * step).toFixed(2));
+}
+
 function getNumericWeight(value, exercise) {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -67,20 +230,30 @@ function getSetLogs(exerciseLog) {
     : [];
 }
 
-function getLoggedReps(setLogs) {
-  return setLogs
-    .map((set) => toNumber(set.reps ?? set.actualReps, NaN))
-    .filter(Number.isFinite);
+// The logged value of a set in the exercise's measurement (decision H5-1):
+// reps for a reps exercise, `seconds` for a timed one, `meters` for a
+// distance one. A set of a timed / distance exercise that only carries
+// `reps` (logged before H5) is read as it was logged.
+function getSetValue(set, measurement = "reps") {
+  if (measurement === "time" || measurement === "distance") {
+    return normalizeSetEntry(set, { measurement }).value ?? NaN;
+  }
+
+  return toNumber(set.reps ?? set.actualReps, NaN);
+}
+
+function getLoggedReps(setLogs, measurement = "reps") {
+  return setLogs.map((set) => getSetValue(set, measurement)).filter(Number.isFinite);
 }
 
 // Decision new-A: the working weight is the heaviest logged set (top set).
 // Only sets with at least one completed rep count: a failed attempt logged as
 // "130 kg x 0" is not a weight the athlete worked with, so it never becomes
 // the next prescription or the load the next session is compared against.
-function getTopSetWeight(setLogs, exercise) {
+function getTopSetWeight(setLogs, exercise, measurement = "reps") {
   const loggedWeights = setLogs
     .filter((set) => {
-      const reps = toNumber(set.reps ?? set.actualReps, NaN);
+      const reps = getSetValue(set, measurement);
       return Number.isFinite(reps) && reps >= 1;
     })
     .map((set) => getNumericWeight(set.weight ?? set.actualWeight ?? set.kg, exercise))
@@ -93,6 +266,28 @@ function getLoadJump(exercise) {
   return buildExerciseProfile(exercise).loadIncrementKg ?? 0;
 }
 
+// The step to add at `currentWeight`: an explicit step (override / config)
+// as it is, otherwise the equipment step at that weight (dumbbell bands).
+function getIncrementAt(profile, currentWeight) {
+  if (profile.fieldSources.incrementKg !== "classified") {
+    return profile.loadIncrementKg;
+  }
+
+  return getEquipmentStep(profile.equipmentClass, currentWeight) ?? profile.loadIncrementKg;
+}
+
+export function roundLoadForProfile(profile, value, mode = "round") {
+  const explicitRound = profile.fieldSources.roundToKg !== "classified";
+
+  // A classified dumbbell rounds to the band of the value it lands in, not
+  // to the step of the band it started from (29 + 2 = 31 -> 30, not 32).
+  return roundToEquipment(value, {
+    equipmentClass: explicitRound ? "unknown" : profile.equipmentClass,
+    step: explicitRound || profile.equipmentClass !== "dumbbell" ? profile.roundToKg : null,
+    mode,
+  });
+}
+
 function increaseLoad(currentWeight, exercise) {
   const profile = buildExerciseProfile(exercise);
 
@@ -100,7 +295,24 @@ function increaseLoad(currentWeight, exercise) {
     return currentWeight;
   }
 
-  return roundTo(currentWeight + profile.loadIncrementKg, profile.roundToKg);
+  const step = getIncrementAt(profile, currentWeight);
+
+  if (!(step > 0)) {
+    return currentWeight;
+  }
+
+  const rounded = roundLoadForProfile(profile, currentWeight + step, "round");
+
+  // An off-grid current load (13 kg stored before the dumbbell bands of H5-4)
+  // plus one step can round to the grid point beyond the next one (13 + 2 =
+  // 15 -> 16, a 3 kg jump). One increase is at most one step: the load then
+  // lands on the first grid point above the current one (H5 fix round 1).
+  if (rounded !== null && rounded - currentWeight > step + 1e-9) {
+    const ceiling = roundLoadForProfile(profile, currentWeight, "ceil");
+    return ceiling !== null && ceiling > currentWeight ? ceiling : rounded;
+  }
+
+  return rounded;
 }
 
 function decreaseLoad(currentWeight, exercise, percentage) {
@@ -110,9 +322,8 @@ function decreaseLoad(currentWeight, exercise, percentage) {
     return currentWeight;
   }
 
-  const step = profile.roundToKg;
   const adjusted = currentWeight * (1 - percentage / 100);
-  return Math.max(0, floorTo(adjusted, step));
+  return Math.max(0, roundLoadForProfile(profile, adjusted, "floor"));
 }
 
 function getExerciseIds(exerciseOrId) {
@@ -514,9 +725,9 @@ function getPlannedExerciseSnapshot(session, exercise) {
   return getExerciseLog(planned, exercise);
 }
 
-function hasUsableExerciseLog(log) {
+function hasUsableExerciseLog(log, measurement = "reps") {
   const setLogs = getSetLogs(log);
-  const loggedReps = getLoggedReps(setLogs);
+  const loggedReps = getLoggedReps(setLogs, measurement);
 
   if (loggedReps.length) {
     return true;
@@ -524,6 +735,10 @@ function hasUsableExerciseLog(log) {
 
   const aggregateReps = getAggregateTotalReps(log, loggedReps);
   return aggregateReps !== null && aggregateReps > 0;
+}
+
+function isDeloadSnapshotSession(session, exercise) {
+  return getPlannedExerciseSnapshot(session, exercise)?.deloadSession === true;
 }
 
 function isCompatibleHistorySession(session, context) {
@@ -554,6 +769,7 @@ function isCompatibleHistorySession(session, context) {
 function selectExerciseHistory(dayId, exercise, currentSession, sessions = [], identity = {}) {
   const context = getIdentityContext(exercise, currentSession, dayId);
   const referenceTime = getSessionTimestamp(currentSession) ?? Date.now();
+  const measurement = getMeasurementProfile(exercise).measurement;
   let skippedAmbiguous = 0;
   const qualifying = [];
 
@@ -573,7 +789,7 @@ function selectExerciseHistory(dayId, exercise, currentSession, sessions = [], i
       continue;
     }
 
-    if (!match.log || !hasUsableExerciseLog(match.log)) {
+    if (!match.log || !hasUsableExerciseLog(match.log, measurement)) {
       continue;
     }
 
@@ -586,7 +802,12 @@ function selectExerciseHistory(dayId, exercise, currentSession, sessions = [], i
     session,
     ageDays: getSessionAgeDays(session, referenceTime),
   }));
-  const fresh = aged
+  // Decision H5-46: a session logged under a deload (its own snapshot says
+  // `deloadSession: true`) is training that happened, so it still counts for
+  // the long-break check, but its lighter loads are no progression evidence:
+  // it is never a history sample nor the previous-session comparison.
+  const evidence = aged.filter((entry) => !isDeloadSnapshotSession(entry.session, exercise));
+  const fresh = evidence
     .filter((entry) => entry.ageDays === null || entry.ageDays <= HISTORY_RECENCY_DAYS)
     .slice(0, HISTORY_SAMPLE_LIMIT)
     .map((entry) => entry.session);
@@ -600,7 +821,8 @@ function selectExerciseHistory(dayId, exercise, currentSession, sessions = [], i
     qualifying,
     mostRecentAgeDays,
     longBreak,
-    staleCount: qualifying.length - fresh.length,
+    staleCount: evidence.length - fresh.length,
+    skippedDeload: aged.length - evidence.length,
     skippedAmbiguous,
     warnings,
   };
@@ -772,11 +994,139 @@ export function getPlanForDay(day, savedPlan) {
   };
 }
 
-export function generateNextPlan(day, session, previousSessions = []) {
+// Deload levels and their load factors (decision H5-7). The math that scales a
+// prescription lives in deload.js; the plan only records which level applied.
+export const DELOAD_FACTORS = Object.freeze({ lighter_week: 0.9, deload: 0.85 });
+
+export function isDeloadActive(deload) {
+  return Boolean(
+    deload &&
+      typeof deload === "object" &&
+      DELOAD_FACTORS[deload.level] !== undefined &&
+      (deload.remainingSessions === null || deload.remainingSessions === undefined || deload.remainingSessions >= 1),
+  );
+}
+
+function getPlanContext(day, options = {}) {
+  const overrideMap = new Map();
+  const overrides = options.overrides;
+
+  if (Array.isArray(overrides)) {
+    overrides.forEach((record) => {
+      if (record?.programExerciseId) {
+        overrideMap.set(record.programExerciseId, record);
+      }
+    });
+  } else if (overrides && typeof overrides === "object") {
+    Object.entries(overrides).forEach(([id, record]) => overrideMap.set(id, record));
+  }
+
+  const deload = options.deload === undefined ? day?.deload ?? null : options.deload;
+
+  return {
+    overrideMap,
+    hasOverrideOption: options.overrides !== undefined,
+    programProfile: options.programProfile === undefined ? day?.programProfile ?? null : options.programProfile,
+    deload: isDeloadActive(deload) ? deload : null,
+  };
+}
+
+function getExerciseOverrideFor(exercise, context, session) {
+  const record = context.hasOverrideOption ? context.overrideMap.get(exercise.id) ?? null : exercise.override ?? null;
+  return isOverrideActive(record, getSessionTimestamp(session)) ? record : null;
+}
+
+// The freeze state a session was LOGGED under, from its own plannedExercises
+// snapshot (H5 fix round 1, decision H5-15): `deloadSession` / `held` /
+// `overrideMode` are written there at save time (sessionEdit.js). When the
+// deload has ended or the hold has expired and the session is regenerated
+// (new-E: an edit, or the delete of a later session), the current state no
+// longer says so; the snapshot does, so the session stays no evidence.
+function getSnapshotFreeze(exercise, session) {
+  const planned = getPlannedExerciseSnapshot(session, exercise);
+
+  if (!planned || typeof planned !== "object") {
+    return { deload: null, held: null };
+  }
+
+  const deload =
+    planned.deloadSession === true
+      ? { level: DELOAD_FACTORS[planned.deloadLevel] !== undefined ? planned.deloadLevel : "lighter_week", remainingSessions: null, fromSnapshot: true }
+      : null;
+  const held =
+    planned.held === true || planned.overrideMode === "hold"
+      ? { mode: "hold", note: "", remainingSessions: null, fromSnapshot: true }
+      : null;
+
+  return { deload, held };
+}
+
+// A plan entry that carries no engine evidence: a held exercise (H5-6) or a
+// session logged under a deload (H5-7). Values are what the athlete was
+// shown (the planned snapshot), the decision is "hold".
+function buildFrozenPlanExercise(exercise, session, profile, { held = null, deload = null }) {
+  const planned = getPlannedExerciseSnapshot(session, exercise) ?? {};
+  const reasons = held
+    ? [HOLD_REASON, held.note ? `Note: ${held.note}` : null].filter(Boolean)
+    : [
+        `Logged during a ${deload.level === "deload" ? "deload" : "lighter week"}, so this session is not used as progression evidence.`,
+      ];
+
+  return {
+    exerciseId: exercise.id,
+    name: exercise.name,
+    sets: planned.sets ?? exercise.sets,
+    repsMin: planned.repsMin ?? exercise.repsMin,
+    repsMax: planned.repsMax ?? exercise.repsMax,
+    repsLabel: planned.repsLabel ?? exercise.repsLabel,
+    restSeconds: planned.restSeconds ?? exercise.restSeconds,
+    targetRPE: planned.targetRPE ?? exercise.targetRPE,
+    recommendedWeight: planned.recommendedWeight ?? exercise.recommendedWeight,
+    previousWeight: planned.recommendedWeight ?? exercise.recommendedWeight,
+    repFocus: held ? "Held at your request." : "Lighter session: keep every rep crisp and leave effort in reserve.",
+    totalReps: null,
+    previousTotalReps: null,
+    exerciseRPE: null,
+    reasons,
+    conservative: true,
+    decision: "hold",
+    confidence: "high",
+    warnings: [],
+    historyTrend: "insufficient_history",
+    historySampleSize: 0,
+    progressionMode: profile.progressionMode,
+    exerciseProfile: getSerializableExerciseProfile(profile),
+    ...(held
+      ? { held: true, overrideMode: held.mode, overrideRemainingSessions: held.remainingSessions ?? null }
+      : { deloadSession: true, deloadLevel: deload.level }),
+  };
+}
+
+/**
+ * generateNextPlan(day, session, previousSessions = [], options = {})
+ *
+ * options (Phase H5, all optional; the day view model supplies the same
+ * information when the option is absent):
+ * - overrides: Array<override record> or { [programExerciseId]: record };
+ *   a "hold" record freezes that exercise (decision "hold", reason
+ *   "Held by you", `held: true`, no progression evidence). Falls back to
+ *   `exercise.override` on the day view model.
+ * - deload: the ProgramState.deload the session was logged under
+ *   ({ level, remainingSessions, ... }) or null; falls back to `day.deload`.
+ *   Under an active deload the plan status is "deload", every exercise is a
+ *   hold flagged `deloadSession: true` and no evidence is written.
+ * - programProfile: { aggression } (falls back to `day.programProfile`).
+ * - regenerated: true when the plan is rebuilt from a STORED session (an
+ *   edit, or the delete of a later session). The freeze state then comes
+ *   from the session's own plannedExercises snapshot only (H5-15, H5-47);
+ *   the deload / hold active now is ignored.
+ */
+export function generateNextPlan(day, session, previousSessions = [], options = {}) {
   const wellnessSummary = session.readiness ?? interpretWellness(session.wellness);
   const sessionRpe = toNumber(session.sessionRpe, 7);
   const highSessionRpe = sessionRpe >= 9;
   const readinessNotes = [];
+  const context = getPlanContext(day, options);
 
   if (day.type === "recovery") {
     return {
@@ -811,29 +1161,79 @@ export function generateNextPlan(day, session, previousSessions = []) {
   }
 
   const identity = getDayIdentityOptions(day);
+  // The session's own snapshot wins over the current state when it says the
+  // session was logged under a deload (decision H5-15): an explicit
+  // `options.deload` only adds to it, it cannot turn a deload session into
+  // evidence.
+  const snapshotDeload = day.exercises
+    .map((exercise) => getSnapshotFreeze(exercise, session).deload)
+    .find(Boolean) ?? null;
+  // Decision H5-47: a REGENERATED plan (an edit, or the delete of a later
+  // session) is judged by the snapshot alone. The deload or hold active
+  // today says nothing about a session that was logged before it.
+  const regenerated = options.regenerated === true;
+  const sessionDeload = regenerated ? snapshotDeload : context.deload ?? snapshotDeload;
 
-  return {
+  if (sessionDeload) {
+    readinessNotes.push(
+      `This session was logged under a ${sessionDeload.level === "deload" ? "deload" : "lighter week"}, so nothing was progressed from it.`,
+    );
+  }
+
+  const plan = {
     schemaVersion: 2,
     dayId: day.id,
     dayName: day.name,
     dayType: day.type,
     generatedAt: new Date().toISOString(),
     sourceSessionId: session.id,
-    status: "generated",
+    status: sessionDeload ? "deload" : "generated",
     lighterSession: wellnessSummary.isPoor,
     wellnessSummary,
     readinessNotes,
-    exercises: day.exercises.map((exercise) =>
-      calculateExerciseRecommendationV2(
-        exercise,
+    exercises: day.exercises.map((exercise) => {
+      const snapshot = getSnapshotFreeze(exercise, session);
+      const held = regenerated
+        ? snapshot.held
+        : getExerciseOverrideFor(exercise, context, session) ?? snapshot.held;
+      const exerciseDeload = sessionDeload ?? snapshot.deload;
+      const exerciseWithProfile =
+        context.programProfile && !exercise.programProfile
+          ? { ...exercise, programProfile: context.programProfile }
+          : exercise;
+
+      if (exerciseDeload) {
+        return buildFrozenPlanExercise(exerciseWithProfile, session, buildExerciseProfile(exerciseWithProfile), {
+          deload: exerciseDeload,
+        });
+      }
+
+      if (held?.mode === "hold") {
+        return buildFrozenPlanExercise(exerciseWithProfile, session, buildExerciseProfile(exerciseWithProfile), {
+          held,
+        });
+      }
+
+      return calculateExerciseRecommendationV2(
+        exerciseWithProfile,
         session,
         previousSessions,
         wellnessSummary,
         day.id,
         identity,
-      ),
-    ),
+      );
+    }),
   };
+
+  if (sessionDeload) {
+    plan.deload = {
+      level: sessionDeload.level,
+      factor: DELOAD_FACTORS[sessionDeload.level],
+      remainingSessions: sessionDeload.remainingSessions ?? null,
+    };
+  }
+
+  return plan;
 }
 
 function textIncludesAny(text, patterns) {
@@ -843,6 +1243,17 @@ function textIncludesAny(text, patterns) {
 function getFiniteNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+// Phase H5 helper: like getFiniteNumber but an explicit null / empty string
+// is "no value" (Number(null) is 0), which the H5 paths must not read as 0 kg
+// or 0 s.
+function getOptionalNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  return getFiniteNumber(value);
 }
 
 function getExerciseRpeFromLog(exerciseLog, setLogs) {
@@ -884,8 +1295,8 @@ function getLoggedSetCount(exerciseLog, loggedReps) {
 
 // v2 working weight (decision new-A): top logged set, then any aggregate
 // weight field, then the planned weight. BW handling lives in getNumericWeight.
-function getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise) {
-  const topSetWeight = getTopSetWeight(setLogs, exercise);
+function getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise, measurement = "reps") {
+  const topSetWeight = getTopSetWeight(setLogs, exercise, measurement);
 
   if (topSetWeight !== null) {
     return topSetWeight;
@@ -1029,6 +1440,17 @@ function isLateralRaiseStyle(exercise = {}) {
 
 export function resolveProgressionMode(exercise = {}, classification = classifyExerciseType(exercise)) {
   const loadType = normalizeProfileText(exercise.loadType);
+  // Decision H5-2: a timed or distance exercise progresses its duration /
+  // distance before anything else, whatever its type.
+  const measurement = getMeasurementProfile(exercise).measurement;
+
+  if (measurement === "time") {
+    return "time_first";
+  }
+
+  if (measurement === "distance") {
+    return "distance_first";
+  }
 
   if (classification.type === "athletic" || classification.type === "mobility") {
     return "quality_first";
@@ -1049,9 +1471,26 @@ export function resolveProgressionMode(exercise = {}, classification = classifyE
   return "double_progression";
 }
 
-export function resolveLoadIncrement(exercise = {}, classification = classifyExerciseType(exercise)) {
+/**
+ * Decision H5-4. The load step of an exercise: an explicit incrementKg
+ * (profile override, then the built-in config) wins; otherwise the equipment
+ * step table at `referenceWeight` (the exercise's known weight; a dumbbell
+ * without one gets the 2 kg band for a compound, 1 kg otherwise). Bodyweight
+ * has no step; additional load and weighted bodyweight use 2.5 kg; an
+ * unknown equipment keeps the pre-H5 fallback (2.5 compound / 1 other).
+ */
+export function resolveLoadIncrement(
+  exercise = {},
+  classification = classifyExerciseType(exercise),
+  referenceWeight = getOptionalNumber(exercise.recommendedWeight),
+) {
+  const overrideIncrement = getOptionalNumber(exercise.profileOverrides?.incrementKg);
+
+  if (overrideIncrement !== null && overrideIncrement > 0) {
+    return overrideIncrement;
+  }
+
   const explicitIncrement = getFiniteNumber(exercise.incrementKg);
-  const equipment = normalizeProfileText(exercise.equipment);
 
   if (explicitIncrement !== null && explicitIncrement > 0) {
     return explicitIncrement;
@@ -1061,32 +1500,28 @@ export function resolveLoadIncrement(exercise = {}, classification = classifyExe
     return null;
   }
 
-  if (classification.isWeightedBodyweight) {
-    return 2.5;
+  if (classification.isWeightedBodyweight || normalizeProfileText(exercise.weightMode) === "additional load") {
+    return EQUIPMENT_STEPS_KG.additional;
+  }
+
+  const equipmentClass = resolveEquipmentClass(exercise);
+
+  if (equipmentClass === "dumbbell") {
+    return getDumbbellStep(referenceWeight) ?? (classification.type === "compound" ? 2 : 1);
+  }
+
+  if (equipmentClass === "bodyweight" || equipmentClass === "band") {
+    return classification.type === "compound" ? 2.5 : 1;
+  }
+
+  const tableStep = getEquipmentStep(equipmentClass);
+
+  if (tableStep !== null) {
+    return tableStep;
   }
 
   if (classification.type === "athletic") {
-    return equipment === "barbell" ? 2.5 : 1;
-  }
-
-  if (equipment === "dumbbell") {
-    if (classification.type === "compound") {
-      return 2;
-    }
-
-    return isLateralRaiseStyle(exercise) ? 0.5 : 1;
-  }
-
-  if (equipment === "cable") {
-    return classification.type === "compound" ? 2.5 : 1.25;
-  }
-
-  if (equipment === "machine") {
-    return classification.type === "compound" ? 2.5 : 1.25;
-  }
-
-  if (equipment === "smith" || equipment === "barbell") {
-    return classification.type === "compound" ? 2.5 : 1.25;
+    return 1;
   }
 
   return classification.type === "compound" ? 2.5 : 1;
@@ -1161,33 +1596,151 @@ export function resolveProgressionCaps(exercise = {}, classification = classifyE
   };
 }
 
+/** "time" | "distance" for the modes that move a duration / a distance, else null. */
+export function getProgressionModeMeasurement(mode) {
+  return mode === "time_first" ? "time" : mode === "distance_first" ? "distance" : null;
+}
+
+/**
+ * Decision H5-3. The persisted `profileOverrides` of a program exercise,
+ * cleaned: only known fields with usable values survive. Everything else is
+ * classified. Returns {} when there is nothing.
+ */
+export function getProfileOverrides(exercise = {}) {
+  const source = exercise?.profileOverrides;
+
+  if (!source || typeof source !== "object") {
+    return {};
+  }
+
+  const overrides = {};
+  const incrementKg = getFiniteNumber(source.incrementKg);
+  const roundToKg = getFiniteNumber(source.roundToKg);
+  const rpeMax = getFiniteNumber(source.rpeMaxForLoadIncrease);
+
+  // Decision H5-52: a time / distance mode on an exercise measured another
+  // way is not usable (it would hold a reps lift on a "time target" forever),
+  // so the exercise keeps its classified mode.
+  const modeMeasurement = getProgressionModeMeasurement(source.progressionMode);
+
+  if (
+    PROGRESSION_MODES.includes(source.progressionMode) &&
+    (!modeMeasurement || modeMeasurement === getMeasurementProfile(exercise).measurement)
+  ) {
+    overrides.progressionMode = source.progressionMode;
+  }
+
+  if (incrementKg !== null && incrementKg > 0) {
+    overrides.incrementKg = incrementKg;
+  }
+
+  if (roundToKg !== null && roundToKg > 0) {
+    overrides.roundToKg = roundToKg;
+  }
+
+  if (rpeMax !== null) {
+    overrides.rpeMaxForLoadIncrease = rpeMax;
+  }
+
+  if (PROFILE_PRIORITIES.includes(source.priority)) {
+    overrides.priority = source.priority;
+  }
+
+  if (typeof source.canIncreaseLoad === "boolean") {
+    overrides.canIncreaseLoad = source.canIncreaseLoad;
+  }
+
+  return overrides;
+}
+
+/**
+ * Program-level profile (decision H5-3): { aggression: "conservative" |
+ * "standard", unit: "kg" }. Read from the exercise (day view models carry
+ * the program's profile on every exercise) or from an explicit object.
+ */
+export function resolveProgramProfile(source = null) {
+  const profile = source && typeof source === "object" ? source : null;
+  const aggression = PROGRAM_AGGRESSIONS.includes(profile?.aggression) ? profile.aggression : "standard";
+
+  return { aggression, unit: "kg" };
+}
+
 export function buildExerciseProfile(exercise = {}) {
   const classification = classifyExerciseType(exercise);
-  const progressionMode = resolveProgressionMode(exercise, classification);
+  const overrides = getProfileOverrides(exercise);
+  const classifiedMode = resolveProgressionMode(exercise, classification);
+  const progressionMode = overrides.progressionMode ?? classifiedMode;
   const loadIncrementKg = resolveLoadIncrement(exercise, classification);
   const explicitRoundTo = getFiniteNumber(exercise.roundToKg);
-  const rpePolicy = resolveRpePolicy(exercise, classification);
-  const volumePolicy = resolveVolumePolicy(exercise, classification);
-  const progressionCaps = resolveProgressionCaps(exercise, classification);
+  const roundToKg = overrides.roundToKg ?? explicitRoundTo ?? loadIncrementKg ?? 1;
+  const classifiedRpePolicy = resolveRpePolicy(exercise, classification);
+  const rpePolicy =
+    overrides.rpeMaxForLoadIncrease !== undefined
+      ? { ...classifiedRpePolicy, maxForLoadIncrease: overrides.rpeMaxForLoadIncrease }
+      : classifiedRpePolicy;
+  const classifiedVolumePolicy = resolveVolumePolicy(exercise, classification);
+  const classifiedRole = classification.isMainCompound || classification.isHighPriority ? "main" : "accessory";
+  const role = overrides.priority ?? classifiedRole;
+  // A "main" override protects the exercise's volume like a high-priority
+  // lift; an "accessory" override makes it reducible under the low-priority
+  // accessory rule (9.11) when its type allows it.
+  const volumePolicy =
+    overrides.priority === undefined
+      ? classifiedVolumePolicy
+      : overrides.priority === "main"
+        ? { ...classifiedVolumePolicy, protectVolume: true, canAutoReduceVolume: false }
+        : {
+            ...classifiedVolumePolicy,
+            protectVolume: false,
+            canAutoReduceVolume: classification.type === "isolation" || classification.type === "core",
+          };
+  const classifiedCaps = resolveProgressionCaps(exercise, classification);
+  const progressionCaps =
+    overrides.canIncreaseLoad === undefined
+      ? classifiedCaps
+      : { ...classifiedCaps, canIncreaseLoad: overrides.canIncreaseLoad && !classifiedCaps.isBodyweightOnly };
   const equipment = normalizeProfileText(exercise.equipment) || "unknown";
   const loadType = normalizeProfileText(exercise.loadType) || "unknown";
+  const measurement = getMeasurementProfile(exercise);
+  const programProfile = resolveProgramProfile(exercise.programProfile);
+  const explicitIncrement = getFiniteNumber(exercise.incrementKg);
+  const fieldSources = {
+    progressionMode: overrides.progressionMode !== undefined ? "override" : "classified",
+    incrementKg:
+      overrides.incrementKg !== undefined
+        ? "override"
+        : explicitIncrement !== null && explicitIncrement > 0
+          ? "config"
+          : "classified",
+    roundToKg: overrides.roundToKg !== undefined ? "override" : explicitRoundTo !== null ? "config" : "classified",
+    rpeMaxForLoadIncrease: overrides.rpeMaxForLoadIncrease !== undefined ? "override" : "classified",
+    priority: overrides.priority !== undefined ? "override" : "classified",
+    canIncreaseLoad: overrides.canIncreaseLoad !== undefined ? "override" : "classified",
+  };
 
   return {
     type: classification.type,
     progressionMode,
     equipment,
+    equipmentClass: resolveEquipmentClass(exercise),
     loadType,
     weightMode: exercise.weightMode ?? "kg",
     priority: volumePolicy.priority,
+    role,
     loadIncrementKg,
-    roundToKg: explicitRoundTo ?? loadIncrementKg ?? 1,
+    roundToKg,
     rpePolicy,
     volumePolicy,
     progressionCaps,
+    measurement: measurement.measurement,
+    unit: measurement.unit,
+    perSide: measurement.perSide,
+    aggression: programProfile.aggression,
+    fieldSources,
     isMainCompound: classification.isMainCompound,
     isHighPriority: classification.isHighPriority,
     isWeightedBodyweight: classification.isWeightedBodyweight,
-    isDumbbell: classification.isDumbbell,
+    isDumbbell: classification.isDumbbell || resolveEquipmentClass(exercise) === "dumbbell",
     isLateralRaiseStyle: isLateralRaiseStyle(exercise),
   };
 }
@@ -1208,6 +1761,14 @@ function getSerializableExerciseProfile(profile) {
       : profile.volumePolicy.canAutoReduceVolume
         ? "reducible_low_priority"
         : "normal",
+    // Phase H5 additions (decisions H5-1, H5-3, H5-4).
+    equipmentClass: profile.equipmentClass,
+    role: profile.role,
+    measurement: profile.measurement,
+    unit: profile.unit,
+    perSide: profile.perSide,
+    aggression: profile.aggression,
+    fieldSources: { ...profile.fieldSources },
   };
 }
 
@@ -1246,25 +1807,40 @@ export function evaluateExercisePerformance({
   planned = {},
   identity = {},
 }) {
+  const measurementProfile = getMeasurementProfile(exercise);
+  const measurement = measurementProfile.measurement;
   const exerciseLog = resolveExerciseLog(session, exercise, { identity }).log;
   const setLogs = getSetLogs(exerciseLog);
-  const loggedReps = getLoggedReps(setLogs);
+  const loggedReps = getLoggedReps(setLogs, measurement);
   const previousExerciseLog = resolveExerciseLog(previousExerciseSession, exercise, { identity }).log;
   const previousSetLogs = getSetLogs(previousExerciseLog);
-  const previousLoggedReps = getLoggedReps(previousSetLogs);
+  const previousLoggedReps = getLoggedReps(previousSetLogs, measurement);
   const targetSets = toNumber(planned.sets, exercise.sets);
-  const repsMin = planned.repsMin ?? exercise.repsMin;
-  const repsMax = planned.repsMax ?? exercise.repsMax;
+  // Decision H5-2: a timed / distance target that only has a label ("30 s",
+  // H3-17) gets its numeric range from the label; reps targets are unchanged.
+  const labelRange =
+    measurement === "reps"
+      ? null
+      : getMeasurementTargetRange({
+          repsMin: planned.repsMin ?? exercise.repsMin,
+          repsMax: planned.repsMax ?? exercise.repsMax,
+          repsLabel: planned.repsLabel ?? exercise.repsLabel,
+        });
+  const baseRepsMin = planned.repsMin ?? exercise.repsMin;
+  const baseRepsMax = planned.repsMax ?? exercise.repsMax;
+  const repsMin = labelRange && (baseRepsMin === null || baseRepsMin === undefined) ? labelRange.min : baseRepsMin;
+  const repsMax = labelRange && (baseRepsMax === null || baseRepsMax === undefined) ? labelRange.max : baseRepsMax;
   const targetRPE = planned.targetRPE ?? exercise.targetRPE;
   const plannedWeight = planned.recommendedWeight ?? exercise.recommendedWeight;
   const previousPlannedWeight =
     getPlannedExerciseSnapshot(previousExerciseSession, exercise)?.recommendedWeight ?? plannedWeight;
-  const workingWeight = getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise);
+  const workingWeight = getExerciseWorkingWeight(exerciseLog, setLogs, plannedWeight, exercise, measurement);
   const previousWorkingWeight = getExerciseWorkingWeight(
     previousExerciseLog,
     previousSetLogs,
     previousPlannedWeight,
     exercise,
+    measurement,
   );
   const exerciseRPE = getExerciseRpeFromLog(exerciseLog, setLogs);
   const totalReps = getAggregateTotalReps(exerciseLog, loggedReps);
@@ -1325,7 +1901,11 @@ export function evaluateExercisePerformance({
     warnings.push("Set-level data was unavailable, so progression used aggregate reps.");
   }
 
-  if (exerciseRPE === null) {
+  // An exercise that was not logged at all is "insufficient_data" (new-C) and
+  // says so in its reason; the RPE warning is for a LOGGED exercise whose
+  // sets carry no RPE (H5 fix round 1: a skipped lift used to warn that its
+  // RPE was unavailable although nothing of it was logged).
+  if (exerciseRPE === null && hasMeaningfulData) {
     warnings.push("Exercise RPE was unavailable, so load progression stayed conservative.");
   }
 
@@ -1358,6 +1938,9 @@ export function evaluateExercisePerformance({
     hasMeaningfulData,
     dataQuality,
     painFlagged: Boolean(exerciseLog?.painFlag),
+    measurement,
+    unit: measurementProfile.unit,
+    perSide: measurementProfile.perSide,
     warnings,
   };
 }
@@ -1594,7 +2177,93 @@ function getConfidence({ performance, decision, mode }) {
   return "low";
 }
 
+// ---------------------------------------------------------------------------
+// Time / distance progression (decision H5-2): the duration or distance
+// grows by a step table before any load change. Time: +5 s under 60 s,
+// +10 s from 60 s, never past 600 s per set. Distance: +10 % rounded to 25 m,
+// at least 25 m, never past 10,000 m per set.
+// ---------------------------------------------------------------------------
+
+export const MEASUREMENT_PROGRESSION = Object.freeze({
+  time: Object.freeze({ stepUnder60: 5, stepFrom60: 10, threshold: 60, max: 600 }),
+  distance: Object.freeze({ percent: 10, roundTo: 25, minStep: 25, max: 10000 }),
+});
+
+export function getMeasurementStep(measurement, value) {
+  const current = getOptionalNumber(value);
+
+  if (current === null) {
+    return null;
+  }
+
+  if (measurement === "time") {
+    const rule = MEASUREMENT_PROGRESSION.time;
+    return current < rule.threshold ? rule.stepUnder60 : rule.stepFrom60;
+  }
+
+  if (measurement === "distance") {
+    const rule = MEASUREMENT_PROGRESSION.distance;
+    return Math.max(rule.minStep, roundTo((current * rule.percent) / 100, rule.roundTo));
+  }
+
+  return null;
+}
+
+/**
+ * The next target range after one measurement step, or null when the range
+ * has no top value or already sits at the cap. Both ends move by the same
+ * amount so a "45-60 s" target becomes "55-70 s".
+ */
+export function increaseMeasurementRange(measurement, min, max) {
+  const top = getOptionalNumber(max);
+
+  if (top === null) {
+    return null;
+  }
+
+  const cap = MEASUREMENT_PROGRESSION[measurement]?.max;
+  const step = getMeasurementStep(measurement, top);
+
+  if (!step || cap === undefined) {
+    return null;
+  }
+
+  const nextMax = Math.min(cap, top + step);
+
+  if (nextMax <= top) {
+    return null;
+  }
+
+  const low = getOptionalNumber(min);
+
+  return { min: low === null ? null : low + (nextMax - top), max: nextMax, step: nextMax - top };
+}
+
+function isMeasurementMode(mode) {
+  return mode === "time_first" || mode === "distance_first";
+}
+
 export function generateCoachReason(decision, { mode, performance, readinessModifier, sessionFatigue }) {
+  if (isMeasurementMode(mode)) {
+    const what = mode === "time_first" ? "time" : "distance";
+
+    if (decision === "increase_time" || decision === "increase_distance") {
+      return `Every set reached the top of the ${what} target with effort in reserve - the ${what} goes up before any load does.`;
+    }
+
+    if (decision === "hold" && readinessModifier.isRed && performance.belowMin) {
+      return `You came in under the ${what} target, but recovery was low today - so the call is to repeat it, not cut it.`;
+    }
+
+    if (decision === "hold" && sessionFatigue.isVeryHigh) {
+      return `That session cost a lot, so the ${what} target stays where it is for now.`;
+    }
+
+    if (decision === "hold") {
+      return `The ${what} target stays put until every set reaches it with effort inside the target range.`;
+    }
+  }
+
   if (readinessModifier.isRed && decision === "hold" && performance.belowMin) {
     return "You came in under target, but recovery was low today - so the call is to repeat this load, not cut it.";
   }
@@ -1935,6 +2604,60 @@ function applyHistoryContext({
   return recommendation;
 }
 
+const INCREASE_DECISIONS = new Set(["increase_load", "increase_time", "increase_distance"]);
+
+// A time / distance step that was withdrawn leaves the current range in place.
+function clearNextRange(recommendation) {
+  delete recommendation.nextRepsMin;
+  delete recommendation.nextRepsMax;
+  delete recommendation.nextRepsLabel;
+}
+
+/**
+ * Decision H5-3: a program set to "conservative" aggression caps every
+ * decision at hold-or-one-step: a load / time / distance increase needs two
+ * strong sessions in a row (the current one and the most recent fresh
+ * sample), and a reduction needs twice the usual evidence (two consecutive
+ * missed-target / high-RPE samples before the current one instead of one).
+ */
+function applyProgramAggression({ recommendation, historySummary, performance, profile, mode }) {
+  if (profile.aggression !== "conservative") {
+    return recommendation;
+  }
+
+  const twoStrongSessions = (historySummary.consecutiveStrongSessions ?? 0) >= 1;
+
+  if (INCREASE_DECISIONS.has(recommendation.decision) && !twoStrongSessions) {
+    clearNextRange(recommendation);
+    return overrideDecision(recommendation, {
+      decision: mode === "reps_first" ? "increase_reps" : "hold",
+      nextWeight: performance.workingWeight,
+      nextSets: performance.targetSets,
+      repFocus: "Repeat this performance once more before stepping up.",
+      confidence: capConfidence(recommendation.confidence, "medium"),
+      conservative: true,
+      contextReason:
+        "This program is set to conservative progression, so a step up needs two strong sessions in a row.",
+    });
+  }
+
+  if (recommendation.decision === "reduce_load" && (historySummary.consecutiveMissedHighRpe ?? 0) < 2) {
+    clearNextRange(recommendation);
+    return overrideDecision(recommendation, {
+      decision: "hold",
+      nextWeight: performance.workingWeight,
+      nextSets: performance.targetSets,
+      repFocus: "Repeat the load once more before reducing unless the same issue repeats.",
+      confidence: capConfidence(recommendation.confidence, "medium"),
+      conservative: true,
+      contextReason:
+        "This program is set to conservative progression, so a reduction needs the same issue in two more sessions.",
+    });
+  }
+
+  return recommendation;
+}
+
 export const PAIN_FLAG_WARNING =
   "Pain or discomfort was flagged on this exercise. The coach is holding progression - if it keeps showing up, lower the load, swap the movement, or get it checked.";
 
@@ -1981,7 +2704,45 @@ export function calculateNextRecommendation({
     );
   }
 
-  if (mode === "quality_first") {
+  if (isMeasurementMode(mode)) {
+    // Decision H5-2: duration / distance progresses first; the load never
+    // changes in these modes (an override or a target edit changes it).
+    const measurement = mode === "time_first" ? "time" : "distance";
+    const range = { unit: performance.unit, perSide: performance.perSide };
+    const canProgress =
+      performance.allAtTop &&
+      isManageableExerciseRpe(performance, profile.rpePolicy.maxForLoadIncrease) &&
+      !readinessModifier.isRed &&
+      !sessionFatigue.isVeryHigh;
+    const nextRange = canProgress
+      ? increaseMeasurementRange(measurement, performance.repsMin, performance.repsMax)
+      : null;
+
+    recommendation.nextWeight = performance.workingWeight;
+
+    if (nextRange) {
+      recommendation.decision = measurement === "time" ? "increase_time" : "increase_distance";
+      recommendation.nextRepsMin = nextRange.min;
+      recommendation.nextRepsMax = nextRange.max;
+      recommendation.nextRepsLabel = formatMeasurementRange({ ...range, min: nextRange.min, max: nextRange.max });
+      recommendation.repFocus = `Build every set to ${formatMeasurementRange({ ...range, min: nextRange.max, max: nextRange.max })}.`;
+    } else if (performance.belowMin && isHighExerciseRpe(performance)) {
+      recommendation.decision = "hold";
+      recommendation.repFocus = `Rebuild the ${measurement} target with cleaner effort before adding to it.`;
+      recommendation.conservative = true;
+    } else if (performance.allAtTop) {
+      recommendation.decision = "hold";
+      recommendation.repFocus = "Repeat this target with the same control.";
+      recommendation.conservative = readinessModifier.isRed || sessionFatigue.isVeryHigh;
+    } else {
+      recommendation.decision = "hold";
+      recommendation.repFocus =
+        performance.repsMax !== null && performance.repsMax !== undefined
+          ? `Bring every set to ${formatMeasurementRange({ ...range, min: performance.repsMax, max: performance.repsMax })}.`
+          : `Log the ${measurement} of every set to establish the target.`;
+      recommendation.conservative = readinessModifier.isRed;
+    }
+  } else if (mode === "quality_first") {
     recommendation.warnings.push(
       "No speed or quality metric is logged, so athletic decisions use RPE, readiness, and completion as proxies.",
     );
@@ -2154,16 +2915,16 @@ export function calculateNextRecommendation({
     profile,
   });
 
+  applyProgramAggression({ recommendation, historySummary, performance, profile, mode });
+
   // Pain handling runs after history and stays independent of it. It is the
   // most important context for the athlete, so it becomes the one context
   // sentence next to the final decision's primary reason.
   if (performance.painFlagged) {
-    if (
-      recommendation.decision === "increase_load" ||
-      recommendation.decision === "increase_reps"
-    ) {
+    if (INCREASE_DECISIONS.has(recommendation.decision) || recommendation.decision === "increase_reps") {
       recommendation.decision = "hold";
       recommendation.nextWeight = performance.workingWeight;
+      clearNextRange(recommendation);
     }
 
     // The pain sentence takes the single context slot; a context sentence that
@@ -2260,9 +3021,10 @@ function calculateExerciseRecommendationV2(
     exerciseId: exercise.id,
     name: exercise.name,
     sets: recommendation.nextSets,
-    repsMin: performance.repsMin,
-    repsMax: performance.repsMax,
-    repsLabel: performance.repsLabel,
+    // Decision H5-2: a time / distance step moves the target range itself.
+    repsMin: recommendation.nextRepsMin !== undefined ? recommendation.nextRepsMin : performance.repsMin,
+    repsMax: recommendation.nextRepsMax !== undefined ? recommendation.nextRepsMax : performance.repsMax,
+    repsLabel: recommendation.nextRepsLabel !== undefined ? recommendation.nextRepsLabel : performance.repsLabel,
     restSeconds: planned.restSeconds ?? exercise.restSeconds,
     targetRPE: performance.targetRPE,
     recommendedWeight: recommendation.nextWeight,

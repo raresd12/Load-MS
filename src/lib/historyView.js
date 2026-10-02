@@ -22,13 +22,7 @@ export function buildHistorySessionSummary(session, exerciseLookup) {
   const exerciseGroups = buildHistoryExerciseGroups(loggedSets);
   const readiness = getHistoryReadiness(session);
   const sessionRpe = numberValue(session.sessionRpe, null);
-  const totalVolume = loggedSets.reduce(
-    (total, set) =>
-      typeof set.weight === "number" && Number.isFinite(set.reps)
-        ? total + set.weight * set.reps
-        : total,
-    0,
-  );
+  const totalVolume = sumHistoryVolume(loggedSets);
 
   return {
     dayName: session.dayName ?? loggedSets[0]?.dayName ?? "Workout",
@@ -43,6 +37,23 @@ export function buildHistorySessionSummary(session, exerciseLookup) {
     notes: getHistorySessionNotes(session),
     schemaLabel: session.schemaVersion ? `v${session.schemaVersion}` : "legacy",
   };
+}
+
+// H5 fix round 1 (decision H5-10 applied to History): the card's volume is
+// the measurement-aware tonnage of the set record (per dumbbell x2, per
+// side x2; BW, timed and distance sets add nothing), the same number as
+// Progress, the recap, the Dashboard and the records. A record without the
+// H5 `tonnage` field falls back to the as-logged kg x reps.
+function getHistorySetVolume(set) {
+  if (Object.prototype.hasOwnProperty.call(set, "tonnage")) {
+    return Number.isFinite(set.tonnage) ? set.tonnage : 0;
+  }
+
+  return typeof set.weight === "number" && Number.isFinite(set.reps) ? set.weight * set.reps : 0;
+}
+
+function sumHistoryVolume(sets) {
+  return sets.reduce((total, set) => total + getHistorySetVolume(set), 0);
 }
 
 export function buildHistoryExerciseGroups(setRecords) {
@@ -65,15 +76,12 @@ export function buildHistoryExerciseGroups(setRecords) {
   });
 
   return [...groups.values()].map((group) => {
-    const weightedSets = group.sets.filter(
-      (set) => typeof set.weight === "number" && Number.isFinite(set.reps),
-    );
     const rpes = group.sets.map((set) => set.rpe).filter(Number.isFinite);
 
     return {
       ...group,
       sets: group.sets.sort((left, right) => (left.setNumber ?? 0) - (right.setNumber ?? 0)),
-      totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+      totalVolume: sumHistoryVolume(group.sets),
       averageRpe: average(rpes),
     };
   });

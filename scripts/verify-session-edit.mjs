@@ -184,6 +184,82 @@ assert.equal(stringifyDraftValue("BW"), "BW");
 }
 
 // ---------------------------------------------------------------------------
+// H5 fix round 1 (decision H5-26): the freeze flags of a stored plan entry
+// (a hold or a deload the LAST session was logged under) never reach the
+// resolved plan or the next snapshot; only the override / deload active now
+// does. A cleared or ended hold therefore stops being "Held by you".
+// ---------------------------------------------------------------------------
+{
+  const basePlan = getBasePlan(dayWithBoth);
+  const frozenPlan = {
+    ...basePlan,
+    status: "generated",
+    exercises: basePlan.exercises.map((entry) =>
+      entry.exerciseId === "pe-bench"
+        ? { ...entry, decision: "hold", reasons: ["Held by you"], held: true, overrideMode: "hold", overrideRemainingSessions: 0 }
+        : { ...entry, decision: "hold", reasons: ["Logged during a lighter week, so this session is not used as progression evidence."], deloadSession: true, deloadLevel: "lighter_week" },
+    ),
+  };
+
+  // No override and no deload active now: the stale flags are gone.
+  const cleared = buildResolvedPlan(null, dayWithBoth, frozenPlan);
+  const clearedBench = cleared.exercises.find((entry) => entry.exerciseId === "pe-bench");
+  const clearedRow = cleared.exercises.find((entry) => entry.exerciseId === "pe-row");
+  assert.equal(clearedBench.held, undefined, "a hold that ran out is not copied from the stored plan");
+  assert.equal(clearedBench.overrideMode, undefined);
+  assert.equal(clearedBench.overrideRemainingSessions, undefined);
+  assert.equal(clearedRow.deloadSession, undefined, "an ended deload is not copied either");
+  assert.equal(clearedRow.deloadLevel, undefined);
+  assert.notEqual(clearedBench.prescriptionSource, "override");
+  const clearedSnapshot = buildPlannedExercisesSnapshot(dayWithBoth, cleared);
+  assert.equal(clearedSnapshot["pe-bench"].held, undefined, "the next session's snapshot is not held");
+  assert.equal(clearedSnapshot["pe-bench"].overrideMode, undefined);
+  assert.equal(clearedSnapshot["pe-row"].deloadSession, undefined);
+
+  // An active hold on the day view model: the flags come from the resolution.
+  const heldDay = {
+    ...dayWithBoth,
+    exercises: dayWithBoth.exercises.map((entry) =>
+      entry.id === "pe-bench" ? { ...entry, override: { mode: "hold", remainingSessions: 2, untilDate: null, note: "" } } : entry,
+    ),
+  };
+  const held = buildResolvedPlan(null, heldDay, basePlan);
+  const heldBench = held.exercises.find((entry) => entry.exerciseId === "pe-bench");
+  assert.equal(heldBench.held, true);
+  assert.equal(heldBench.overrideMode, "hold");
+  assert.equal(heldBench.overrideRemainingSessions, 2);
+  assert.equal(heldBench.prescriptionSource, "override");
+  const heldSnapshot = buildPlannedExercisesSnapshot(heldDay, held);
+  assert.equal(heldSnapshot["pe-bench"].held, true, "an active hold is in the snapshot");
+  assert.equal(heldSnapshot["pe-bench"].overrideMode, "hold");
+  assert.equal(heldSnapshot["pe-row"].held, undefined);
+
+  // A manual override is flagged by mode only, never as held.
+  const manualDay = {
+    ...dayWithBoth,
+    exercises: dayWithBoth.exercises.map((entry) =>
+      entry.id === "pe-bench" ? { ...entry, override: { mode: "manual", prescription: { targetWeight: 55 }, remainingSessions: 1, untilDate: null, note: "" } } : entry,
+    ),
+  };
+  const manualBench = buildResolvedPlan(null, manualDay, frozenPlan).exercises.find((entry) => entry.exerciseId === "pe-bench");
+  assert.equal(manualBench.held, undefined, "a manual override over a stale hold entry is not a hold");
+  assert.equal(manualBench.overrideMode, "manual");
+  assert.equal(manualBench.recommendedWeight, 55);
+
+  // An active deload on the day view model: the flag and the level follow it.
+  const deloadDay = {
+    ...dayWithBoth,
+    exercises: dayWithBoth.exercises.map((entry) => ({ ...entry, deload: { level: "deload", remainingSessions: 2, totalSessions: 2 } })),
+  };
+  const deloaded = buildResolvedPlan(null, deloadDay, basePlan);
+  assert.equal(deloaded.exercises[0].deloadSession, true);
+  assert.equal(deloaded.exercises[0].deloadLevel, "deload");
+  const deloadSnapshot = buildPlannedExercisesSnapshot(deloadDay, deloaded);
+  assert.equal(deloadSnapshot["pe-bench"].deloadSession, true);
+  assert.equal(deloadSnapshot["pe-bench"].deloadLevel, "deload");
+}
+
+// ---------------------------------------------------------------------------
 // Edit round-trip
 // ---------------------------------------------------------------------------
 {

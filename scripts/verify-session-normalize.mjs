@@ -234,11 +234,17 @@ assert.equal(getPlanExercise(null, "pe-bench"), undefined);
   assert.deepEqual(merged.recoveryActivities, { Walk: true });
   assert.deepEqual(merged.wellness, base.wellness, "wellness stays the base draft's");
 
-  // Fewer slots than saved values: the saved extra sets are dropped, the rest kept.
+  // Fewer slots than saved values (a hold / override / deload lowered the set
+  // count mid-session, decision H5-21): logged extra sets are kept, blank
+  // extra rows are dropped.
   const smallerPlan = { status: "generated", exercises: [{ exerciseId: "pe-bench", sets: 1 }] };
   const shrunk = mergeSavedDraft(createDraft(day, smallerPlan), saved);
-  assert.equal(shrunk.exercises["pe-bench"].sets.length, 1);
+  assert.equal(shrunk.exercises["pe-bench"].sets.length, 2, "both logged sets survive a smaller plan");
   assert.deepEqual(shrunk.exercises["pe-bench"].sets[0], { reps: 8, weight: 60, rpe: 8 });
+  assert.deepEqual(shrunk.exercises["pe-bench"].sets[1], { reps: 7, weight: 60, rpe: 8.5 });
+  const blankExtra = mergeSavedDraft(createDraft(day, smallerPlan), { exercises: { "pe-bench": { sets: [{ reps: 8, weight: 60, rpe: 8 }, { reps: "", weight: "", rpe: "" }, { seconds: "30" }] } } });
+  assert.equal(blankExtra.exercises["pe-bench"].sets.length, 2, "a blank extra row is dropped, a logged count keeps its row");
+  assert.deepEqual(blankExtra.exercises["pe-bench"].sets[1], { reps: "", weight: "", rpe: "", seconds: "30" });
 
   // A saved set with only some fields keeps the blank defaults for the others.
   const partial = mergeSavedDraft(base, { exercises: { "pe-bench": { sets: [{ reps: 5 }] } } });
@@ -367,6 +373,12 @@ assert.equal(getStoredSetupCue({}, day.exercises[0]), "");
     actualWeight: 60,
     actualReps: 8,
     actualRPE: 8,
+    // H5-20: the profile the set was logged under is always persisted, a plain
+    // reps + kg set included.
+    measurement: "reps",
+    perSide: false,
+    weightMode: "kg",
+    loadType: "external",
     completed: true,
   });
   assert.deepEqual(

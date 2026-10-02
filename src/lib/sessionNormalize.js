@@ -4,8 +4,39 @@
 // exercise log and WorkoutSet records the save path writes, and the
 // programId + programExerciseId identity rule for reading a session back
 // (decision new-J). Fixture: scripts/verify-session-normalize.mjs.
+import { getMeasurementProfile } from "./measurement.js";
 import { wellnessMetrics } from "./progression.js";
 import { isBodyweightText, normalizeWeight } from "./sessionLog.js";
+
+// Phase H5 (decisions H5-1 / H5-13): a draft set keeps ONE count field in
+// the exercise's measurement: `reps`, `seconds` or `meters`. A reps-only set
+// of a timed / distance exercise (logged before H5) stays a reps set.
+const DRAFT_COUNT_FIELDS = Object.freeze({ reps: "reps", time: "seconds", distance: "meters" });
+const DRAFT_COUNT_NOUNS = Object.freeze({ reps: "reps", seconds: "seconds", meters: "meters" });
+
+export function getDraftSetCountField(exercise) {
+  return DRAFT_COUNT_FIELDS[getMeasurementProfile(exercise ?? {}).measurement] ?? "reps";
+}
+
+/** { field, value, noun } of the count a draft set holds ("" when blank). */
+export function getDraftSetCount(set, exercise) {
+  const field = getDraftSetCountField(exercise);
+
+  if (!isBlank(set?.[field])) {
+    return { field, value: set[field], noun: DRAFT_COUNT_NOUNS[field] };
+  }
+
+  if (field !== "reps" && !isBlank(set?.reps)) {
+    return { field: "reps", value: set.reps, noun: "reps" };
+  }
+
+  return { field, value: "", noun: DRAFT_COUNT_NOUNS[field] };
+}
+
+/** A draft set holds logged data when any of its count / load / RPE fields is filled. */
+export function hasDraftSetData(set) {
+  return ["reps", "seconds", "meters", "weight", "rpe"].some((field) => !isBlank(set?.[field]));
+}
 
 export function createNeutralReadiness() {
   return {
@@ -160,6 +191,9 @@ export function getExerciseLog(session, exerciseOrId) {
         reps: set.actualReps,
         weight: set.actualWeight,
         rpe: set.actualRPE,
+        // H5-13: timed / distance counts only when the set carries them.
+        ...(Number.isFinite(set.actualSeconds) ? { seconds: set.actualSeconds } : {}),
+        ...(Number.isFinite(set.actualMeters) ? { meters: set.actualMeters } : {}),
       })),
   };
 }
@@ -229,10 +263,20 @@ export function mergeSavedDraft(baseDraft, savedDraft) {
             ...baseExercise,
             notes: savedExercise.notes ?? baseExercise.notes,
             painFlag: savedExercise.painFlag ?? baseExercise.painFlag ?? false,
-            sets: baseExercise.sets.map((baseSet, index) => ({
-              ...baseSet,
-              ...(savedExercise.sets?.[index] ?? {}),
-            })),
+            // The plan's slot count wins for blank rows, but a saved row the
+            // athlete already logged beyond it is kept (H5 fix round 1,
+            // decision H5-21): a hold / manual override / deload that lowers
+            // the set count mid-session never drops logged sets.
+            sets: [
+              ...baseExercise.sets.map((baseSet, index) => ({
+                ...baseSet,
+                ...(savedExercise.sets?.[index] ?? {}),
+              })),
+              ...(Array.isArray(savedExercise.sets) ? savedExercise.sets : [])
+                .slice(baseExercise.sets.length)
+                .filter((savedSet) => hasDraftSetData(savedSet))
+                .map((savedSet) => ({ reps: "", weight: "", rpe: "", ...savedSet })),
+            ],
           },
         ];
       }),
@@ -271,11 +315,19 @@ export function normalizeExerciseLogs(day, draftExercises) {
           notes: draftExercise.notes.trim(),
           painFlag: Boolean(draftExercise.painFlag),
           exerciseRPE,
-          sets: draftExercise.sets.map((set) => ({
-            reps: set.reps === "" ? null : numberValue(set.reps, 0),
-            weight: normalizeWeight(set.weight),
-            rpe: getSetRpe(set),
-          })),
+          sets: draftExercise.sets.map((set) => {
+            const count = getDraftSetCount(set, exercise);
+
+            return {
+              reps: isBlank(set.reps) ? null : numberValue(set.reps, 0),
+              weight: normalizeWeight(set.weight),
+              rpe: getSetRpe(set),
+              // H5-13: the count of a timed / distance set lives in its own field.
+              ...(count.field !== "reps" && !isBlank(count.value)
+                ? { [count.field]: numberValue(count.value, 0) }
+                : {}),
+            };
+          }),
         },
       ];
     }),
@@ -300,7 +352,9 @@ export function validateDraft(day, draft) {
     const draftExercise = draft.exercises[exercise.id];
 
     draftExercise.sets.forEach((set, index) => {
-      const hasReps = !isBlank(set.reps);
+      // H5-13: the count is reps, seconds or meters by the exercise's measurement.
+      const count = getDraftSetCount(set, exercise);
+      const hasReps = !isBlank(count.value);
       const hasWeight = !isBlank(set.weight);
       const hasRpe = !isBlank(set.rpe);
 
@@ -309,9 +363,9 @@ export function validateDraft(day, draft) {
       }
 
       if (hasReps) {
-        const reps = numberValue(set.reps, NaN);
+        const reps = numberValue(count.value, NaN);
         if (!Number.isFinite(reps) || reps < 0) {
-          errors.push(`${exercise.name} set ${index + 1}: reps must be 0 or higher.`);
+          errors.push(`${exercise.name} set ${index + 1}: ${count.noun} must be 0 or higher.`);
         }
 
         if (!isValidWeightEntry(set.weight, exercise)) {
@@ -322,9 +376,9 @@ export function validateDraft(day, draft) {
           errors.push(`${exercise.name} set ${index + 1}: enter set RPE.`);
         }
       } else if (hasWeight) {
-        errors.push(`${exercise.name} set ${index + 1}: kg/BW was entered without reps.`);
+        errors.push(`${exercise.name} set ${index + 1}: kg/BW was entered without ${count.noun}.`);
       } else if (hasRpe) {
-        errors.push(`${exercise.name} set ${index + 1}: set RPE was entered without reps.`);
+        errors.push(`${exercise.name} set ${index + 1}: set RPE was entered without ${count.noun}.`);
       }
 
       if (hasWeight && !isValidWeightEntry(set.weight, exercise)) {
@@ -357,9 +411,23 @@ export function createWorkoutSetLogs({ sessionId, programId, day, plan, draft })
     const draftExercise = draft.exercises[exercise.id];
     const programExerciseId = exercise.programExerciseId ?? exercise.id;
     const exerciseId = exercise.libraryExerciseId ?? exercise.legacyExerciseId ?? exercise.id;
+    // H5-13 / H5 fix round 1 (decision H5-20): every set records the profile
+    // it was logged under (measurement, per side, weight mode, load type), a
+    // plain reps + kg set included, so a later kg -> per dumbbell or per side
+    // change of the exercise never rewrites the volume of what was logged and
+    // the trend comparability guard sees both sides.
+    const profile = getMeasurementProfile(exercise);
+    const profileFields = {
+      measurement: profile.measurement,
+      perSide: profile.perSide,
+      weightMode: profile.weightMode,
+      loadType: profile.loadType,
+    };
 
     return draftExercise.sets.map((set, index) => {
+      const count = getDraftSetCount(set, exercise);
       const actualReps = isBlank(set.reps) ? null : numberValue(set.reps, null);
+      const actualCount = isBlank(count.value) ? null : numberValue(count.value, null);
       const actualWeight = normalizeWeight(set.weight);
       const actualRPE = getSetRpe(set);
 
@@ -375,7 +443,10 @@ export function createWorkoutSetLogs({ sessionId, programId, day, plan, draft })
         actualWeight,
         actualReps,
         actualRPE,
-        completed: actualReps !== null && actualWeight !== null && actualRPE !== null,
+        ...(profile.measurement === "time" ? { actualSeconds: count.field === "seconds" ? actualCount : null } : {}),
+        ...(profile.measurement === "distance" ? { actualMeters: count.field === "meters" ? actualCount : null } : {}),
+        ...profileFields,
+        completed: actualCount !== null && actualWeight !== null && actualRPE !== null,
       };
     });
   });

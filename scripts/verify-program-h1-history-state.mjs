@@ -56,10 +56,15 @@ try {
   // ------------------------------------------------------------------
   // Pure derivation.
   // ------------------------------------------------------------------
+  // Decision H5-5: the derived patch also carries currentWeek / currentCycle
+  // (week 1, cycle 1 with no session; the first default program has no
+  // optional day and no cycleWeeks).
   assert.deepEqual(deriveProgramStatePatchFromSessions(DEFAULT_PROGRAM_ID, [], days), {
     lastCompletedDayId: null,
     nextRecommendedDayId: day1.id,
     lastWorkoutDate: null,
+    currentWeek: 1,
+    currentCycle: 1,
   });
 
   const s1 = session("s1", day1.id, "2026-09-20T10:00:00.000Z");
@@ -69,7 +74,7 @@ try {
 
   assert.deepEqual(
     deriveProgramStatePatchFromSessions(DEFAULT_PROGRAM_ID, [s1, s2, other, legacy], days),
-    { lastCompletedDayId: day2.id, nextRecommendedDayId: day3.id, lastWorkoutDate: s2.date },
+    { lastCompletedDayId: day2.id, nextRecommendedDayId: day3.id, lastWorkoutDate: s2.date, currentWeek: 1, currentCycle: 1 },
     "most recent session of THIS program drives the state; other/legacy sessions do not",
   );
   assert.deepEqual(
@@ -85,7 +90,7 @@ try {
   );
   assert.deepEqual(
     deriveProgramStatePatchFromSessions(DEFAULT_PROGRAM_ID, [session("gone", "deleted-day", s2.date)], days),
-    { lastCompletedDayId: "deleted-day", nextRecommendedDayId: day1.id, lastWorkoutDate: s2.date },
+    { lastCompletedDayId: "deleted-day", nextRecommendedDayId: day1.id, lastWorkoutDate: s2.date, currentWeek: 1, currentCycle: 1 },
     "a day that no longer exists points at the first day",
   );
 

@@ -16,6 +16,7 @@
 // draft (immutable style) or, when the target day/section/exercise does not
 // exist, the same draft object unchanged. Order is array order; orderIndex is
 // assigned on save.
+import { isValidMeasurement } from "./measurement.js";
 import { readStorage, STORAGE_KEYS } from "./storage.js";
 import {
   cleanNumber,
@@ -75,6 +76,13 @@ export const DRAFT_PRESCRIPTION_FIELDS = Object.freeze([
   "weightMode",
 ]);
 
+// H5 fix round 1 (decision H5-19): the coach profile travels with the draft
+// exercise - `measurement` / `perSide` (H5-1) and `profileOverrides` (H5-3) -
+// so the Studio edits it in the working copy and Apply / Save write it with
+// everything else. The keys are present only when the exercise carries them
+// (an absent key = classified / inferred); no provenance is tracked for them.
+export const DRAFT_EXERCISE_PROFILE_FIELDS = Object.freeze(["measurement", "perSide", "profileOverrides"]);
+
 // Fields compared by diffDraftAgainstProgram and applyProgramDraft.
 const DRAFT_EXERCISE_COMPARE_FIELDS = Object.freeze([
   ...DRAFT_PRESCRIPTION_FIELDS,
@@ -82,7 +90,50 @@ const DRAFT_EXERCISE_COMPARE_FIELDS = Object.freeze([
   "type",
   "isOptional",
   "sourceWeight",
+  ...DRAFT_EXERCISE_PROFILE_FIELDS,
 ]);
+
+function cleanDraftProfileOverrides(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const clean = Object.fromEntries(Object.entries(value).filter(([, entry]) => !isNullish(entry)));
+  return Object.keys(clean).length ? clean : null;
+}
+
+// The profile fields of a draft exercise input: only the keys it carries
+// with a usable value (a valid measurement, a boolean perSide, a non-empty
+// overrides object); everything else is left out.
+function readDraftProfileFields(source) {
+  const fields = {};
+
+  if (isValidMeasurement(source?.measurement)) {
+    fields.measurement = source.measurement;
+  }
+
+  if (typeof source?.perSide === "boolean") {
+    fields.perSide = source.perSide;
+  }
+
+  const overrides = cleanDraftProfileOverrides(source?.profileOverrides);
+
+  if (overrides) {
+    fields.profileOverrides = overrides;
+  }
+
+  return fields;
+}
+
+function comparableDraftProfile(source) {
+  const fields = readDraftProfileFields(source);
+
+  return {
+    measurement: fields.measurement ?? null,
+    perSide: fields.perSide ?? null,
+    profileOverrides: fields.profileOverrides ?? null,
+  };
+}
 
 const DEFAULT_TARGETS = Object.freeze({
   targetSets: 3,
@@ -486,6 +537,7 @@ function normalizeDraftExercise(input, context, options = {}) {
     loadType,
     weightMode,
     sourceWeight,
+    ...readDraftProfileFields(source),
     provenance: mergedProvenance,
   };
 }
@@ -973,6 +1025,8 @@ export function draftToShare(draft) {
           shareExercise.sourceWeight = exercise.sourceWeight;
         }
 
+        Object.assign(shareExercise, readDraftProfileFields(exercise));
+
         if (exercise.libraryStatus === "unmatched" && exercise.name) {
           shareExercise.name = exercise.name;
         }
@@ -1419,6 +1473,28 @@ export function updateExercise(draft, dayId, exerciseId, patch = {}) {
       next.newLibraryExercise = { ...next.newLibraryExercise, name: next.name };
     }
 
+    // Coach profile fields (H5-19): a null / unusable value removes the key
+    // (back to classified / inferred), a usable one is stored as it is.
+    DRAFT_EXERCISE_PROFILE_FIELDS.forEach((field) => {
+      if (!hasOwn(patch, field)) {
+        return;
+      }
+
+      const value = readDraftProfileFields({ [field]: patch[field] })[field];
+
+      if (isSameValue(value, exercise[field])) {
+        return;
+      }
+
+      if (value === undefined) {
+        delete next[field];
+      } else {
+        next[field] = value;
+      }
+
+      changed = true;
+    });
+
     return changed ? next : exercise;
   });
 
@@ -1739,7 +1815,17 @@ export function validateProgramDraft(draft) {
         });
 
         collectProgramExerciseProfileErrors(exercise).forEach((message) => {
-          const field = /load type/.test(message) ? "loadType" : /weight mode/.test(message) ? "weightMode" : "sourceWeight";
+          const field = /load type/.test(message)
+            ? "loadType"
+            : /weight mode/.test(message)
+              ? "weightMode"
+              : /measurement/.test(message)
+                ? "measurement"
+                : /per side/i.test(message)
+                  ? "perSide"
+                  : /source weight/i.test(message)
+                    ? "sourceWeight"
+                    : "profileOverrides";
           push(`${path}.${field}`, `${label}: ${message}`);
         });
 
@@ -1939,6 +2025,7 @@ export function diffDraftAgainstProgram(draft, programId = draft?.sourceProgramI
           type: cleanString(programExercise.type) || DEFAULT_TARGETS.type,
           isOptional: Boolean(programExercise.isOptional),
           sourceWeight: cleanString(programExercise.sourceWeight) || null,
+          ...comparableDraftProfile(programExercise),
         },
       });
     });
@@ -1988,6 +2075,7 @@ export function diffDraftAgainstProgram(draft, programId = draft?.sourceProgramI
           type: cleanString(exercise.type) || DEFAULT_TARGETS.type,
           isOptional: Boolean(exercise.isOptional),
           sourceWeight: cleanString(exercise.sourceWeight) || null,
+          ...comparableDraftProfile(exercise),
         };
         const fields = DRAFT_EXERCISE_COMPARE_FIELDS.filter(
           (field) => !isSameValue(stored.comparable[field], comparable[field]),

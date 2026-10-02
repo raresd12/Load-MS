@@ -137,6 +137,8 @@ export const COLLECTIONS = Object.freeze([
   userList("programProgressions", ["programId", "programExerciseId"]),
   // Saved program drafts (decision H2-3).
   userList("programDrafts", "draftId"),
+  // Hold / manual overrides per program exercise (decision H5-6).
+  userList("programOverrides"),
 ]);
 
 const collectionsByName = new Map(COLLECTIONS.map((collection) => [collection.name, collection]));

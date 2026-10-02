@@ -34,6 +34,8 @@ const { PAIN_FLAG_WARNING, getBasePlan } = await import("../src/lib/progression.
 const {
   formatPrescriptionStrip,
   formatTechnicalValue,
+  getPrescriptionTargetLabel,
+  getPrescriptionTargetMetricLabel,
   getCoachConfidenceLabel,
   getCoachDecisionLabel,
   getCoachHistoryTrendLabel,
@@ -119,10 +121,12 @@ const day = {
   assert.equal(rec.confidence, null);
   assert.equal(rec.conservative, false);
   assert.deepEqual(Object.keys(rec).sort(), [
-    "confidence", "conservative", "decision", "exerciseProfile", "fieldSources", "historySampleSize",
-    "historyTrend", "progressionMode", "recommendationNote", "recommendedWeight", "repFocus", "repsLabel",
+    "confidence", "conservative", "decision", "deload", "exerciseProfile", "fieldSources", "historySampleSize",
+    "historyTrend", "override", "progressionMode", "recommendationNote", "recommendedWeight", "repFocus", "repsLabel",
     "repsMax", "repsMin", "restSeconds", "sets", "source", "sourceDetail", "sourceLabel", "targetRPE", "warnings",
   ]);
+  assert.equal(rec.override, null, "no active override (H5 fix round 1: exposed for the manual form)");
+  assert.equal(rec.deload, null, "no deload");
 
   assert.equal(formatPrescriptionStrip(rec, bench), "3x 6-8 | 60 kg | RPE 8 | Rest 2 min 30 sec - 3 min", "ranged rest strip");
 
@@ -223,6 +227,25 @@ const day = {
   assert.equal(formatPrescriptionStrip({ ...base, recommendedWeight: "BW" }, { loadType: "optionalExternal" }), "3x 8-12 | BW | RPE 8 | Rest 1 min 30 sec");
   assert.equal(formatPrescriptionStrip({ ...base, recommendedWeight: null }, { loadType: "external" }), "3x 8-12 | Enter kg | RPE 8 | Rest 1 min 30 sec");
   assert.equal(formatPrescriptionStrip({ ...base, recommendedWeight: 60, restSeconds: 45 }, { loadType: "external", weightMode: "kg" }), "3x 8-12 | 60 kg | RPE 8 | Rest 45 sec");
+
+  // H5 fix round 1 (decision H5-27): the strip states the measurement the way
+  // the Workout Log does - "/side" for a per-side exercise, the unit for a
+  // bare count on a timed / distance exercise; plain reps strips are unchanged.
+  const perSide = { loadType: "external", weightMode: "kg", measurement: "reps", perSide: true };
+  assert.equal(formatPrescriptionStrip({ ...base, repsLabel: "10-12", recommendedWeight: 40, restSeconds: 90 }, perSide), "3x 10-12/side | 40 kg | RPE 8 | Rest 1 min 30 sec");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "8-12 per side" }, perSide), "8-12 per side", "a label that names the side is not doubled");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "10/side" }, perSide), "10/side");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "30" }, { measurement: "time", perSide: false }), "30 s", "a bare count on a timed exercise gets its unit");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "45-60" }, { measurement: "time", perSide: true }), "45-60 s/side");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "55-70 s" }, { measurement: "time" }), "55-70 s", "an engine label already carries the unit");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "400" }, { measurement: "distance" }), "400 m");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "AMRAP" }, { measurement: "reps", perSide: false }), "AMRAP");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "8-12" }, { loadType: "external" }), "8-12", "a plain reps label is returned as it is");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: "20-30 sec / side" }, { repsLabel: "20-30 sec / side" }), "20-30 sec / side", "inferred per side from the label is not doubled");
+  assert.equal(getPrescriptionTargetLabel({ repsLabel: null }, perSide), "");
+  assert.equal(getPrescriptionTargetMetricLabel({ measurement: "time" }), "Seconds");
+  assert.equal(getPrescriptionTargetMetricLabel({ measurement: "distance" }), "Meters");
+  assert.equal(getPrescriptionTargetMetricLabel({ loadType: "external" }), "Reps");
 }
 
 // ---------------------------------------------------------------------------
