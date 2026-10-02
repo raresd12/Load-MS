@@ -48,11 +48,22 @@ try {
   assert.ok(readAsset(vendorIcons).includes(iconsMarker), "vendor-icons holds lucide-react");
   assert.ok(!readAsset(appChunk).includes(iconsMarker), "the app chunk does not bundle lucide-react");
 
+  // Decision H5-57: the built-in technique content and the default programs
+  // are static data in their own chunk, so no logic chunk carries them.
+  const appData = jsAssets.find((name) => name.startsWith("app-data-"));
+  assert.ok(appData, "app-data chunk emitted");
+  const libraryMarker = "Control down, drive up hard.";
+  assert.ok(readAsset(appData).includes(libraryMarker), "app-data holds the built-in Library content");
+  for (const name of jsAssets.filter((asset) => asset !== appData)) {
+    assert.ok(!readAsset(name).includes(libraryMarker), `${name} does not carry the built-in Library content`);
+  }
+
   // index.html loads the vendor chunks as modulepreload so the split does not
   // add a request waterfall on cold start.
   const html = readFileSync(indexHtml, "utf8");
   assert.ok(html.includes(`assets/${appChunk}`), "index.html references the app chunk");
   assert.ok(html.includes(`assets/${vendorReact}`), "index.html preloads vendor-react");
+  assert.ok(html.includes(`assets/${appData}`), "index.html preloads app-data");
 
   // Every JS / CSS asset and index.html are in the precache manifest.
   const precached = readPrecachedUrls(outDir);
