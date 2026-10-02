@@ -112,7 +112,17 @@ try {
     "DashboardPage imports the builders",
   );
   assert.ok(!/^function (build|get)Dashboard/m.test(page), "DashboardPage defines no Dashboard builder itself");
-  assert.ok(page.includes("buildDashboardWeekStats(sessions)"), "the page uses the real clock");
+  assert.ok(page.includes("buildDashboardWeekStats(sessions, Date.now(), { days: activeProgramDays })"), "the page uses the real clock and the active program's days (H5-24)");
+
+  // H5-24: with the active program's days a stored set without persisted
+  // profile fields is read through the exercise profile, exactly as Progress
+  // and the recap read it (per dumbbell x2); a persisted field still wins.
+  const dbDays = [{ id: "d1", programId: "p1", exercises: [{ id: "bench", programExerciseId: "bench", libraryExerciseId: "lib-bench", name: "DB Press", weightMode: "per dumbbell", loadType: "external", repsLabel: "6-8" }] }];
+  const dbSession = session("db", at(1), 8, [workoutSet("bench", 1, 8, 30, 8), { ...workoutSet("bench", 2, 8, 30, 8), weightMode: "kg" }]);
+  assert.deepEqual(getDashboardSessionMetrics(dbSession), { setCount: 2, volume: 480 }, "without days: as logged");
+  assert.deepEqual(getDashboardSessionMetrics(dbSession, { days: dbDays }), { setCount: 2, volume: 480 + 240 }, "with days: the un-stamped set is per dumbbell x2, the kg-stamped one stays");
+  assert.equal(buildDashboardWeekStats([dbSession], NOW, { days: dbDays }).volume, 720);
+  assert.equal(getDashboardSessionMetrics({ ...dbSession, programId: "p2" }, { days: dbDays }).volume, 480, "another program's session never reads the active program's day");
 
   console.log("verify-dashboard-stats: ok");
 } catch (error) {

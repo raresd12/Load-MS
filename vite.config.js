@@ -98,14 +98,26 @@ export default defineConfig({
               test: /[\\/]node_modules[\\/]lucide-react[\\/]/,
               priority: 10,
             },
+            // Decision H5-57: the built-in Library technique content and the
+            // default programs are static data that changes only when that
+            // content is edited, so they are cached apart from the logic that
+            // changes every release.
+            {
+              name: "app-data",
+              test: /[\\/]src[\\/](data[\\/]exerciseLibraryContent|config[\\/]workoutProgram)\.js$/,
+              priority: 5,
+            },
           ],
         },
       },
     },
-    // Decision H4-11: just above the largest chunk measured after the lazy
-    // boundaries (programStorage, 206 kB), so a chunk that grows warns.
-    // verify-bundle-h4-precache.mjs fails when a chunk passes the limit or
-    // when the limit is more than 15 % above the largest chunk.
-    chunkSizeWarningLimit: 225,
+    // Decision H4-11: just above the largest chunk, so a chunk that grows
+    // warns. verify-bundle-h4-precache.mjs fails when a chunk passes the
+    // limit or when the limit is more than 15 % above the largest chunk.
+    // H5 close (decision H5-57, supersedes H5-14 and H5-33): with the static
+    // data in its own app-data chunk the shared prescriptionView chunk is
+    // 150.7 kB and the largest chunk is ProgramPage at 214.7 kB; 235 keeps
+    // the guard's 15 % rule (215-246) with about 20 kB of headroom.
+    chunkSizeWarningLimit: 235,
   },
 });

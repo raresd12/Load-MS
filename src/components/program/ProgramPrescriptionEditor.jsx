@@ -1,13 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import CoachProfileDisclosure from "./CoachProfileDisclosure.jsx";
 import { ProgramEditorField, ProgramTextArea } from "./ProgramFields.jsx";
+import { getProgramExercises } from "../../lib/programStorage.js";
 import { formatRest, formatWeight } from "../../lib/progression.js";
 import {
   createProgramExerciseTargetForm,
   validateProgramExerciseTargetForm,
 } from "../../lib/programTargetForm.js";
 
-export default function ProgramPrescriptionEditor({ program, days, onUpdateProgramExerciseTarget }) {
+export default function ProgramPrescriptionEditor({
+  program,
+  days,
+  onUpdateProgramExerciseTarget,
+  onUpdateProgramExerciseProfile,
+}) {
+  // H5-12: the raw records say whether measurement / perSide were set or
+  // inferred (the day view model always resolves them). Memoised on the days
+  // (a new array per programRevision), so storage is not read per render.
+  const storedById = useMemo(() => {
+    const map = new Map();
+    days.forEach((day) => {
+      getProgramExercises(day.id).forEach((record) => map.set(record.id, record));
+    });
+    return map;
+  }, [days]);
+
   if (!days.length) {
     return (
       <p className="mt-3 rounded-[8px] bg-[#111111] px-3 py-3 text-sm font-semibold text-zinc-400">
@@ -58,7 +76,9 @@ export default function ProgramPrescriptionEditor({ program, days, onUpdateProgr
                         key={exercise.programExerciseId ?? exercise.id}
                         program={program}
                         exercise={exercise}
+                        storedExercise={storedById.get(exercise.programExerciseId ?? exercise.id) ?? null}
                         onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+                        onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
                       />
                     ))}
                   </div>
@@ -72,7 +92,13 @@ export default function ProgramPrescriptionEditor({ program, days, onUpdateProgr
   );
 }
 
-function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExerciseTarget }) {
+function ProgramExerciseTargetEditor({
+  program,
+  exercise,
+  storedExercise = null,
+  onUpdateProgramExerciseTarget,
+  onUpdateProgramExerciseProfile,
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState(() => createProgramExerciseTargetForm(exercise));
   const [errors, setErrors] = useState([]);
@@ -224,6 +250,14 @@ function ProgramExerciseTargetEditor({ program, exercise, onUpdateProgramExercis
         >
           Save Exercise Target
         </button>
+        {onUpdateProgramExerciseProfile && (
+          <CoachProfileDisclosure
+            programId={program.id}
+            exercise={exercise}
+            stored={storedExercise}
+            onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
+          />
+        )}
       </div>
     </details>
   );

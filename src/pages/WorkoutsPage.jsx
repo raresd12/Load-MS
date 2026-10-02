@@ -2,17 +2,25 @@ import { useMemo, useState } from "react";
 import { ChevronDown, Info } from "lucide-react";
 import { getReadinessCopy } from "../components/readiness/readinessCopy.js";
 import Metric from "../components/ui/Metric.jsx";
+import DeloadCard from "../components/workout/DeloadCard.jsx";
 import ExerciseInfoPanel, { CheckVideoLink } from "../components/workout/ExerciseInfoPanel.jsx";
+import ExerciseOverrideControls from "../components/workout/ExerciseOverrideControls.jsx";
 import TodayReadinessSummary from "../components/workout/TodayReadinessSummary.jsx";
 import { workoutProgram } from "../config/workoutProgram.js";
+import {
+  getActiveExerciseOverride,
+  getCoachDecisionLabelWithMeasurement,
+  getOverrideSourceLine,
+} from "../lib/coachControlsView.js";
 import {
   formatPrescriptionStrip,
   formatTechnicalValue,
   getCoachConfidenceLabel,
-  getCoachDecisionLabel,
   getCoachHistoryTrendLabel,
   getCoachProgressionModeLabel,
   getCoachVolumePolicyLabel,
+  getPrescriptionTargetLabel,
+  getPrescriptionTargetMetricLabel,
   getProgramNickname,
   getWarmupItems,
   getWorkoutExerciseRecommendation,
@@ -33,6 +41,12 @@ export default function WorkoutsPage({
   todayReadinessSummary,
   setupCues,
   beatLastCues,
+  deloadModel = null,
+  onApplyDeload,
+  onDismissDeload,
+  onEndDeload,
+  onSetOverride,
+  onClearOverride,
   onSelectDay,
   onGoToReadiness,
   onOpenWorkoutLog,
@@ -120,6 +134,8 @@ export default function WorkoutsPage({
           )}
         </div>
       </section>
+
+      <DeloadCard model={deloadModel} onApply={onApplyDeload} onDismiss={onDismissDeload} onEnd={onEndDeload} />
 
       {shortOnTime && day.type !== "recovery" && (
         <section className="rounded-[8px] border border-amber-300/40 bg-amber-300/10 p-3 min-[430px]:p-4">
@@ -226,6 +242,8 @@ export default function WorkoutsPage({
                       plan={plan}
                       setupCues={setupCues}
                       beatLastCue={beatLastCues[exercise.id]}
+                      onSetOverride={onSetOverride}
+                      onClearOverride={onClearOverride}
                       onOpenWorkoutLog={() =>
                         onOpenWorkoutLog(day.id, exercise.programExerciseId ?? exercise.id)
                       }
@@ -382,6 +400,8 @@ function WorkoutExerciseCard({
   plan,
   setupCues,
   beatLastCue,
+  onSetOverride,
+  onClearOverride,
   onOpenWorkoutLog,
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -426,14 +446,22 @@ function WorkoutExerciseCard({
 
       <div className="mt-3 hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-5">
         <Metric label="Sets" value={displayPlan.sets} />
-        <Metric label="Reps" value={displayPlan.repsLabel} />
+        <Metric label={getPrescriptionTargetMetricLabel(exercise)} value={getPrescriptionTargetLabel(displayPlan, exercise)} />
         <Metric label="Kg" value={formatWeight(displayPlan.recommendedWeight, exercise)} />
         <Metric label="Target RPE" value={displayPlan.targetRPE} />
         <Metric label="Rest" value={formatRest(displayPlan.restSeconds)} />
       </div>
 
-      <CoachRecommendationSummary displayPlan={displayPlan} />
+      <CoachRecommendationSummary displayPlan={displayPlan} exercise={exercise} />
       <CoachRecommendationDetails displayPlan={displayPlan} />
+
+      <ExerciseOverrideControls
+        programId={activeProgramId}
+        exercise={exercise}
+        prescription={displayPlan}
+        onSetOverride={onSetOverride}
+        onClearOverride={onClearOverride}
+      />
 
       <div className="mt-3">
         <CheckVideoLink exercise={exercise} emptyLabel="Check Video not added yet." />
@@ -483,20 +511,37 @@ function WorkoutExerciseCard({
   );
 }
 
-function CoachRecommendationSummary({ displayPlan }) {
-  const decisionLabel = getCoachDecisionLabel(displayPlan.decision);
+function CoachRecommendationSummary({ displayPlan, exercise = null }) {
+  const decisionLabel = getCoachDecisionLabelWithMeasurement(displayPlan.decision);
   const confidenceLabel = getCoachConfidenceLabel(displayPlan.confidence);
   const reason = String(displayPlan.recommendationNote ?? "").trim();
   const warnings = normalizeCoachWarnings(displayPlan.warnings);
   const visibleWarnings = warnings.slice(0, 2);
   const hiddenWarningCount = Math.max(0, warnings.length - visibleWarnings.length);
+  // H5-12: the summary states the source when the athlete took over.
+  const overrideLine = getOverrideSourceLine(getActiveExerciseOverride(exercise));
+  // The deload line also shows for a manual override (H5 fix round 1,
+  // decision H5-18): the resolver states "your manual weight kept as typed".
+  const deloadLine =
+    displayPlan.deload?.detail ??
+    (!displayPlan.sourceDetail || !/lighter week|deload/i.test(displayPlan.sourceDetail) ? "" : displayPlan.sourceDetail);
 
-  if (!decisionLabel && !confidenceLabel && !reason && !warnings.length) {
+  if (!decisionLabel && !confidenceLabel && !reason && !warnings.length && !overrideLine && !deloadLine) {
     return null;
   }
 
   return (
     <div className="mt-2 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+      {overrideLine && (
+        <p className="mb-2 text-xs font-black text-amber-100" data-testid="coach-override-source">
+          {overrideLine}
+        </p>
+      )}
+      {deloadLine && (
+        <p className="mb-2 text-xs font-black text-sky-100" data-testid="coach-deload-source">
+          {deloadLine}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {decisionLabel && (
           <span className="rounded-[8px] bg-lime-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-lime-100">
@@ -553,7 +598,7 @@ function CoachDetailRow({ label, value }) {
 }
 
 function CoachRecommendationDetails({ displayPlan }) {
-  const decisionLabel = getCoachDecisionLabel(displayPlan.decision);
+  const decisionLabel = getCoachDecisionLabelWithMeasurement(displayPlan.decision);
   const confidenceLabel = getCoachConfidenceLabel(displayPlan.confidence);
   const reason = String(displayPlan.recommendationNote ?? "").trim();
   const warnings = normalizeCoachWarnings(displayPlan.warnings);

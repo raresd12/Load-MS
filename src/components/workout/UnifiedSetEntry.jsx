@@ -2,24 +2,32 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import StepperInput from "./StepperInput.jsx";
 import { getActionScrollDelta } from "../../lib/scrollClearance.js";
+import { adjustInputValue } from "../../lib/sessionNormalize.js";
 import {
-  adjustInputValue,
-  getRecommendedSetEntryDefaults,
-  getSetEntryValues,
-  isBlank,
-  validateSetEntry,
-} from "../../lib/sessionNormalize.js";
+  getSetEntryDefaults,
+  getSetEntryLabels,
+  getSetEntryProfile,
+  hasSetEntryValue,
+  readSetEntryValues,
+  toDraftSetPatch,
+  validateSetEntryValues,
+} from "../../lib/setEntryView.js";
 
+// Decision H5-13: the Save Set form edits ONE count in the exercise's
+// measurement (reps / seconds / meters) plus kg and RPE; the helpers in
+// src/lib/setEntryView.js decide labels, steps and the draft patch.
 export default function UnifiedSetEntry({
   exercise,
   planExercise,
   sets,
   onSave,
 }) {
+  const profile = getSetEntryProfile(exercise);
+  const labels = getSetEntryLabels(profile);
   const [selectedSetIndex, setSelectedSetIndex] = useState(0);
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
   const [values, setValues] = useState(() =>
-    getSetEntryValues(sets[0] ?? {}, getRecommendedSetEntryDefaults(exercise, planExercise)),
+    readSetEntryValues(sets[0] ?? {}, getSetEntryDefaults(exercise, planExercise, profile), profile),
   );
   const [errors, setErrors] = useState([]);
   const [saveMessage, setSaveMessage] = useState("");
@@ -28,9 +36,10 @@ export default function UnifiedSetEntry({
 
   useEffect(() => {
     setValues(
-      getSetEntryValues(
+      readSetEntryValues(
         sets[selectedSetIndex] ?? {},
-        getRecommendedSetEntryDefaults(exercise, planExercise),
+        getSetEntryDefaults(exercise, planExercise, getSetEntryProfile(exercise)),
+        getSetEntryProfile(exercise),
       ),
     );
     setErrors([]);
@@ -49,7 +58,7 @@ export default function UnifiedSetEntry({
   }
 
   function saveSelectedSet() {
-    const nextErrors = validateSetEntry(values, exercise);
+    const nextErrors = validateSetEntryValues(values, exercise, profile);
 
     if (nextErrors.length) {
       setErrors(nextErrors);
@@ -58,7 +67,7 @@ export default function UnifiedSetEntry({
     }
 
     justSavedRef.current = true;
-    onSave(selectedSetIndex, values);
+    onSave(selectedSetIndex, toDraftSetPatch(values, profile));
     setErrors([]);
     setSaveMessage(`Set ${selectedSetIndex + 1} saved.`);
   }
@@ -103,6 +112,9 @@ export default function UnifiedSetEntry({
     }, 300);
   }
 
+  const valueLabel = labels.valueHint ? `${labels.valueLabel} (${labels.valueHint})` : labels.valueLabel;
+  const weightLabel = labels.weightHint ? `${labels.weightLabel} (${labels.weightHint})` : labels.weightLabel;
+
   return (
     <div className="max-w-[360px] rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
       <div className="mb-3 flex items-start justify-between gap-2">
@@ -129,7 +141,7 @@ export default function UnifiedSetEntry({
             <div className="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-[8px] border border-zinc-700 bg-[#111111] p-1 shadow-xl shadow-black/40">
               {sets.map((set, index) => {
                 const isSelected = selectedSetIndex === index;
-                const hasValue = !isBlank(set.reps) || !isBlank(set.weight) || !isBlank(set.rpe);
+                const hasValue = hasSetEntryValue(set);
 
                 return (
                   <button
@@ -160,33 +172,39 @@ export default function UnifiedSetEntry({
       </div>
       <div className="grid gap-2">
         <StepperInput
-          label="Reps"
-          value={values.reps}
-          onChange={(value) => updateValue("reps", value)}
+          label={valueLabel}
+          value={values.value}
+          onChange={(value) => updateValue("value", value)}
           onKeyDown={handleInputKeyDown}
           onFocus={handleInputFocus}
           enterKeyHint="done"
-          onStep={(delta) => updateValue("reps", adjustInputValue(values.reps, delta, { min: 0 }))}
-          stepAmount={1}
+          onStep={(delta) => updateValue("value", adjustInputValue(values.value, delta, { min: 0 }))}
+          stepAmount={labels.valueStep}
           type="number"
           inputMode="numeric"
-          placeholder="reps"
+          placeholder={labels.valuePlaceholder}
         />
-        <StepperInput
-          label="Kg"
-          value={values.weight}
-          onChange={(value) => updateValue("weight", value)}
-          onKeyDown={handleInputKeyDown}
-          onFocus={handleInputFocus}
-          enterKeyHint="done"
-          onStep={(delta) =>
-            updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
-          }
-          stepAmount={1}
-          type={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "number"}
-          inputMode={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "text" : "decimal"}
-          placeholder={exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal" ? "BW" : "kg"}
-        />
+        {labels.showWeightInput ? (
+          <StepperInput
+            label={weightLabel}
+            value={values.weight}
+            onChange={(value) => updateValue("weight", value)}
+            onKeyDown={handleInputKeyDown}
+            onFocus={handleInputFocus}
+            enterKeyHint="done"
+            onStep={(delta) =>
+              updateValue("weight", adjustInputValue(values.weight, delta, { min: 0 }))
+            }
+            stepAmount={1}
+            type={labels.weightInputType}
+            inputMode={labels.weightInputMode}
+            placeholder={labels.weightPlaceholder}
+          />
+        ) : (
+          <p className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-xs font-black text-zinc-200">
+            Load: BW
+          </p>
+        )}
         <StepperInput
           label="RPE"
           value={values.rpe}
@@ -204,6 +222,11 @@ export default function UnifiedSetEntry({
           placeholder="8"
         />
       </div>
+      {labels.notes.length > 0 && (
+        <p className="mt-2 text-[11px] font-semibold leading-4 text-zinc-400">
+          {labels.notes.join(" ")}
+        </p>
+      )}
       {errors.length > 0 && (
         <div className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
           {errors.map((error) => (

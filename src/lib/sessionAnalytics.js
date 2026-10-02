@@ -4,13 +4,26 @@
 // Progress-page builder (weekly review, insight cards, exercise trends, PR /
 // best-set ranking, readiness/performance analytics) plus their formatters.
 // JSX components stay in App.jsx. Fixture: scripts/verify-session-analytics.mjs.
+import { computeAdherenceTrend, getSessionCoachStatus } from "./adherence.js";
 import { getLocalDateKey } from "./date.js";
+import {
+  getMeasurementProfile,
+  getSetLoadForVolume,
+  isValidMeasurement,
+  MEASUREMENT_UNITS,
+  normalizeSetEntry,
+} from "./measurement.js";
 import { formatRest, formatWeight, interpretWellness } from "./progression.js";
 import { getProgramDayViewModels } from "./programStorage.js";
-import { getBestComparablePerformance } from "./readinessPerformance.js";
+import {
+  getBestComparablePerformance,
+  getComparableSessionRequirement,
+  MIN_COMPARABLE_SESSIONS,
+} from "./readinessPerformance.js";
 import { getAverageNumericWeight, getLoggedReps, normalizeWeight } from "./sessionLog.js";
 import {
   calculateAutoExerciseRpe,
+  getDraftSetCount,
   getExerciseLog,
   isBlank,
   numberValue,
@@ -18,6 +31,154 @@ import {
 
 // Window of the Progress page's "recent" counters (30 days).
 export const recentWorkoutWindowDays = 30;
+
+// ---------------------------------------------------------------------------
+// Measurement in the analytics (Phase H5, decisions H5-8 / H5-10). The
+// schema is Track A's src/lib/measurement.js (H5-1): getMeasurementProfile,
+// normalizeSetEntry and getSetLoadForVolume. The analytics read a stored set
+// with the fields the set itself persists first (resolveSetMeasurementProfile)
+// and keep their own "completed" rule (isCompletedAnalyticsSet) and RPE
+// parsing, so a reps / external / kg session yields the pre-H5 outputs.
+// ---------------------------------------------------------------------------
+export const DEFAULT_MEASUREMENT_PROFILE = Object.freeze({
+  measurement: "reps",
+  unit: "reps",
+  perSide: false,
+  loadType: "external",
+  weightMode: "kg",
+});
+
+/**
+ * The profile a stored set is read with: the fields the set itself persists
+ * (measurement, weightMode, loadType, perSide) win over the exercise profile,
+ * so a weight-mode change of the program never rewrites old history.
+ */
+export function resolveSetMeasurementProfile(set, exerciseProfile) {
+  const base = exerciseProfile ?? DEFAULT_MEASUREMENT_PROFILE;
+  const measurement = isValidMeasurement(set?.measurement) ? set.measurement : base.measurement;
+
+  return {
+    measurement,
+    unit: MEASUREMENT_UNITS[measurement],
+    perSide: typeof set?.perSide === "boolean" ? set.perSide : Boolean(base.perSide),
+    loadType: set?.loadType ?? base.loadType,
+    weightMode: set?.weightMode ?? base.weightMode,
+  };
+}
+
+/**
+ * readMeasuredSet(set, profile) -> { measurement, value, weight, rpe, completed, tonnage }
+ * measurement.js normalizeSetEntry for the measurement and value (a set that
+ * only carries reps stays a reps set, H5-1), the analytics' weight / RPE
+ * parsing and completed rule, and getSetLoadForVolume's tonnage.
+ */
+export function readMeasuredSet(set, profile) {
+  const entry = normalizeSetEntry(set, profile);
+  const value = entry.value;
+  const weight = normalizeWeight(set?.actualWeight ?? set?.weight ?? set?.kg);
+  const rpe = parseAnalyticsRpe(set?.actualRPE ?? set?.rpe);
+
+  return {
+    measurement: entry.measurement,
+    value,
+    weight,
+    rpe,
+    completed: Boolean(set?.completed) || isCompletedAnalyticsSet(value, weight, rpe),
+    tonnage: getSetLoadForVolume(set, profile).tonnage,
+  };
+}
+
+// e1RM eligibility (decisions H5-8 / H5-29, answers 19.4-6): the formula
+// stays weight * (1 + reps / 30); a set is an e1RM RECORD candidate only when
+// it is rep-based, has a numeric external or additional load, 1-10 completed
+// reps and RPE >= 6 or none. The load rule is the one of
+// measurement.getSetLoadForVolume (`e1rmWeight`: external or additional load,
+// never bodyweight / timed / distance); this function adds the rep and RPE
+// gates. Trend values keep the pre-H5 e1RM of every weighted set; the flag
+// says why a set is not a record.
+export const E1RM_ELIGIBILITY = Object.freeze({ minReps: 1, maxReps: 10, minRpe: 6 });
+
+export function getE1rmEligibility({ measurement = "reps", weight, reps, rpe, loadType = "external" } = {}) {
+  if (measurement !== "reps") {
+    return { eligible: false, reason: `${measurement}: e1RM only for rep-based sets` };
+  }
+
+  if (typeof weight !== "number") {
+    return {
+      eligible: false,
+      reason: weight === "BW" ? "BW: e1RM needs a numeric load" : "No load: e1RM needs a numeric load",
+    };
+  }
+
+  // H5-29: "a positive numeric load" (the rule of measurement.getSetLoadForVolume).
+  if (!Number.isFinite(weight) || weight <= 0) {
+    return { eligible: false, reason: `${weight} kg: e1RM needs a load above 0 kg` };
+  }
+
+  if (loadType === "bodyweight") {
+    return { eligible: false, reason: "bodyweight exercise: e1RM needs an external or additional load" };
+  }
+
+  if (!Number.isFinite(reps) || reps < E1RM_ELIGIBILITY.minReps || reps > E1RM_ELIGIBILITY.maxReps) {
+    return {
+      eligible: false,
+      reason: `${Number.isFinite(reps) ? reps : "No"} reps: e1RM only for ${E1RM_ELIGIBILITY.minReps}-${E1RM_ELIGIBILITY.maxReps} reps`,
+    };
+  }
+
+  if (Number.isFinite(rpe) && rpe < E1RM_ELIGIBILITY.minRpe) {
+    return {
+      eligible: false,
+      reason: `RPE ${rpe}: e1RM needs RPE ${E1RM_ELIGIBILITY.minRpe} or higher (or no RPE)`,
+    };
+  }
+
+  return { eligible: true, reason: null };
+}
+
+// Sample the deload check needs before it says anything (decision H5-10).
+// Track A's deload engine owns the rule; the weekly review only reports
+// whether the sample is there. Overridable through buildWeeklyReview options.
+export const DELOAD_SAMPLE_REQUIREMENT = Object.freeze({ sessions: 6, windowDays: 21 });
+
+const NOT_COMPARABLE_MEASUREMENT = "Not comparable: measurement changed.";
+
+/**
+ * Two exercise-session entries are comparable when they were logged with the
+ * same measurement and the same weight mode (decision H5-10): tonnage is
+ * never compared across a per-dumbbell / kg change or a reps / time change.
+ * Entries without the fields (pre-H5 shapes) are comparable, as before.
+ */
+export function checkTrendComparability(latest, previous) {
+  if (!latest || !previous) {
+    return { comparable: true, reason: null };
+  }
+
+  const latestMeasurement = latest.measurement ?? "reps";
+  const previousMeasurement = previous.measurement ?? "reps";
+  if (latestMeasurement !== previousMeasurement) {
+    return { comparable: false, reason: NOT_COMPARABLE_MEASUREMENT, changed: "measurement" };
+  }
+
+  const latestMode = latest.weightMode ?? "kg";
+  const previousMode = previous.weightMode ?? "kg";
+  if (latestMode !== previousMode) {
+    return { comparable: false, reason: NOT_COMPARABLE_MEASUREMENT, changed: "weightMode" };
+  }
+
+  // H5 fix round 1 (decision H5-20): per side and the load type change the
+  // tonnage / e1RM meaning as much as the weight mode does, so the guard is
+  // symmetric with what every set now persists.
+  if (Boolean(latest.perSide) !== Boolean(previous.perSide)) {
+    return { comparable: false, reason: NOT_COMPARABLE_MEASUREMENT, changed: "perSide" };
+  }
+
+  if ((latest.loadType ?? "external") !== (previous.loadType ?? "external")) {
+    return { comparable: false, reason: NOT_COMPARABLE_MEASUREMENT, changed: "loadType" };
+  }
+
+  return { comparable: true, reason: null };
+}
 
 // Status label of a readiness entry, as the Readiness copy in App.jsx names
 // it (readinessCopy[status].label, yellow when unknown). Only the label is
@@ -32,15 +193,35 @@ export function getReadinessStatusLabel(readiness) {
   return READINESS_STATUS_LABELS[readiness?.status] ?? READINESS_STATUS_LABELS.yellow;
 }
 
+// Draft-shape analytics stored on the session (`session.analytics`), the
+// fallback of History / Progress when a session has no workoutSets. Decision
+// H5-30: a set is counted in the exercise's measurement - the count is reps,
+// seconds or meters (getDraftSetCount, so a reps value typed on a timed
+// exercise stays reps) - and a bodyweight / optional-load exercise needs no
+// typed load. `totalReps` sums reps only; seconds and meters get their own
+// totals, present only when the day logged some, so a reps + kg session
+// yields the pre-H5 object key for key.
 export function getSessionAnalytics(day, draft) {
   const exerciseSummaries = day.exercises.map((exercise) => {
     const draftExercise = draft.exercises[exercise.id];
+    const profile = getMeasurementProfile(exercise);
+    const loadOptional = profile.loadType === "bodyweight" || profile.loadType === "optionalExternal";
+    const counts = draftExercise.sets.map((set) => getDraftSetCount(set, exercise));
     const completedSets = draftExercise.sets.filter(
-      (set) => !isBlank(set.reps) && !isBlank(set.weight) && !isBlank(set.rpe),
+      (set, index) => !isBlank(counts[index].value) && (loadOptional || !isBlank(set.weight)) && !isBlank(set.rpe),
     );
-    const reps = draftExercise.sets
-      .map((set) => numberValue(set.reps, NaN))
+    const sumCount = (field) =>
+      counts
+        .filter((count) => count.field === field)
+        .map((count) => numberValue(count.value, NaN))
+        .filter(Number.isFinite)
+        .reduce((total, value) => total + value, 0);
+    const reps = counts
+      .filter((count) => count.field === "reps")
+      .map((count) => numberValue(count.value, NaN))
       .filter(Number.isFinite);
+    const totalSeconds = sumCount("seconds");
+    const totalMeters = sumCount("meters");
     const weights = draftExercise.sets
       .map((set) => normalizeWeight(set.weight))
       .filter((weight) => typeof weight === "number");
@@ -55,13 +236,19 @@ export function getSessionAnalytics(day, draft) {
       averageWeight,
       setCount: completedSets.length,
       exerciseRPE: calculateAutoExerciseRpe(draftExercise),
+      ...(totalSeconds > 0 ? { totalSeconds } : {}),
+      ...(totalMeters > 0 ? { totalMeters } : {}),
     };
   });
+  const totalSeconds = exerciseSummaries.reduce((total, exercise) => total + (exercise.totalSeconds ?? 0), 0);
+  const totalMeters = exerciseSummaries.reduce((total, exercise) => total + (exercise.totalMeters ?? 0), 0);
 
   return {
     exerciseCount: day.exercises.length,
     loggedSetCount: exerciseSummaries.reduce((total, exercise) => total + exercise.setCount, 0),
     totalReps: exerciseSummaries.reduce((total, exercise) => total + exercise.totalReps, 0),
+    ...(totalSeconds > 0 ? { totalSeconds } : {}),
+    ...(totalMeters > 0 ? { totalMeters } : {}),
     exerciseSummaries,
   };
 }
@@ -186,7 +373,15 @@ export function summarizeWeeklyReviewWindow(sessionSummaries, startMs, endMs) {
   };
 }
 
-export function buildWeeklyReviewNotes(current, previous, bestSet) {
+// Plain nouns for the weekly observation line ("Best comparable e1RM this week").
+const OBSERVATION_METRIC_NOUNS = {
+  e1rm: "e1RM",
+  volume: "volume",
+  time: "total time",
+  distance: "total distance",
+};
+
+export function buildWeeklyReviewNotes(current, previous, bestSet, observations = null) {
   const notes = [];
 
   if (current.workouts === 0) {
@@ -256,10 +451,124 @@ export function buildWeeklyReviewNotes(current, previous, bestSet) {
     notes.push(`Set of the week: ${bestSet.exerciseName ?? "Top set"} - ${formatSetPerformance(bestSet)}.`);
   }
 
+  if (observations) {
+    notes.push(...buildWeeklyObservationNotes(observations));
+  }
+
   return notes;
 }
 
-export function buildWeeklyReview(sessionSummaries, setRecords, now = Date.now()) {
+/**
+ * H5 weekly observations (decision H5-10), computed by buildWeeklyReview
+ * when it is given the sessions: plan adherence, hold / override use, new
+ * records, a readiness/performance line only with MIN_COMPARABLE_SESSIONS
+ * comparable sessions, timed / distance totals and the deload sample check.
+ * Every line states its sample; none states a cause.
+ */
+export function buildWeeklyObservationNotes(observations) {
+  const notes = [];
+  const { adherence, holdOverride, records, performance, measured, deloadCheck } = observations;
+
+  if (adherence && adherence.plannedSessionCount > 0 && Number.isFinite(adherence.averageRatio)) {
+    const percent = Math.round(adherence.averageRatio * 100);
+    const partialCount = adherence.statusCounts.partial + adherence.statusCounts.minimal;
+    notes.push(
+      `Plan adherence averaged ${percent}% across ${adherence.plannedSessionCount} planned ${adherence.plannedSessionCount === 1 ? "session" : "sessions"}` +
+        (partialCount > 0
+          ? ` (${partialCount} ${partialCount === 1 ? "was" : "were"} partial); the coach weighs partial sessions as lighter evidence.`
+          : "."),
+    );
+  }
+
+  if (holdOverride && holdOverride.count > 0) {
+    const parts = [];
+    if (holdOverride.held > 0) {
+      parts.push(`${holdOverride.held} on hold`);
+    }
+    if (holdOverride.overridden > 0) {
+      parts.push(`${holdOverride.overridden} with a manual override`);
+    }
+    if (holdOverride.deload > 0) {
+      parts.push(`${holdOverride.deload} on a deload`);
+    }
+    notes.push(
+      `${holdOverride.count} ${holdOverride.count === 1 ? "session" : "sessions"} used your own settings this week: ${parts.join(", ")}. History is kept as logged.`,
+    );
+  }
+
+  if (records && records.count > 0) {
+    notes.push(
+      `${records.count} new ${records.count === 1 ? "record" : "records"} this week${records.examples.length ? `: ${records.examples.join(", ")}` : ""}.`,
+    );
+  }
+
+  if (performance) {
+    if (performance.comparable && performance.metricId === "e1rm") {
+      // An e1RM belongs to ONE exercise (H5-44): the sessions of a week train
+      // different lifts, so the line names the lift and counts the sessions
+      // that logged an e1RM without calling them comparable with each other.
+      notes.push(
+        `Best e1RM this week: ${performance.formattedValue}${performance.exerciseName ? ` (${performance.exerciseName})` : ""} on ${formatProgressDate(performance.date)}${performance.readinessLabel ? ` (readiness ${performance.readinessLabel})` : ""}. ${performance.rankedCount} sessions logged an e1RM; different lifts are not ranked against each other.`,
+      );
+    } else if (performance.comparable) {
+      notes.push(
+        `Best comparable ${OBSERVATION_METRIC_NOUNS[performance.metricId] ?? performance.metricLabel.toLowerCase()} this week: ${performance.formattedValue} on ${formatProgressDate(performance.date)} (${performance.rankedCount} comparable sessions${performance.readinessLabel ? `, readiness ${performance.readinessLabel}` : ""}).`,
+      );
+    } else if (performance.needed > 0 && performance.sessionCount > 0) {
+      notes.push(
+        `Not comparable yet: ${performance.needed} more ${performance.needed === 1 ? "session" : "sessions"} needed before a readiness/performance observation.`,
+      );
+    }
+  }
+
+  if (measured) {
+    if (measured.current.totalSeconds > 0 || measured.previous.totalSeconds > 0) {
+      notes.push(
+        `Timed work: ${formatDuration(measured.current.totalSeconds)} this week vs ${formatDuration(measured.previous.totalSeconds)} the week before.`,
+      );
+    }
+    if (measured.current.totalMeters > 0 || measured.previous.totalMeters > 0) {
+      notes.push(
+        `Distance work: ${formatMeters(measured.current.totalMeters)} this week vs ${formatMeters(measured.previous.totalMeters)} the week before.`,
+      );
+    }
+    if (measured.current.bodyweightReps > 0 && measured.previous.bodyweightReps > 0) {
+      notes.push(
+        `Bodyweight reps: ${measured.current.bodyweightReps} this week vs ${measured.previous.bodyweightReps} the week before (counted apart from kg volume).`,
+      );
+    }
+  }
+
+  if (deloadCheck && !deloadCheck.met) {
+    if (deloadCheck.checkIns) {
+      const { have, required } = deloadCheck.checkIns;
+      notes.push(
+        `Deload check needs ${deloadCheck.required} sessions and ${required} readiness check-ins in ${deloadCheck.windowDays} days; you have ${deloadCheck.have} ${deloadCheck.have === 1 ? "session" : "sessions"} and ${have} ${have === 1 ? "check-in" : "check-ins"}.`,
+      );
+    } else {
+      notes.push(
+        `Deload check needs ${deloadCheck.required} sessions in ${deloadCheck.windowDays} days; you have ${deloadCheck.have}.`,
+      );
+    }
+  }
+
+  return notes;
+}
+
+/**
+ * buildWeeklyReview(sessionSummaries, setRecords, now, options)
+ *
+ * options (all optional, H5-10):
+ *   sessions            - the stored sessions; when given, the review adds the
+ *                         H5 observations (adherence, hold / override, comparable
+ *                         performance, measured totals, deload sample check).
+ *   records             - output of computePersonalRecords (personalRecords.js);
+ *                         adds the "new records this week" count.
+ *   deloadRequirement   - { sessions, windowDays } (default DELOAD_SAMPLE_REQUIREMENT).
+ *   minComparableSessions - default MIN_COMPARABLE_SESSIONS.
+ * Without options the result is the pre-H5 review, unchanged.
+ */
+export function buildWeeklyReview(sessionSummaries, setRecords, now = Date.now(), options = null) {
   const weekMs = 7 * 24 * 60 * 60 * 1000;
   const current = summarizeWeeklyReviewWindow(sessionSummaries, now - weekMs, now);
   const previous = summarizeWeeklyReviewWindow(sessionSummaries, now - 2 * weekMs, now - weekMs);
@@ -272,13 +581,207 @@ export function buildWeeklyReview(sessionSummaries, setRecords, now = Date.now()
     return time && now - time <= weekMs;
   });
   const bestSet = [...weekSets].sort(compareBestSet)[0] ?? null;
+  const observations = options ? buildWeeklyObservations(sessionSummaries, now, options) : null;
 
   return {
     current,
     previous,
     bestSet,
-    notes: buildWeeklyReviewNotes(current, previous, bestSet),
+    notes: buildWeeklyReviewNotes(current, previous, bestSet, observations),
+    ...(observations ? { observations } : {}),
   };
+}
+
+export function summarizeMeasuredWindow(sessionSummaries, startMs, endMs) {
+  const windowSessions = (sessionSummaries ?? []).filter((session) => {
+    const time = getDateTime(session.date);
+    return time && time > startMs && time <= endMs;
+  });
+  const sum = (field) =>
+    windowSessions.reduce((total, session) => total + numberValue(session[field], 0), 0);
+
+  return {
+    tonnage: sum("totalVolume"),
+    loggedVolume: windowSessions.reduce(
+      (total, session) => total + numberValue(session.loggedVolume ?? session.totalVolume, 0),
+      0,
+    ),
+    totalSeconds: sum("totalSeconds"),
+    totalMeters: sum("totalMeters"),
+    bodyweightReps: sum("bodyweightReps"),
+  };
+}
+
+export function buildWeeklyObservations(sessionSummaries, now, options = {}) {
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  const sessions = Array.isArray(options.sessions) ? options.sessions : [];
+  const weekSessions = sessions.filter((session) => {
+    const time = getDateTime(session.date);
+    return time && time > now - weekMs && time <= now;
+  });
+  const deloadRequirement = options.deloadRequirement ?? DELOAD_SAMPLE_REQUIREMENT;
+  const minSessions = options.minComparableSessions ?? MIN_COMPARABLE_SESSIONS;
+  const deloadWindowMs = deloadRequirement.windowDays * 24 * 60 * 60 * 1000;
+  const deloadSessions = sessions.filter((session) => {
+    const time = getDateTime(session.date);
+    return time && time > now - deloadWindowMs && time <= now;
+  }).length;
+  const adherence = options.sessions ? computeAdherenceTrend(sessions, 7, now) : null;
+  const holdOverride = options.sessions
+    ? weekSessions.reduce(
+        (totals, session) => {
+          const status = getSessionCoachStatus(session);
+          if (status.held.length) totals.held += 1;
+          if (status.overridden.length) totals.overridden += 1;
+          if (status.deload) totals.deload += 1;
+          if (status.held.length || status.overridden.length || status.deload) totals.count += 1;
+          return totals;
+        },
+        { count: 0, held: 0, overridden: 0, deload: 0 },
+      )
+    : null;
+  const records = options.records ? countRecordsInWindow(options.records, now - weekMs, now) : null;
+  const weekSummaries = (sessionSummaries ?? []).filter((session) => {
+    const time = getDateTime(session.date);
+    return time && time > now - weekMs && time <= now;
+  });
+  const linked = weekSummaries.filter((session) => session.readiness?.status);
+  const performance = options.sessions ? buildWeeklyPerformanceObservation(linked, minSessions) : null;
+  const measured = options.sessions
+    ? {
+        current: summarizeMeasuredWindow(sessionSummaries, now - weekMs, now),
+        previous: summarizeMeasuredWindow(sessionSummaries, now - 2 * weekMs, now - weekMs),
+      }
+    : null;
+  // H5 fix round 1 (decision H5-23): when the caller passes the deload
+  // evaluation of the active program (evaluateDeloadNeed), the line states
+  // the same sample the deload check uses - sessions of that program AND
+  // readiness check-ins - so the weekly review never contradicts the deload
+  // card. Without it the session count line stays as before.
+  const evaluation = options.deloadEvaluation && typeof options.deloadEvaluation === "object" ? options.deloadEvaluation : null;
+  const deloadCheck = evaluation
+    ? {
+        required: evaluation.requiredSampleSize?.sessions ?? deloadRequirement.sessions,
+        windowDays: evaluation.windowDays ?? deloadRequirement.windowDays,
+        have: evaluation.sampleSize?.sessions ?? 0,
+        met: evaluation.eligible === true,
+        checkIns: {
+          required: evaluation.requiredSampleSize?.checkIns ?? 0,
+          have: evaluation.sampleSize?.checkIns ?? 0,
+        },
+        fromEvaluation: true,
+      }
+    : options.sessions
+      ? {
+          required: deloadRequirement.sessions,
+          windowDays: deloadRequirement.windowDays,
+          have: deloadSessions,
+          met: deloadSessions >= deloadRequirement.sessions,
+        }
+      : null;
+
+  return { adherence, holdOverride, records, performance, measured, deloadCheck };
+}
+
+function buildWeeklyPerformanceObservation(linkedSummaries, minSessions) {
+  const requirement = getComparableSessionRequirement(linkedSummaries, { minSessions });
+  const best = getBestComparablePerformance(linkedSummaries, { minSessions });
+
+  if (!best.comparable) {
+    return {
+      comparable: false,
+      needed: requirement.needed,
+      rankedCount: requirement.rankedCount,
+      sessionCount: linkedSummaries.length,
+    };
+  }
+
+  return {
+    comparable: true,
+    metricId: best.metricId,
+    metricLabel: best.metricLabel,
+    unit: best.unit,
+    value: best.value,
+    formattedValue: formatMetricValue(best.metricId, best.value),
+    date: best.session.date,
+    exerciseName: best.metricId === "e1rm" ? best.session.bestEstimatedStrengthExercise ?? null : null,
+    rankedCount: best.rankedCount,
+    readinessLabel: best.session.readiness?.status ? getReadinessStatusLabel(best.session.readiness) : null,
+    needed: 0,
+    sessionCount: linkedSummaries.length,
+  };
+}
+
+/**
+ * Records still standing that were set inside the window: the primary
+ * (program + occurrence) records of a computePersonalRecords result that
+ * BEAT an earlier comparable value (`previousValue`, decision H5-50). A first
+ * value - the first log of an exercise, or the first reps at a new weight -
+ * is a baseline, as in the recap, and is not counted.
+ */
+export function countRecordsInWindow(personalRecords, startMs, endMs) {
+  const examples = [];
+  let count = 0;
+
+  Object.values(personalRecords?.primary ?? {}).forEach((identity) => {
+    const entries = [];
+    Object.entries(identity.records ?? {}).forEach(([type, record]) => {
+      if (type === "best_reps_at_weight") {
+        Object.values(record ?? {}).forEach((entry) => entries.push(entry));
+        return;
+      }
+      if (record) {
+        entries.push(record);
+      }
+    });
+
+    entries.forEach((record) => {
+      const time = getDateTime(record.date);
+      const beatEarlier = record.previousValue !== null && record.previousValue !== undefined;
+      if (beatEarlier && time && time > startMs && time <= endMs) {
+        count += 1;
+        if (examples.length < 3) {
+          examples.push(`${identity.name ?? "Exercise"} ${formatRecordLabel(record)}`);
+        }
+      }
+    });
+  });
+
+  return { count, examples };
+}
+
+export function formatRecordLabel(record) {
+  switch (record?.type) {
+    case "best_e1rm":
+      return `e1RM ${formatKg(record.value)}`;
+    case "best_weight":
+      return `top weight ${formatKg(record.value)}`;
+    case "best_reps_at_weight":
+      return `${record.value} reps at ${typeof record.weight === "number" ? formatKg(record.weight) : "BW"}`;
+    case "best_session_volume":
+      return `session volume ${formatVolume(record.value)}`;
+    case "best_time":
+      return `time ${formatDuration(record.value)}`;
+    case "best_distance":
+      return `distance ${formatMeters(record.value)}`;
+    default:
+      return String(record?.value ?? "");
+  }
+}
+
+export function formatMetricValue(metricId, value) {
+  switch (metricId) {
+    case "e1rm":
+      return formatKg(value);
+    case "volume":
+      return formatVolume(value);
+    case "time":
+      return formatDuration(value);
+    case "distance":
+      return formatMeters(value);
+    default:
+      return formatPlainNumber(value);
+  }
 }
 
 export function buildProgressAnalytics({
@@ -353,7 +856,13 @@ export function buildProgressAnalytics({
     lastWorkoutName: sortedSessions[0]?.dayName ?? sortedSessions[0]?.dayFocus ?? null,
     totalCompletedSets: completedSets.length,
     weightedSetCount: weightedSets.length,
-    totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+    // Measurement-aware tonnage (H5-10): per-dumbbell x2 and per-side x2 as
+    // getSetLoadForVolume says; identical to the as-logged sum for kg sets.
+    totalVolume: sumTonnage(completedSets),
+    loggedVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+    totalSeconds: sumField(completedSets, "seconds"),
+    totalMeters: sumField(completedSets, "meters"),
+    bodyweightReps: sumBodyweightReps(completedSets),
     averageSessionRpe: average(sessionRpes),
     sessionRpeSampleSize: sessionRpes.length,
     averageReadiness: average(readinessScores),
@@ -410,13 +919,61 @@ export function buildProgressSessionSummaries(sessions, setRecords, readinessByD
         (total, record) => total + (Number.isFinite(record.reps) ? record.reps : 0),
         0,
       ),
-      totalVolume: weightedRecords.reduce((total, record) => total + record.weight * record.reps, 0),
+      // Measurement-aware tonnage (H5-10); `loggedVolume` keeps the as-logged sum.
+      totalVolume: sumTonnage(completedRecords),
+      loggedVolume: weightedRecords.reduce((total, record) => total + record.weight * record.reps, 0),
       bestEstimatedStrength: estimatedRecords.length
         ? Math.max(...estimatedRecords.map((record) => record.estimatedOneRepMax))
         : null,
+      // The exercise that best e1RM belongs to (H5-44): a session's best e1RM
+      // is one lift's number, so the weekly line names it.
+      bestEstimatedStrengthExercise: estimatedRecords.length
+        ? estimatedRecords.reduce((best, record) => (record.estimatedOneRepMax > best.estimatedOneRepMax ? record : best)).exerciseName ?? null
+        : null,
       weightedSetCount: weightedRecords.length,
+      totalSeconds: sumField(completedRecords, "seconds"),
+      bestSeconds: maxField(completedRecords, "seconds"),
+      totalMeters: sumField(completedRecords, "meters"),
+      bestMeters: maxField(completedRecords, "meters"),
+      bodyweightReps: sumBodyweightReps(completedRecords),
+      measurements: distinctValues(completedRecords, "measurement"),
+      weightModes: distinctValues(completedRecords, "weightMode"),
     };
   });
+}
+
+function sumTonnage(records) {
+  return records.reduce(
+    (total, record) => total + (Number.isFinite(record.tonnage) ? record.tonnage : 0),
+    0,
+  );
+}
+
+function sumField(records, field) {
+  return records.reduce(
+    (total, record) => total + (Number.isFinite(record[field]) ? record[field] : 0),
+    0,
+  );
+}
+
+function maxField(records, field) {
+  const values = records.map((record) => record[field]).filter(Number.isFinite);
+  return values.length ? Math.max(...values) : null;
+}
+
+function sumBodyweightReps(records) {
+  return records.reduce(
+    (total, record) =>
+      total +
+      ((record.measurement ?? "reps") === "reps" && record.weight === "BW" && Number.isFinite(record.reps)
+        ? record.reps
+        : 0),
+    0,
+  );
+}
+
+function distinctValues(records, field) {
+  return [...new Set(records.map((record) => record[field]).filter(Boolean))];
 }
 
 export function getSessionReadinessForProgress(session, readinessByDate = {}) {
@@ -933,12 +1490,39 @@ export function buildProgressExerciseLookup({
   activeProgramDays,
   exerciseLibrary,
 }) {
+  const entries = [];
+
+  (programs ?? []).forEach((program) => {
+    getProgramDayViewModels(program.id).forEach((day) => {
+      day.exercises.forEach((exercise) => entries.push({ program, day, exercise }));
+    });
+  });
+
+  if (activeProgram && !entries.length) {
+    activeProgramDays.forEach((day) => {
+      day.exercises.forEach((exercise) => entries.push({ program: activeProgram, day, exercise }));
+    });
+  }
+
+  return buildExerciseLookupFromEntries({ entries, activeProgram, exerciseLibrary });
+}
+
+/**
+ * The pure part of buildProgressExerciseLookup (H5-8): builds the lookup from
+ * an explicit list of { program, day, exercise } day-view-model entries, so a
+ * module without storage access (personalRecords.js) can reuse the same
+ * identity resolution. Every entry carries its measurement profile.
+ */
+export function buildExerciseLookupFromEntries({ entries, activeProgram = null, exerciseLibrary = [] }) {
   const byProgramExercise = new Map();
   const byLooseProgramExercise = new Map();
   const byExerciseId = new Map();
   const byExerciseName = new Map();
   const libraryById = new Map((exerciseLibrary ?? []).map((exercise) => [exercise.id, exercise]));
   const programEntries = new Map();
+  const exerciseIdCounts = new Map();
+  const exerciseNameCounts = new Map();
+  const programExerciseIdCounts = new Map();
 
   function addProgramExercise(program, day, exercise) {
     const entry = {
@@ -960,6 +1544,10 @@ export function buildProgressExerciseLookup({
       prescription: `${exercise.sets}x ${exercise.repsLabel} | ${formatWeight(exercise.recommendedWeight, exercise)} | RPE ${exercise.targetRPE} | ${formatRest(exercise.restSeconds)}`,
       activeProgram: activeProgram?.id === program?.id,
       loggedSetCount: 0,
+      loadType: exercise.loadType ?? DEFAULT_MEASUREMENT_PROFILE.loadType,
+      weightMode: exercise.weightMode ?? DEFAULT_MEASUREMENT_PROFILE.weightMode,
+      repsLabel: exercise.repsLabel ?? null,
+      profile: getMeasurementProfile(exercise),
     };
 
     if (entry.programId && entry.programExerciseId) {
@@ -968,6 +1556,10 @@ export function buildProgressExerciseLookup({
 
     if (entry.programExerciseId) {
       byLooseProgramExercise.set(entry.programExerciseId, entry);
+      programExerciseIdCounts.set(
+        entry.programExerciseId,
+        (programExerciseIdCounts.get(entry.programExerciseId) ?? 0) + 1,
+      );
     }
 
     if (entry.exerciseId) {
@@ -975,26 +1567,19 @@ export function buildProgressExerciseLookup({
       if (!current || entry.activeProgram) {
         byExerciseId.set(entry.exerciseId, entry);
       }
+      exerciseIdCounts.set(entry.exerciseId, (exerciseIdCounts.get(entry.exerciseId) ?? 0) + 1);
     }
 
     if (entry.name) {
-      byExerciseName.set(normalizeProgressName(entry.name), entry);
+      const name = normalizeProgressName(entry.name);
+      byExerciseName.set(name, entry);
+      exerciseNameCounts.set(name, (exerciseNameCounts.get(name) ?? 0) + 1);
     }
 
     programEntries.set(entry.key, entry);
   }
 
-  (programs ?? []).forEach((program) => {
-    getProgramDayViewModels(program.id).forEach((day) => {
-      day.exercises.forEach((exercise) => addProgramExercise(program, day, exercise));
-    });
-  });
-
-  if (activeProgram && !programEntries.size) {
-    activeProgramDays.forEach((day) => {
-      day.exercises.forEach((exercise) => addProgramExercise(activeProgram, day, exercise));
-    });
-  }
+  (entries ?? []).forEach(({ program, day, exercise }) => addProgramExercise(program, day, exercise));
 
   return {
     byProgramExercise,
@@ -1003,6 +1588,12 @@ export function buildProgressExerciseLookup({
     byExerciseName,
     libraryById,
     programEntries,
+    // How many program exercises share a Library id / name / occurrence id:
+    // a legacy set without ids is attributed to a program occurrence only when
+    // the count is 1 (personalRecords.js, "match only unambiguously").
+    exerciseIdCounts,
+    exerciseNameCounts,
+    programExerciseIdCounts,
   };
 }
 
@@ -1031,8 +1622,45 @@ export function getSessionSetRecords(session, exerciseLookup) {
   });
 }
 
+/**
+ * Measurement fields of a set record (H5-10, additive): `measurement`,
+ * `value` (reps | seconds | meters), `seconds`, `meters`, `weightMode`,
+ * `loadType`, `perSide`, `tonnage` (getSetLoadForVolume), `e1rmEligibility`
+ * and `identitySource` (how the set was matched to a program occurrence:
+ * "exact" | "loose" | "library" | "name" | "none"). `reps` carries the count
+ * for rep-based sets only; a timed / distance set has `reps: null`.
+ */
+function buildMeasuredSetFields(entry, profile, identitySource) {
+  // The measurement is the set's own (H5-1): a reps-only set of a timed
+  // exercise stays a reps set.
+  const measurement = entry.measurement;
+  const reps = measurement === "reps" ? entry.value : null;
+  const seconds = measurement === "time" ? entry.value : null;
+  const meters = measurement === "distance" ? entry.value : null;
+
+  return {
+    measurement,
+    value: entry.value,
+    reps,
+    seconds,
+    meters,
+    weightMode: profile.weightMode,
+    loadType: profile.loadType,
+    perSide: profile.perSide,
+    tonnage: entry.tonnage,
+    e1rmEligibility: getE1rmEligibility({
+      measurement,
+      weight: entry.weight,
+      reps,
+      rpe: entry.rpe,
+      loadType: profile.loadType,
+    }),
+    identitySource,
+  };
+}
+
 export function normalizeWorkoutSetRecord(session, set, exerciseLookup) {
-  const lookupEntry = resolveProgressExerciseEntry(
+  const match = resolveProgressExerciseMatch(
     {
       programId: set.programId ?? session.programId,
       programExerciseId: set.programExerciseId,
@@ -1041,9 +1669,13 @@ export function normalizeWorkoutSetRecord(session, set, exerciseLookup) {
     },
     exerciseLookup,
   );
-  const reps = parseAnalyticsNumber(set.actualReps ?? set.reps);
-  const weight = normalizeWeight(set.actualWeight ?? set.weight ?? set.kg);
-  const rpe = parseAnalyticsRpe(set.actualRPE ?? set.rpe);
+  const lookupEntry = match.entry;
+  const profile = resolveSetMeasurementProfile(set, lookupEntry?.profile);
+  const entry = readMeasuredSet(set, profile);
+  const measured = buildMeasuredSetFields(entry, profile, match.via);
+  const { reps } = measured;
+  const weight = entry.weight;
+  const rpe = entry.rpe;
 
   return {
     sessionId: set.sessionId ?? session.id ?? getProgressSessionKey(session),
@@ -1065,26 +1697,47 @@ export function normalizeWorkoutSetRecord(session, set, exerciseLookup) {
     reps,
     weight,
     rpe,
-    completed: Boolean(set.completed) || isCompletedAnalyticsSet(reps, weight, rpe),
+    completed: Boolean(set.completed) || isCompletedAnalyticsSet(entry.value, weight, rpe),
     estimatedOneRepMax: calculateEstimatedOneRepMax(weight, reps),
+    ...measured,
   };
 }
 
 export function normalizeLegacySetRecord(session, exerciseKey, exerciseLog, set, index, exerciseLookup) {
-  const lookupEntry = resolveProgressExerciseEntry(
+  const match = resolveProgressExerciseMatch(
     {
       programId: session.programId,
       programExerciseId: exerciseLog?.programExerciseId ?? exerciseKey,
-      exerciseId: exerciseLog?.exerciseId,
+      // H5 fix round 1 (decision H5-22): the oldest sessions key the map by
+      // the exercise id of the day ("bench-press") and carry no ids in the
+      // log, so the key is also the Library / legacy id candidate.
+      exerciseId: exerciseLog?.exerciseId ?? exerciseKey,
       exerciseName: exerciseLog?.name ?? exerciseLog?.exerciseName,
     },
     exerciseLookup,
   );
-  const reps = parseAnalyticsNumber(set?.reps ?? set?.actualReps);
-  const weight = normalizeWeight(set?.weight ?? set?.kg ?? set?.actualWeight);
-  const setRpe = parseAnalyticsRpe(set?.rpe ?? set?.actualRPE);
+  const lookupEntry = match.entry;
+  const profile = resolveSetMeasurementProfile(set, lookupEntry?.profile);
   const exerciseRpe = parseAnalyticsRpe(exerciseLog?.exerciseRPE);
-  const rpe = setRpe ?? exerciseRpe;
+  // Legacy precedence: reps / weight / rpe before the actual* aliases, and
+  // the exercise RPE fills in a set RPE that is missing or blank (as before
+  // H5: the set value is parsed first, then the exercise RPE).
+  const legacySet = {
+    reps: set?.reps ?? set?.actualReps ?? null,
+    weight: set?.weight ?? set?.kg ?? set?.actualWeight ?? null,
+    rpe: parseAnalyticsRpe(set?.rpe ?? set?.actualRPE) ?? exerciseRpe ?? null,
+    seconds: set?.seconds ?? set?.actualSeconds ?? null,
+    meters: set?.meters ?? set?.actualMeters ?? null,
+    measurement: set?.measurement,
+    weightMode: set?.weightMode,
+    loadType: set?.loadType,
+    perSide: set?.perSide,
+  };
+  const entry = readMeasuredSet(legacySet, profile);
+  const rpe = entry.rpe;
+  const measured = buildMeasuredSetFields(entry, profile, match.via);
+  const { reps } = measured;
+  const weight = entry.weight;
 
   return {
     sessionId: session.id ?? getProgressSessionKey(session),
@@ -1111,19 +1764,25 @@ export function normalizeLegacySetRecord(session, exerciseKey, exerciseLog, set,
     reps,
     weight,
     rpe,
-    completed: isCompletedAnalyticsSet(reps, weight, rpe),
+    completed: isCompletedAnalyticsSet(entry.value, weight, rpe),
     estimatedOneRepMax: calculateEstimatedOneRepMax(weight, reps),
+    ...measured,
   };
 }
 
-export function resolveProgressExerciseEntry(identity, exerciseLookup) {
+/**
+ * resolveProgressExerciseMatch(identity, lookup) -> { entry, via } where
+ * via is "exact" (programId + programExerciseId), "loose" (occurrence id
+ * only), "library" (Library id), "name" or "none". Same order as before H5.
+ */
+export function resolveProgressExerciseMatch(identity, exerciseLookup) {
   if (identity.programId && identity.programExerciseId) {
     const strictMatch = exerciseLookup.byProgramExercise.get(
       `${identity.programId}::${identity.programExerciseId}`,
     );
 
     if (strictMatch) {
-      return strictMatch;
+      return { entry: strictMatch, via: "exact" };
     }
   }
 
@@ -1131,7 +1790,7 @@ export function resolveProgressExerciseEntry(identity, exerciseLookup) {
     const looseMatch = exerciseLookup.byLooseProgramExercise.get(identity.programExerciseId);
 
     if (looseMatch) {
-      return looseMatch;
+      return { entry: looseMatch, via: "loose" };
     }
   }
 
@@ -1139,15 +1798,20 @@ export function resolveProgressExerciseEntry(identity, exerciseLookup) {
     const exerciseMatch = exerciseLookup.byExerciseId.get(identity.exerciseId);
 
     if (exerciseMatch) {
-      return exerciseMatch;
+      return { entry: exerciseMatch, via: "library" };
     }
   }
 
   if (identity.exerciseName) {
-    return exerciseLookup.byExerciseName.get(normalizeProgressName(identity.exerciseName)) ?? null;
+    const nameMatch = exerciseLookup.byExerciseName.get(normalizeProgressName(identity.exerciseName));
+    return nameMatch ? { entry: nameMatch, via: "name" } : { entry: null, via: "none" };
   }
 
-  return null;
+  return { entry: null, via: "none" };
+}
+
+export function resolveProgressExerciseEntry(identity, exerciseLookup) {
+  return resolveProgressExerciseMatch(identity, exerciseLookup).entry;
 }
 
 export function buildProgressExerciseOptions({ activeProgram, activeProgramDays, exerciseLookup, setRecords }) {
@@ -1222,15 +1886,23 @@ export function buildSelectedExerciseAnalytics(exercise, setRecords) {
     (set) => typeof set.weight === "number" && Number.isFinite(set.reps),
   );
   const estimatedSets = weightedSets.filter((set) => set.estimatedOneRepMax !== null);
-  const bestSet = [...completedSets].sort(compareBestSet)[0] ?? null;
   const recentSessions = buildExerciseSessionSummaries(completedSets);
-  const trendValues = recentSessions.map(
-    (entry) => entry.bestEstimatedStrength ?? entry.totalVolume ?? entry.totalReps,
-  );
+  // The best set is read in the exercise's current measurement (the latest
+  // session's); an older reps log of a now-timed exercise does not outrank
+  // the timed sets. All-reps history: unchanged.
+  const currentMeasurement = recentSessions[0]?.measurement ?? "reps";
+  const currentSets = completedSets.filter((set) => (set.measurement ?? "reps") === currentMeasurement);
+  const bestSet = [...(currentSets.length ? currentSets : completedSets)].sort(compareBestSet)[0] ?? null;
+  const trendValues = recentSessions.map((entry) => getExerciseTrendMetric(entry).value);
   const repsTrend = buildExerciseMetricTrend(recentSessions, "totalReps", formatPlainNumber, "reps");
   const volumeTrend = buildExerciseMetricTrend(recentSessions, "totalVolume", formatVolume);
   const strengthTrend = buildExerciseMetricTrend(recentSessions, "bestEstimatedStrength", formatKg);
+  const timeTrend = buildExerciseMetricTrend(recentSessions, "bestSeconds", formatDuration);
+  const totalTimeTrend = buildExerciseMetricTrend(recentSessions, "totalSeconds", formatDuration);
+  const distanceTrend = buildExerciseMetricTrend(recentSessions, "bestMeters", formatMeters);
+  const totalDistanceTrend = buildExerciseMetricTrend(recentSessions, "totalMeters", formatMeters);
   const trendInfo = buildExerciseProgressTrend(recentSessions);
+  const measurement = recentSessions[0]?.measurement ?? "reps";
 
   return {
     completedSets,
@@ -1240,14 +1912,28 @@ export function buildSelectedExerciseAnalytics(exercise, setRecords) {
     bestEstimatedStrength: estimatedSets.length
       ? Math.max(...estimatedSets.map((set) => set.estimatedOneRepMax))
       : null,
-    totalVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
+    // Measurement-aware tonnage (H5-10); `loggedVolume` keeps the as-logged sum.
+    totalVolume: sumTonnage(completedSets),
+    loggedVolume: weightedSets.reduce((total, set) => total + set.weight * set.reps, 0),
     averageSetRpe: average(completedSets.map((set) => set.rpe).filter(Number.isFinite)),
     recentSessions,
     repsTrend,
     volumeTrend,
     strengthTrend,
+    timeTrend,
+    totalTimeTrend,
+    distanceTrend,
+    totalDistanceTrend,
     trendInfo,
-    trendMaxValue: Math.max(0, ...trendValues),
+    trendMaxValue: Math.max(0, ...trendValues.filter(Number.isFinite)),
+    measurement,
+    measurementUnit: MEASUREMENT_UNITS[measurement] ?? "reps",
+    weightMode: recentSessions[0]?.weightMode ?? "kg",
+    comparability: checkTrendComparability(recentSessions[0], recentSessions[1]),
+    bestSeconds: maxField(completedSets, "seconds"),
+    totalSeconds: sumField(completedSets, "seconds"),
+    bestMeters: maxField(completedSets, "meters"),
+    totalMeters: sumField(completedSets, "meters"),
   };
 }
 
@@ -1268,6 +1954,17 @@ export function buildExerciseProgressTrend(recentSessions) {
 
   const latest = usefulSessions[0];
   const previous = usefulSessions[1];
+  const comparability = checkTrendComparability(latest, previous);
+
+  if (!comparability.comparable) {
+    return {
+      label: "Not comparable",
+      body: `${comparability.reason} The trend restarts from this session.`,
+      status: "not_comparable",
+      toneClass: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+    };
+  }
+
   const latestMetric = getExerciseTrendMetric(latest);
   const previousMetric = getExerciseTrendMetric(previous);
   const change = latestMetric.value - previousMetric.value;
@@ -1303,7 +2000,17 @@ export function buildExerciseProgressTrend(recentSessions) {
   };
 }
 
+// Trend metric per measurement (H5-10): reps -> e1RM, then tonnage, then
+// total reps (unchanged); time -> best seconds; distance -> best meters.
 export function getExerciseTrendMetric(entry) {
+  if (entry.measurement === "time") {
+    return { label: "Best time", value: entry.bestSeconds ?? entry.totalSeconds ?? 0 };
+  }
+
+  if (entry.measurement === "distance") {
+    return { label: "Best distance", value: entry.bestMeters ?? entry.totalMeters ?? 0 };
+  }
+
   if (Number.isFinite(entry.bestEstimatedStrength) && entry.bestEstimatedStrength > 0) {
     return { label: "Estimated strength", value: entry.bestEstimatedStrength };
   }
@@ -1336,9 +2043,18 @@ export function buildExerciseMetricTrend(recentSessions, field, formatter, suffi
     };
   }
 
+  const comparability = checkTrendComparability(validEntries[0], validEntries[1]);
   const previous = validEntries[1][field];
   const difference = latest - previous;
   const formattedLatest = suffix ? `${formatter(latest)} ${suffix}` : formatter(latest);
+
+  if (!comparability.comparable) {
+    return {
+      value: formattedLatest,
+      detail: comparability.reason,
+      comparable: false,
+    };
+  }
 
   if (Math.abs(difference) < 0.01) {
     return {
@@ -1380,11 +2096,20 @@ export function buildExerciseSessionSummaries(records) {
       );
       const rpes = sets.map((set) => set.rpe).filter(Number.isFinite);
       const totalReps = sets.reduce((total, set) => total + (Number.isFinite(set.reps) ? set.reps : 0), 0);
-      const totalVolume = weightedSets.reduce((total, set) => total + set.weight * set.reps, 0);
+      const loggedVolume = weightedSets.reduce((total, set) => total + set.weight * set.reps, 0);
+      const totalVolume = sets.some((set) => Number.isFinite(set.tonnage))
+        ? sumTonnage(sets)
+        : loggedVolume;
       const bestEstimatedStrength = weightedSets.length
         ? Math.max(...weightedSets.map((set) => set.estimatedOneRepMax ?? 0))
         : null;
       const bestSet = [...sets].sort(compareBestSet)[0] ?? null;
+      const measurements = distinctValues(sets, "measurement");
+      const weightModes = distinctValues(sets, "weightMode");
+      // H5-20: per side and the load type are comparability guards too, so
+      // the session entry carries them for checkTrendComparability.
+      const loadTypes = distinctValues(sets, "loadType");
+      const perSideCount = sets.filter((set) => set.perSide === true).length;
 
       return {
         ...entry,
@@ -1392,9 +2117,25 @@ export function buildExerciseSessionSummaries(records) {
         bestSet,
         totalReps,
         totalVolume,
+        loggedVolume,
         bestEstimatedStrength,
         averageRpe: average(rpes),
         setSummary: sets.map(formatSetPerformance).join(" | "),
+        // Measurement of the session's sets (H5-10): the sets of one
+        // occurrence share a profile; a mixed session reports the first.
+        measurement: measurements[0] ?? "reps",
+        weightMode: weightModes[0] ?? "kg",
+        loadType: loadTypes[0] ?? "external",
+        perSide: sets.length ? sets[0].perSide === true : false,
+        mixedMeasurement:
+          measurements.length > 1 ||
+          weightModes.length > 1 ||
+          loadTypes.length > 1 ||
+          (perSideCount > 0 && perSideCount < sets.length),
+        bestSeconds: maxField(sets, "seconds"),
+        totalSeconds: sumField(sets, "seconds"),
+        bestMeters: maxField(sets, "meters"),
+        totalMeters: sumField(sets, "meters"),
       };
     })
     .sort((left, right) => getDateTime(right.date) - getDateTime(left.date));
@@ -1432,7 +2173,20 @@ export function buildReadinessEntries(readinessByDate, sessions) {
   return entries.sort((left, right) => getDateTime(`${right.date}T00:00:00`) - getDateTime(`${left.date}T00:00:00`));
 }
 
+// Best set per measurement (H5-10): rep-based sets rank by e1RM, weight,
+// reps as before; timed sets by weight then seconds; distance sets by weight
+// then meters. Across measurements reps rank above time above distance, so a
+// mixed list never ranks 45 seconds against 45 reps.
+const MEASUREMENT_RANK = Object.freeze({ reps: 0, time: 1, distance: 2 });
+
 export function compareBestSet(left, right) {
+  const leftMeasurement = left.measurement ?? "reps";
+  const rightMeasurement = right.measurement ?? "reps";
+
+  if (leftMeasurement !== rightMeasurement) {
+    return (MEASUREMENT_RANK[leftMeasurement] ?? 0) - (MEASUREMENT_RANK[rightMeasurement] ?? 0);
+  }
+
   const leftStrength = left.estimatedOneRepMax ?? -1;
   const rightStrength = right.estimatedOneRepMax ?? -1;
 
@@ -1445,6 +2199,14 @@ export function compareBestSet(left, right) {
 
   if (leftWeight !== rightWeight) {
     return rightWeight - leftWeight;
+  }
+
+  if (leftMeasurement === "time") {
+    return (right.seconds ?? -1) - (left.seconds ?? -1);
+  }
+
+  if (leftMeasurement === "distance") {
+    return (right.meters ?? -1) - (left.meters ?? -1);
   }
 
   return (right.reps ?? -1) - (left.reps ?? -1);
@@ -1576,10 +2338,39 @@ export function formatSetPerformance(set) {
       : set.weight === "BW"
         ? "BW"
         : "No kg";
-  const repsText = Number.isFinite(set.reps) ? `${set.reps} reps` : "No reps";
+  const valueText =
+    set.measurement === "time"
+      ? Number.isFinite(set.seconds)
+        ? formatDuration(set.seconds)
+        : "No time"
+      : set.measurement === "distance"
+        ? Number.isFinite(set.meters)
+          ? formatMeters(set.meters)
+          : "No distance"
+        : Number.isFinite(set.reps)
+          ? `${set.reps} reps`
+          : "No reps";
   const rpeText = Number.isFinite(set.rpe) ? ` @ RPE ${set.rpe}` : "";
 
-  return `${weightText} x ${repsText}${rpeText}`;
+  return `${weightText} x ${valueText}${rpeText}`;
+}
+
+// Timed work: "45 sec", "2 min 30 sec" (same wording as the rest timer).
+export function formatDuration(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    return "No time";
+  }
+
+  return formatRest(Math.round(value));
+}
+
+// Distance: "400 m", "1,200 m".
+export function formatMeters(value) {
+  if (!Number.isFinite(value) || value < 0) {
+    return "No distance";
+  }
+
+  return `${Math.round(value).toLocaleString()} m`;
 }
 
 export function formatBestWeightReps(set) {

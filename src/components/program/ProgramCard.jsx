@@ -6,12 +6,17 @@ import {
   Pencil,
   Sparkles,
 } from "lucide-react";
-import { ProgramBadge, ProgramTextArea, ProgramTextField } from "./ProgramFields.jsx";
+import { ProgramBadge, ProgramEditorField, ProgramTextArea, ProgramTextField } from "./ProgramFields.jsx";
 import ProgramPrescriptionEditor from "./ProgramPrescriptionEditor.jsx";
 import Metric from "../ui/Metric.jsx";
 import { extractProgramEditWithAi, getGeminiApiKey } from "../../lib/aiProgram.js";
+import {
+  buildProgramProfilePatch,
+  createProgramProfileForm,
+  formatProgramWeekLabel,
+} from "../../lib/coachControlsView.js";
 import { draftFromShare } from "../../lib/programDraft.js";
-import { exportProgramShare, getProgramDayViewModels, getProgramState } from "../../lib/programStorage.js";
+import { exportProgramShare, getProgramDayViewModels, getProgramStateForDisplay } from "../../lib/programStorage.js";
 import { formatRest, formatWeight } from "../../lib/progression.js";
 
 function downloadProgramShareFile(program) {
@@ -46,6 +51,8 @@ export default function ProgramCard({
   onArchiveProgram,
   onUpdateProgramMetadata,
   onUpdateProgramExerciseTarget,
+  onUpdateProgramExerciseProfile,
+  onUpdateProgramProfile,
   onEditProgram,
   onOpenStudio,
 }) {
@@ -60,7 +67,7 @@ export default function ProgramCard({
   // read program storage and must not run on every re-render of the card.
   const days = useMemo(() => getProgramDayViewModels(program.id), [program]);
   const exerciseCount = days.reduce((total, day) => total + day.exercises.length, 0);
-  const programState = useMemo(() => getProgramState(program.id), [program]);
+  const programState = useMemo(() => getProgramStateForDisplay(program.id), [program]);
   const isDefaultProgram = Boolean(program.isDefault);
 
   useEffect(() => {
@@ -75,11 +82,33 @@ export default function ProgramCard({
 
   function saveMetadata() {
     // The editor closes only after the write succeeded (fix round 2).
-    const result = onUpdateProgramMetadata(program.id, form);
+    const { aggression, cycleWeeks, ...metadata } = form;
+    // H5-12: coach aggression and cycle length are program-level profile
+    // fields (H5-3 / H5-5), written by their own checked writer. The cycle
+    // length is validated BEFORE the metadata write (H5 fix round 1), so an
+    // invalid cycle never leaves the name saved and the editor open.
+    const profile = onUpdateProgramProfile ? buildProgramProfilePatch({ aggression, cycleWeeks }) : null;
+
+    if (profile && !profile.ok) {
+      setArchiveError(profile.errors.join(" "));
+      return;
+    }
+
+    const result = onUpdateProgramMetadata(program.id, metadata);
 
     if (result && !result.ok) {
       setArchiveError(result.error ?? "The program details could not be saved.");
       return;
+    }
+
+    // A refused profile write keeps the editor open with the typed values.
+    if (profile) {
+      const profileResult = onUpdateProgramProfile(program.id, profile.patch);
+
+      if (profileResult && !profileResult.ok) {
+        setArchiveError(profileResult.error ?? "The coach settings could not be saved.");
+        return;
+      }
     }
 
     setArchiveError("");
@@ -222,6 +251,10 @@ export default function ProgramCard({
         <Metric label="Week" value={programState.currentWeek} />
         <Metric label="Cycle" value={programState.currentCycle} />
       </div>
+      <p className="mt-2 text-xs font-semibold text-zinc-400" data-testid="program-week-label">
+        {formatProgramWeekLabel(programState, program)} | Coach aggression:{" "}
+        {program.programProfile?.aggression === "conservative" ? "conservative" : "standard"}
+      </p>
 
       {isAiEditOpen && !isDefaultProgram && (
         <ProgramAiEditForm
@@ -264,6 +297,7 @@ export default function ProgramCard({
             program={program}
             days={days}
             onUpdateProgramExerciseTarget={onUpdateProgramExerciseTarget}
+            onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
           />
         )}
       </details>
@@ -420,6 +454,7 @@ function createProgramMetadataForm(program) {
     nickname: program.nickname ?? "",
     description: program.description ?? "",
     goal: program.goal ?? "",
+    ...createProgramProfileForm(program),
   };
 }
 
@@ -443,7 +478,31 @@ function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSav
         <ProgramTextField label="Nickname" value={form.nickname} onChange={(value) => onChange("nickname", value)} />
         <ProgramTextArea label="Description" value={form.description} onChange={(value) => onChange("description", value)} />
         <ProgramTextArea label="Goal" value={form.goal} onChange={(value) => onChange("goal", value)} />
+        <label className="block">
+          <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+            Coach aggression
+          </span>
+          <select
+            value={form.aggression}
+            onChange={(event) => onChange("aggression", event.target.value)}
+            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white"
+          >
+            <option value="standard">standard</option>
+            <option value="conservative">conservative</option>
+          </select>
+        </label>
+        <ProgramEditorField
+          label="Cycle length (weeks, optional)"
+          value={form.cycleWeeks}
+          onChange={(value) => onChange("cycleWeeks", value)}
+          placeholder="e.g. 4"
+          inputMode="numeric"
+        />
       </div>
+      <p className="mt-3 text-xs font-semibold leading-5 text-zinc-400">
+        Profile changes affect future recommendations only. Conservative needs two strong sessions in a
+        row before a step up and takes one step at a time.
+      </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <button
           type="button"

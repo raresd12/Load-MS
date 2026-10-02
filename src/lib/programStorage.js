@@ -19,6 +19,22 @@ import {
   normalizeProgramDraft,
   validateProgramDraft,
 } from "./programDraft.js";
+// Phase H5: measurement profile (H5-1), profile overrides (H5-3), hold /
+// manual overrides (H5-6) and the deload state (H5-7).
+import { getMeasurementProfile, inferMeasurementFromLabel, isValidMeasurement, MEASUREMENTS } from "./measurement.js";
+import {
+  consumeOverrideSessions,
+  findOverrideRecord,
+  isOverrideActive,
+  removeOverrideRecords,
+} from "./overrides.js";
+import {
+  isDeloadActive,
+  PROFILE_PRIORITIES,
+  PROGRAM_AGGRESSIONS,
+  PROGRESSION_MODES,
+  getProgressionModeMeasurement,
+} from "./progression.js";
 
 export const PROGRAM_STORAGE_VERSION = 1;
 
@@ -41,6 +57,23 @@ export const LOAD_TYPES = Object.freeze(["external", "bodyweight", "optionalExte
 export const WEIGHT_MODES = Object.freeze(["kg", "per dumbbell", "additional load"]);
 export const DEFAULT_LOAD_TYPE = "external";
 export const DEFAULT_WEIGHT_MODE = "kg";
+
+// Profile overrides (decision H5-3): optional per program exercise; every
+// field optional. Ranges checked by collectProgramExerciseProfileErrors.
+export const PROFILE_OVERRIDE_FIELDS = Object.freeze([
+  "progressionMode",
+  "incrementKg",
+  "roundToKg",
+  "rpeMaxForLoadIncrease",
+  "priority",
+  "canIncreaseLoad",
+]);
+export const PROFILE_OVERRIDE_RANGES = Object.freeze({
+  incrementKg: Object.freeze({ min: 0.25, max: 20 }),
+  roundToKg: Object.freeze({ min: 0.25, max: 10 }),
+  rpeMaxForLoadIncrease: Object.freeze({ min: 5, max: 10 }),
+});
+export const MAX_CYCLE_WEEKS = 52;
 
 // Saved program drafts (decision H2-3). storage.js may register the same key
 // under STORAGE_KEYS.programDrafts later; until then the literal is used.
@@ -458,7 +491,10 @@ function buildProgramSeedFromConfig(programConfig, options, createdAt = nowIso()
   const programState = {
     programId: program.id,
     lastCompletedDayId: null,
-    nextRecommendedDayId: programConfig.cycleOrder[0] ?? programConfig.days[0]?.id ?? null,
+    nextRecommendedDayId: getFirstScheduledDayId(
+      programConfig.days,
+      programConfig.cycleOrder[0] ?? programConfig.days[0]?.id ?? null,
+    ),
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -540,6 +576,12 @@ function getBaselines() {
 
 function getProgramProgressions() {
   return asArray(readStorage(STORAGE_KEYS.programProgressions, []));
+}
+
+function getProgramOverrides() {
+  return asArray(readStorage(STORAGE_KEYS.programOverrides, [])).filter(
+    (record) => record && typeof record === "object",
+  );
 }
 
 function getProgramDisplayNickname(program) {
@@ -1225,32 +1267,38 @@ function collectTargetPatchErrors(existingExercise, patch) {
  * The pending next-plan entry lives in App state (STORAGE_KEYS.nextPlans via
  * useLocalStorageState); use `removeExerciseFromNextPlans` there.
  */
-export function updateProgramExerciseTargetChecked(programId, programExerciseId, patch) {
+// The exercise a target / profile writer may edit: a custom, non-archived
+// program's own exercise. Returns { error } or { programExercises, index }.
+function findEditableProgramExercise(programId, programExerciseId) {
   const program = getAllPrograms().find(
     (candidate) => candidate.id === programId && !candidate.isArchived,
   );
 
   if (!program) {
-    return { ok: false, error: "Program not found or archived.", exercise: null };
+    return { error: "Program not found or archived." };
   }
 
   if (program.isDefault || program.id === DEFAULT_PROGRAM_ID) {
-    return {
-      ok: false,
-      error: "Default program targets are protected. Duplicate the program first.",
-      exercise: null,
-    };
+    return { error: "Default program targets are protected. Duplicate the program first." };
   }
 
   const programExercises = asArray(readStorage(STORAGE_KEYS.programExercises, []));
-  const existingIndex = programExercises.findIndex(
+  const index = programExercises.findIndex(
     (programExercise) =>
       programExercise.id === programExerciseId && programExercise.programId === programId,
   );
 
-  if (existingIndex < 0) {
-    return { ok: false, error: "Program exercise not found.", exercise: null };
+  return index < 0 ? { error: "Program exercise not found." } : { programExercises, index };
+}
+
+export function updateProgramExerciseTargetChecked(programId, programExerciseId, patch) {
+  const found = findEditableProgramExercise(programId, programExerciseId);
+
+  if (found.error) {
+    return { ok: false, error: found.error, exercise: null };
   }
+
+  const { programExercises, index: existingIndex } = found;
 
   const targetErrors = collectTargetPatchErrors(programExercises[existingIndex], patch ?? {});
 
@@ -1264,6 +1312,16 @@ export function updateProgramExerciseTargetChecked(programId, programExerciseId,
   }
 
   const updatedExercise = applyProgramExerciseTargetPatch(programExercises[existingIndex], patch);
+  // H5 fix round 1 (decision H5-17): the target's unit wins. A target typed
+  // in another unit than the explicit measurement ("45 s" on a "reps"
+  // exercise) drops the explicit field, so the label is never served as the
+  // old unit.
+  const clearedMeasurement = Boolean(findMeasurementTargetConflict(updatedExercise));
+
+  if (clearedMeasurement) {
+    delete updatedExercise.measurement;
+  }
+
   const nextProgramExercises = [...programExercises];
   nextProgramExercises[existingIndex] = updatedExercise;
 
@@ -1280,6 +1338,14 @@ export function updateProgramExerciseTargetChecked(programId, programExerciseId,
     entries.push({ key: STORAGE_KEYS.programProgressions, value: nextProgressions });
   }
 
+  // Decision H5-6: a target edit ends a hold / manual override of that
+  // exercise, in the same batch.
+  const overrideRemoval = removeOverrideRecords(getProgramOverrides(), [programExerciseId], programId);
+
+  if (overrideRemoval.removed) {
+    entries.push({ key: STORAGE_KEYS.programOverrides, value: overrideRemoval.records });
+  }
+
   const writeResult = writeStorageBatch(entries);
 
   if (!writeResult.ok) {
@@ -1292,7 +1358,204 @@ export function updateProgramExerciseTargetChecked(programId, programExerciseId,
     };
   }
 
-  return { ok: true, exercise: updatedExercise, deletedProgression };
+  return { ok: true, exercise: updatedExercise, deletedProgression, clearedOverride: overrideRemoval.removed > 0, clearedMeasurement };
+}
+
+const PROGRAM_EXERCISE_PROFILE_FIELDS = Object.freeze(["measurement", "perSide", "profileOverrides"]);
+
+/**
+ * Decisions H5-1 / H5-3. Edits the measurement profile (measurement, perSide)
+ * and the profile overrides of a custom program exercise. Unlike a target
+ * edit this is NOT a prescription change (19.4-2): the stored progression and
+ * any override are kept; only future decisions change. A field set to null
+ * is removed (back to inference / classification).
+ *
+ * Returns { ok: true, exercise } or { ok: false, error, errors?, code?, failedKey?, exercise: null }.
+ */
+export function updateProgramExerciseProfileChecked(programId, programExerciseId, patch) {
+  const found = findEditableProgramExercise(programId, programExerciseId);
+
+  if (found.error) {
+    return { ok: false, error: found.error, exercise: null };
+  }
+
+  const { programExercises, index: existingIndex } = found;
+  const input = patch && typeof patch === "object" ? patch : {};
+  const touched = PROGRAM_EXERCISE_PROFILE_FIELDS.filter((field) => hasOwn(input, field));
+
+  if (!touched.length) {
+    return { ok: false, error: "Nothing to update.", errors: ["Nothing to update."], exercise: null };
+  }
+
+  const updatedExercise = { ...programExercises[existingIndex] };
+
+  touched.forEach((field) => {
+    const value = field === "profileOverrides" ? cleanProfileOverrides(input[field]) : input[field];
+
+    if (isNullish(value)) {
+      delete updatedExercise[field];
+    } else {
+      updatedExercise[field] = value;
+    }
+  });
+
+  const candidate = { ...updatedExercise };
+
+  if (hasOwn(input, "profileOverrides") && !isNullish(input.profileOverrides)) {
+    // Validate what was asked for, not the cleaned copy, so a wrong field name is reported.
+    candidate.profileOverrides = input.profileOverrides;
+  }
+
+  const errors = collectProgramExerciseProfileErrors(candidate).map(capitalizeMessage);
+
+  if (errors.length) {
+    return { ok: false, error: errors.join(" "), errors, exercise: null };
+  }
+
+  // H5 fix round 1 (decision H5-17): the measurement is the UNIT of the
+  // target and of the earned progression. A measurement that disagrees with
+  // the target's unit was refused above (findMeasurementTargetConflict). When
+  // the effective measurement still changes (an explicit field that disagreed
+  // with the label is cleared, a label-less import, ...), a reps-based earned
+  // progression ("5-7") would be served as "5-7 s" and a manual override's
+  // reps as seconds, so both are removed in the same batch. History is never
+  // touched.
+  const previousMeasurement = getMeasurementProfile(programExercises[existingIndex]).measurement;
+  const nextMeasurement = getMeasurementProfile(updatedExercise).measurement;
+  const measurementChanged = previousMeasurement !== nextMeasurement;
+  const entries = [];
+  let deletedProgression = false;
+  let overrideRemoval = { removed: 0, records: null };
+
+  if (measurementChanged) {
+    const progressions = getProgramProgressions();
+    const nextProgressions = progressions.filter(
+      (progression) => !(progression.programId === programId && progression.programExerciseId === programExerciseId),
+    );
+    deletedProgression = nextProgressions.length !== progressions.length;
+
+    if (deletedProgression) {
+      entries.push({ key: STORAGE_KEYS.programProgressions, value: nextProgressions });
+    }
+
+    overrideRemoval = removeOverrideRecords(getProgramOverrides(), [programExerciseId], programId);
+
+    if (overrideRemoval.removed) {
+      entries.push({ key: STORAGE_KEYS.programOverrides, value: overrideRemoval.records });
+    }
+  }
+
+  const nextProgramExercises = [...programExercises];
+  nextProgramExercises[existingIndex] = updatedExercise;
+  entries.unshift({ key: STORAGE_KEYS.programExercises, value: nextProgramExercises });
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return {
+      ok: false,
+      error: writeResult.error,
+      code: writeResult.code,
+      failedKey: writeResult.failedKey ?? STORAGE_KEYS.programExercises,
+      exercise: null,
+    };
+  }
+
+  return {
+    ok: true,
+    exercise: updatedExercise,
+    measurementChanged,
+    deletedProgression,
+    clearedOverride: overrideRemoval.removed > 0,
+  };
+}
+
+/**
+ * Decisions H5-3 / H5-5. Sets the program-level profile
+ * (`programProfile.aggression`) and / or `cycleWeeks` of a program. Allowed on
+ * default programs too: neither is a prescription target (11.1 protects
+ * targets). null removes the field.
+ *
+ * Returns { ok: true, program } or { ok: false, error, errors?, code?, program: null }.
+ */
+export function updateProgramProfileChecked(programId, patch) {
+  const programs = getAllPrograms();
+  const existingIndex = programs.findIndex((program) => program.id === programId);
+
+  if (existingIndex < 0) {
+    return { ok: false, error: "Program not found.", program: null };
+  }
+
+  const input = patch && typeof patch === "object" ? patch : {};
+  const updatedProgram = { ...programs[existingIndex] };
+  const touched = ["programProfile", "cycleWeeks"].filter((field) => hasOwn(input, field));
+
+  touched.forEach((field) => {
+    if (isNullish(input[field])) {
+      delete updatedProgram[field];
+    } else {
+      updatedProgram[field] = input[field];
+    }
+  });
+
+  if (!touched.length) {
+    return { ok: false, error: "Nothing to update.", errors: ["Nothing to update."], program: null };
+  }
+
+  const errors = collectProgramProfileErrors(updatedProgram).map(capitalizeMessage);
+
+  if (errors.length) {
+    return { ok: false, error: errors.join(" "), errors, program: null };
+  }
+
+  if (updatedProgram.programProfile) {
+    updatedProgram.programProfile = cleanProgramProfile(updatedProgram.programProfile);
+  }
+
+  const updatedAt = nowIso();
+  updatedProgram.updatedAt = updatedAt;
+  const nextPrograms = [...programs];
+  nextPrograms[existingIndex] = updatedProgram;
+  const entries = [{ key: STORAGE_KEYS.programs, value: nextPrograms }];
+  let programState = null;
+
+  // H5 fix round 1: a changed cycle length re-derives currentWeek /
+  // currentCycle from the stored sessions in the same batch (decision H5-5
+  // derives them at workout save; the card would otherwise show "Week 6 of
+  // 4, cycle 1" until the next save).
+  if (hasOwn(input, "cycleWeeks") && (programs[existingIndex].cycleWeeks ?? null) !== (updatedProgram.cycleWeeks ?? null)) {
+    const sessionsResult = readStorageResult(STORAGE_KEYS.sessions, []);
+    const statesResult = readStorageResult(STORAGE_KEYS.programStates, []);
+
+    if (sessionsResult.corrupt || statesResult.corrupt) {
+      return {
+        ok: false,
+        error: "Stored sessions or program states are unreadable, so nothing was written.",
+        code: "corrupt",
+        failedKey: sessionsResult.corrupt ? STORAGE_KEYS.sessions : STORAGE_KEYS.programStates,
+        program: null,
+      };
+    }
+
+    const derived = deriveProgramStatePatchFromSessions(programId, asArray(sessionsResult.value), getProgramDays(programId), {
+      cycleWeeks: updatedProgram.cycleWeeks ?? null,
+    });
+    const built = buildProgramStateRecord(
+      asArray(statesResult.value),
+      programId,
+      { currentWeek: derived.currentWeek, currentCycle: derived.currentCycle },
+      updatedAt,
+    );
+    programState = built.state;
+    entries.push({ key: STORAGE_KEYS.programStates, value: built.states });
+  }
+
+  const writeResult = writeStorageBatch(entries);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, failedKey: writeResult.failedKey, program: null };
+  }
+
+  return { ok: true, program: updatedProgram, ...(programState ? { programState } : {}) };
 }
 
 /**
@@ -1433,7 +1696,7 @@ export function getProgramState(programId) {
   return {
     programId,
     lastCompletedDayId: null,
-    nextRecommendedDayId: getProgramDays(programId)[0]?.id ?? null,
+    nextRecommendedDayId: getFirstScheduledDayId(getProgramDays(programId)),
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -1462,39 +1725,186 @@ export function updateProgramState(programId, patch) {
 }
 
 /**
- * Pure (fix round 2, decision new-E): the ProgramState a program should carry
- * after its session history changed. Derived from the most recent remaining
- * session of that program: that session's day is the last completed one, the
- * following day in the program is next, and its date is the last workout
- * date. With no session left the state goes back to "nothing completed, first
- * day next". Sessions without a programId (legacy) never drive the state.
+ * Checked ProgramState writer (Phase H5): { ok: true, state } or
+ * { ok: false, error, code, failedKey }. A corrupt states key refuses the
+ * write (new-U); nothing else in the state is touched.
  */
-export function deriveProgramStatePatchFromSessions(programId, sessions, programDays) {
+export function updateProgramStateChecked(programId, patch) {
+  if (!programId) {
+    return { ok: false, error: "Program id is required.", code: "invalid" };
+  }
+
+  const stored = readStorageResult(STORAGE_KEYS.programStates, []);
+
+  if (stored.corrupt) {
+    return {
+      ok: false,
+      error: "Stored program states are unreadable, so nothing was written.",
+      code: "corrupt",
+      failedKey: STORAGE_KEYS.programStates,
+    };
+  }
+
+  const built = buildProgramStateRecord(asArray(stored.value), programId, patch ?? {});
+  const writeResult = writeProgramStates(built.states);
+
+  if (!writeResult.ok) {
+    return { ok: false, error: writeResult.error, code: writeResult.code, failedKey: STORAGE_KEYS.programStates };
+  }
+
+  return { ok: true, state: built.state };
+}
+
+/**
+ * Decision H5-5. The scheduled (non-optional) days of a program in order;
+ * when every day is optional they all count as scheduled.
+ */
+export function getScheduledProgramDays(programDays) {
+  const days = asArray(programDays).filter((day) => day && day.id !== undefined && day.id !== null);
+  const scheduled = days.filter((day) => !day.isOptional);
+  return scheduled.length ? scheduled : days;
+}
+
+/**
+ * Decision H5-53. The day a fresh pointer starts on: `preferredId` when it
+ * names a scheduled day, else the first scheduled day (H5-5: an optional day
+ * is never "up next").
+ */
+export function getFirstScheduledDayId(programDays, preferredId = null) {
+  const scheduled = getScheduledProgramDays(programDays);
+  const preferred = isNullish(preferredId) ? null : scheduled.find((day) => String(day.id) === String(preferredId));
+  return (preferred ?? scheduled[0])?.id ?? null;
+}
+
+/**
+ * The scheduled day a stored pointer should name: itself when it is a
+ * scheduled day, the next scheduled day in program order when it names an
+ * optional day, the first scheduled day when it names no day of the program.
+ */
+export function getScheduledDayIdFrom(programDays, dayId) {
+  const days = asArray(programDays).filter((day) => day && !isNullish(day.id));
+  const scheduledIds = new Set(getScheduledProgramDays(days).map((day) => String(day.id)));
+  const index = isNullish(dayId) ? -1 : days.findIndex((day) => String(day.id) === String(dayId));
+
+  if (index < 0) {
+    return getFirstScheduledDayId(days);
+  }
+
+  for (let step = 0; step < days.length; step += 1) {
+    const candidate = days[(index + step) % days.length];
+
+    if (scheduledIds.has(String(candidate.id))) {
+      return candidate.id;
+    }
+  }
+
+  return days[index].id;
+}
+
+/**
+ * Decision H5-54. The ProgramState for display: `currentWeek` /
+ * `currentCycle` derived from the stored sessions on READ (the rule of
+ * H5-5), so a state written before H5 - or a program with no save since -
+ * does not show "Week 1" over weeks of history. Read-only: nothing is
+ * written; unreadable sessions or a program without sessions keep the
+ * stored values.
+ */
+export function getProgramStateForDisplay(programId) {
+  const state = getProgramState(programId);
+  const sessionsResult = readStorageResult(STORAGE_KEYS.sessions, []);
+  const sessions = sessionsResult.corrupt
+    ? []
+    : asArray(sessionsResult.value).filter((session) => session && session.programId === programId);
+
+  if (!sessions.length) {
+    return state;
+  }
+
+  const derived = deriveProgramStatePatchFromSessions(programId, sessions, getProgramDays(programId));
+  return { ...state, currentWeek: derived.currentWeek, currentCycle: derived.currentCycle };
+}
+
+function getSessionTimeValue(session) {
+  const time = new Date(session?.date ?? 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+/**
+ * Pure (fix round 2, decision new-E; optional days and week / cycle by
+ * decision H5-5): the ProgramState a program should carry given its session
+ * history. Derived from the sessions of that program:
+ * - lastCompletedDayId / lastWorkoutDate: the most recent session's day and
+ *   date (an optional day counts as completed too);
+ * - nextRecommendedDayId: the scheduled (non-optional) day after the most
+ *   recent session of a scheduled day; completing an optional day never
+ *   moves the pointer past the scheduled day that was due; with no session
+ *   of a scheduled day left, the first scheduled day;
+ * - currentWeek: 1 + the number of full passes (every scheduled day
+ *   completed at least once since the pass began, in any order; a repeated
+ *   day does not count twice) since the program's first session;
+ * - currentCycle: with `cycleWeeks` (options.cycleWeeks, else the stored
+ *   program's field) every cycleWeeks passes start a new cycle and the week
+ *   restarts at 1; without it the cycle stays 1 and the week keeps counting.
+ * Sessions without a programId (legacy) never drive the state.
+ */
+export function deriveProgramStatePatchFromSessions(programId, sessions, programDays, options = {}) {
   const days = asArray(programDays);
-  const firstDayId = days[0]?.id ?? null;
-  const latest = asArray(sessions)
+  const scheduled = getScheduledProgramDays(days);
+  const scheduledIds = new Set(scheduled.map((day) => String(day.id)));
+  const firstDayId = scheduled[0]?.id ?? days[0]?.id ?? null;
+  const cycleWeeks = hasOwn(options, "cycleWeeks")
+    ? options.cycleWeeks
+    : getAllPrograms().find((program) => program.id === programId)?.cycleWeeks ?? null;
+  const ordered = asArray(sessions)
     .filter((session) => session && session.programId === programId)
-    .reduce((best, session) => {
-      const time = new Date(session.date ?? 0).getTime();
-      const bestTime = best ? new Date(best.date ?? 0).getTime() : -Infinity;
-      return time > bestTime ? session : best;
-    }, null);
+    .map((session, index) => ({ session, index }))
+    .sort((left, right) => getSessionTimeValue(left.session) - getSessionTimeValue(right.session) || left.index - right.index)
+    .map((entry) => entry.session);
+  const latest = ordered.length ? ordered[ordered.length - 1] : null;
+
+  let passes = 0;
+  let completedInPass = new Set();
+  let latestScheduledDayId = null;
+
+  ordered.forEach((session) => {
+    const dayId = String(session.dayId ?? "");
+
+    if (!scheduledIds.has(dayId)) {
+      return;
+    }
+
+    latestScheduledDayId = dayId;
+    completedInPass.add(dayId);
+
+    if (completedInPass.size === scheduledIds.size) {
+      passes += 1;
+      completedInPass = new Set();
+    }
+  });
+
+  const usesCycles = Number.isInteger(cycleWeeks) && cycleWeeks >= 1;
+  const currentWeek = usesCycles ? (passes % cycleWeeks) + 1 : passes + 1;
+  const currentCycle = usesCycles ? Math.floor(passes / cycleWeeks) + 1 : 1;
 
   if (!latest) {
     return {
       lastCompletedDayId: null,
       nextRecommendedDayId: firstDayId,
       lastWorkoutDate: null,
+      currentWeek: 1,
+      currentCycle: 1,
     };
   }
 
-  const dayIndex = days.findIndex((day) => day.id === latest.dayId);
-  const nextDay = dayIndex >= 0 ? days[(dayIndex + 1) % days.length] : days[0];
+  const scheduledIndex = latestScheduledDayId === null ? -1 : scheduled.findIndex((day) => String(day.id) === latestScheduledDayId);
+  const nextDay = scheduledIndex >= 0 ? scheduled[(scheduledIndex + 1) % scheduled.length] : scheduled[0] ?? days[0];
 
   return {
     lastCompletedDayId: latest.dayId ?? null,
     nextRecommendedDayId: nextDay?.id ?? latest.dayId ?? null,
     lastWorkoutDate: latest.date ?? null,
+    currentWeek,
+    currentCycle,
   };
 }
 
@@ -1556,6 +1966,9 @@ export function buildProgressionPatchFromPlanExercise(plan, exercisePlan) {
 export function buildProgressionUpdatesFromPlan(plan) {
   return asArray(plan?.exercises)
     .filter((exercisePlan) => exercisePlan && exercisePlan.exerciseId)
+    // Decisions H5-6 / H5-7: a held exercise and a session logged under a
+    // deload carry no progression evidence.
+    .filter((exercisePlan) => exercisePlan.held !== true && exercisePlan.deloadSession !== true)
     .map((exercisePlan) => ({
       programExerciseId: exercisePlan.exerciseId,
       patch: buildProgressionPatchFromPlanExercise(plan, exercisePlan),
@@ -1652,7 +2065,18 @@ export function upsertProgramProgressionsFromPlan(programId, plan) {
  * Any of sessions / nextPlans / workoutDrafts left `undefined` is not written.
  * Everything else is written in ONE writeStorageBatch: on failure nothing changes.
  *
- * Returns { ok: true, writtenKeys, progressions, programState, removedProgressionCount } or
+ * Phase H5, when `sessions` and `programId` are given:
+ * - the program state's nextRecommendedDayId / currentWeek / currentCycle are
+ *   derived from the sessions (decision H5-5) and win over the caller's
+ *   pointer, so an optional day never becomes "up next" by position;
+ * - a NEW training session (id not stored before, with a generated plan)
+ *   consumes one session of every hold / manual override whose exercise it
+ *   logged (records at 0 or past their until date are removed, H5-6) and one
+ *   session of an active deload (cleared at 0, H5-7);
+ * - plan entries flagged held / deloadSession write no progression.
+ *
+ * Returns { ok: true, writtenKeys, progressions, programState,
+ *           removedProgressionCount, consumedOverrides, expiredOverrides } or
  *         { ok: false, error, code, failedKey, rolledBack }.
  */
 export function persistWorkoutSave({
@@ -1683,6 +2107,8 @@ export function persistWorkoutSave({
   let progressions = null;
   let programState = null;
   let removedProgressionCount = 0;
+  let consumedOverrides = [];
+  let expiredOverrides = [];
 
   if (programId) {
     const updates = [
@@ -1716,8 +2142,79 @@ export function persistWorkoutSave({
       entries.push({ key: STORAGE_KEYS.programProgressions, value: progressions });
     }
 
-    if (programStatePatch && typeof programStatePatch === "object") {
-      const built = buildProgramStateRecord(getProgramStates(), programId, programStatePatch, updatedAt);
+    // A save of a NEW session: the session the plan was generated from is
+    // not stored yet. Edits and deletes (new-E) pass a plan too, but their
+    // session id is already stored, so they consume nothing.
+    const savedSession =
+      sessions !== undefined && plan?.sourceSessionId
+        ? asArray(sessions).find((session) => session?.id === plan.sourceSessionId) ?? null
+        : null;
+    const storedSessionIds = savedSession
+      ? new Set(asArray(readStorage(STORAGE_KEYS.sessions, [])).map((session) => session?.id))
+      : null;
+    const isNewTrainingSession =
+      Boolean(savedSession) && !storedSessionIds.has(savedSession.id) && asArray(plan.exercises).length > 0;
+
+    if (isNewTrainingSession) {
+      const loggedIds = getLoggedProgramExerciseIds(savedSession, plan);
+      const consumed = consumeOverrideSessions(getProgramOverrides(), {
+        programId,
+        loggedProgramExerciseIds: loggedIds,
+        sessionDate: savedSession.date ?? null,
+        updatedAt,
+      });
+
+      if (consumed.changed) {
+        entries.push({ key: STORAGE_KEYS.programOverrides, value: consumed.records });
+        consumedOverrides = loggedIds.filter((id) =>
+          asArray(consumed.records).some((record) => record.programExerciseId === id) || consumed.expired.includes(id),
+        );
+        expiredOverrides = consumed.expired;
+      }
+    }
+
+    let statePatch = programStatePatch && typeof programStatePatch === "object" ? { ...programStatePatch } : null;
+
+    if (statePatch && sessions !== undefined) {
+      const derived = deriveProgramStatePatchFromSessions(programId, sessions, getProgramDays(programId));
+      statePatch = {
+        ...statePatch,
+        nextRecommendedDayId: derived.nextRecommendedDayId,
+        currentWeek: derived.currentWeek,
+        currentCycle: derived.currentCycle,
+      };
+    }
+
+    if (isNewTrainingSession) {
+      const currentState = getProgramStates().find((state) => state.programId === programId) ?? null;
+
+      if (isDeloadActive(currentState?.deload)) {
+        const remaining = Number.isFinite(currentState.deload.remainingSessions)
+          ? currentState.deload.remainingSessions - 1
+          : null;
+        statePatch = {
+          ...(statePatch ?? {}),
+          deload: remaining === null ? currentState.deload : remaining >= 1 ? { ...currentState.deload, remainingSessions: remaining } : null,
+        };
+
+        // The deload is over: it is recorded as `lastDeload` (decision
+        // H5-16) so the observations it answered are not re-suggested from
+        // the same pre-deload sessions and check-ins.
+        if (remaining !== null && remaining < 1) {
+          const total = Number.isFinite(currentState.deload.totalSessions) ? currentState.deload.totalSessions : null;
+          statePatch.lastDeload = {
+            level: currentState.deload.level ?? null,
+            startedAt: currentState.deload.startedAt ?? null,
+            endedAt: savedSession.date ?? updatedAt,
+            totalSessions: total,
+            completedSessions: total,
+          };
+        }
+      }
+    }
+
+    if (statePatch) {
+      const built = buildProgramStateRecord(getProgramStates(), programId, statePatch, updatedAt);
       programState = built.state;
       entries.push({ key: STORAGE_KEYS.programStates, value: built.states });
     }
@@ -1741,10 +2238,56 @@ export function persistWorkoutSave({
     progressions,
     programState,
     removedProgressionCount,
+    consumedOverrides,
+    expiredOverrides,
   };
 }
 
-export function getProgramDayViewModels(programId) {
+// The program exercise ids a saved session logged at least one set for
+// (numeric reps / seconds / meters), by log key, log identity or workout sets.
+function getLoggedProgramExerciseIds(session, plan) {
+  const planIds = new Set(asArray(plan?.exercises).map((exercise) => exercise?.exerciseId).filter(Boolean));
+  const logged = new Set();
+  const hasValue = (set) =>
+    Boolean(set) &&
+    [set.reps, set.actualReps, set.seconds, set.meters].some((value) => !isNullish(value) && value !== "" && Number.isFinite(Number(value)));
+  const logs = session?.exercises;
+  const entries = Array.isArray(logs) ? logs.map((log) => [log?.programExerciseId ?? log?.id, log]) : Object.entries(logs ?? {});
+
+  entries.forEach(([key, log]) => {
+    const id = log?.programExerciseId ?? key;
+
+    if (planIds.has(id) && asArray(log?.sets).some(hasValue)) {
+      logged.add(id);
+    }
+  });
+
+  asArray(session?.workoutSets).forEach((set) => {
+    if (planIds.has(set?.programExerciseId) && hasValue(set)) {
+      logged.add(set.programExerciseId);
+    }
+  });
+
+  return [...logged];
+}
+
+/**
+ * Day view models of a program. Phase H5 additions on every exercise:
+ * measurement / unit / perSide (H5-1), profileOverrides and programProfile
+ * (H5-3), `override` = the active hold / manual record or null (H5-6) and
+ * `deload` = the program's active deload or null (H5-7); on every day:
+ * programProfile, cycleWeeks and deload. `options.now` (Date / ISO / ms)
+ * decides override expiry by date; default the current time.
+ */
+export function getProgramDayViewModels(programId, options = {}) {
+  const program = getAllPrograms().find((entry) => entry.id === programId) ?? null;
+  const programProfile = program?.programProfile ? cleanProgramProfile(program.programProfile) : null;
+  const cycleWeeks = Number.isInteger(program?.cycleWeeks) ? program.cycleWeeks : null;
+  const overrides = getProgramOverrides().filter((record) => record.programId === programId);
+  const storedState = getProgramStates().find((state) => state.programId === programId) ?? null;
+  const deload = isDeloadActive(storedState?.deload) ? storedState.deload : null;
+  const now = options.now ?? new Date();
+
   return getProgramDays(programId).map((day) => {
     const sections = getProgramSections(day.id);
     const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -1755,6 +2298,8 @@ export function getProgramDayViewModels(programId) {
         ? libraryExercise.mainMuscles.join(" / ")
         : legacyExercise?.muscleGroup ?? "";
       const loadProfile = resolveProgramExerciseLoadProfile(programExercise, libraryExercise);
+      const measurementProfile = getMeasurementProfile(programExercise);
+      const overrideRecord = findOverrideRecord(overrides, programExercise.id, programId);
 
       return {
         ...(legacyExercise ?? {}),
@@ -1785,6 +2330,14 @@ export function getProgramDayViewModels(programId) {
         sourceWeight: programExercise.sourceWeight ?? null,
         incrementKg: legacyExercise?.incrementKg,
         roundToKg: legacyExercise?.roundToKg,
+        // Phase H5 (decisions H5-1, H5-3, H5-6, H5-7).
+        measurement: measurementProfile.measurement,
+        unit: measurementProfile.unit,
+        perSide: measurementProfile.perSide,
+        profileOverrides: cleanProfileOverrides(programExercise.profileOverrides),
+        programProfile,
+        override: isOverrideActive(overrideRecord, now) ? overrideRecord : null,
+        deload,
         mainMuscles: libraryExercise?.mainMuscles ?? [],
         secondaryMuscles: libraryExercise?.secondaryMuscles ?? [],
         difficulty: libraryExercise?.difficulty ?? "",
@@ -1818,6 +2371,9 @@ export function getProgramDayViewModels(programId) {
       warmup,
       notes: day.notes ?? legacyDay?.notes ?? "",
       isOptional: Boolean(day.isOptional ?? legacyDay?.isOptional),
+      programProfile,
+      cycleWeeks,
+      deload,
       sections,
       exercises,
     };
@@ -1865,6 +2421,8 @@ export function exportProgramShare(programId) {
       nickname: program.nickname ?? "",
       description: program.description ?? "",
       goal: program.goal ?? "",
+      ...(program.programProfile ? { programProfile: cleanProgramProfile(program.programProfile) } : {}),
+      ...(Number.isInteger(program.cycleWeeks) ? { cycleWeeks: program.cycleWeeks } : {}),
     },
     days,
     sections,
@@ -2044,6 +2602,41 @@ export function collectProgramExerciseTargetErrors(programExercise, fields = PRO
  * records derive them) but when present they must be one of the known values.
  * Returns message bodies like collectProgramExerciseTargetErrors.
  */
+const MEASUREMENT_TARGET_NOUNS = Object.freeze({ reps: "reps", time: "seconds", distance: "meters" });
+
+/**
+ * The message body when an explicit `measurement` disagrees with the unit of
+ * the target (range or label), or null. A record without an explicit
+ * measurement, or without a target, never conflicts. Reads the stored shape
+ * (`targetReps`) and the day view model shape (`repsMin` / `repsLabel`).
+ */
+export function findMeasurementTargetConflict(programExercise) {
+  const measurement = programExercise?.measurement;
+
+  if (isNullish(measurement) || !isValidMeasurement(measurement)) {
+    return null;
+  }
+
+  const targetReps =
+    programExercise?.targetReps && typeof programExercise.targetReps === "object" ? programExercise.targetReps : {};
+  const label = String(targetReps.label ?? programExercise?.repsLabel ?? "").trim();
+  const min = targetReps.min ?? programExercise?.repsMin ?? null;
+  const max = targetReps.max ?? programExercise?.repsMax ?? null;
+
+  if (!label && isNullish(min) && isNullish(max)) {
+    return null;
+  }
+
+  const targetMeasurement = inferMeasurementFromLabel(label).measurement;
+
+  if (targetMeasurement === measurement) {
+    return null;
+  }
+
+  const shown = label || [min, max].filter((value) => !isNullish(value)).join("-");
+  return `measurement "${measurement}" does not match the target "${shown}" (${targetMeasurement}); set the target in ${MEASUREMENT_TARGET_NOUNS[measurement]} first.`;
+}
+
 export function collectProgramExerciseProfileErrors(programExercise) {
   const errors = [];
 
@@ -2059,7 +2652,136 @@ export function collectProgramExerciseProfileErrors(programExercise) {
     errors.push("source weight must be reference text.");
   }
 
+  // Decision H5-1: measurement / perSide are optional; when present they
+  // must be the known enum / a boolean.
+  if (!isNullish(programExercise?.measurement) && !isValidMeasurement(programExercise.measurement)) {
+    errors.push(`measurement must be one of ${MEASUREMENTS.join(", ")}.`);
+  }
+
+  if (!isNullish(programExercise?.perSide) && typeof programExercise.perSide !== "boolean") {
+    errors.push("per side must be true or false.");
+  }
+
+  // H5 fix round 1 (decision H5-17): the measurement is the unit of the
+  // target. An explicit measurement that disagrees with the unit the target
+  // range / label is written in ("8-12" with measurement "time") would serve
+  // the reps target as seconds, so it is refused everywhere the record is
+  // validated: the profile writer, the Studio draft and the strict share.
+  const targetConflict = findMeasurementTargetConflict(programExercise);
+
+  if (targetConflict) {
+    errors.push(targetConflict);
+  }
+
+  // Decision H5-3: profile overrides.
+  const overrides = programExercise?.profileOverrides;
+
+  if (!isNullish(overrides)) {
+    if (typeof overrides !== "object" || Array.isArray(overrides)) {
+      errors.push("profile overrides must be an object.");
+    } else {
+      Object.keys(overrides).forEach((field) => {
+        if (!PROFILE_OVERRIDE_FIELDS.includes(field)) {
+          errors.push(`profile override "${field}" is not a known field.`);
+        }
+      });
+
+      if (!isNullish(overrides.progressionMode) && !PROGRESSION_MODES.includes(overrides.progressionMode)) {
+        errors.push(`progression mode override must be one of ${PROGRESSION_MODES.join(", ")}.`);
+      } else {
+        // Decision H5-52: time_first / distance_first move a duration / a
+        // distance, so they fit only an exercise measured that way.
+        const modeMeasurement = getProgressionModeMeasurement(overrides.progressionMode);
+        const measurement = getMeasurementProfile(programExercise).measurement;
+
+        if (modeMeasurement && modeMeasurement !== measurement) {
+          errors.push(
+            `progression mode override "${overrides.progressionMode}" needs an exercise measured in ${MEASUREMENT_TARGET_NOUNS[modeMeasurement]}; this one is measured in ${MEASUREMENT_TARGET_NOUNS[measurement]}.`,
+          );
+        }
+      }
+
+      ["incrementKg", "roundToKg", "rpeMaxForLoadIncrease"].forEach((field) => {
+        const value = overrides[field];
+        const range = PROFILE_OVERRIDE_RANGES[field];
+
+        if (!isNullish(value) && !(typeof value === "number" && Number.isFinite(value) && value >= range.min && value <= range.max)) {
+          errors.push(`${field} override must be a number from ${range.min} to ${range.max}.`);
+        }
+      });
+
+      if (!isNullish(overrides.priority) && !PROFILE_PRIORITIES.includes(overrides.priority)) {
+        errors.push(`priority override must be one of ${PROFILE_PRIORITIES.join(", ")}.`);
+      }
+
+      if (!isNullish(overrides.canIncreaseLoad) && typeof overrides.canIncreaseLoad !== "boolean") {
+        errors.push("canIncreaseLoad override must be true or false.");
+      }
+    }
+  }
+
   return errors;
+}
+
+/**
+ * Decision H5-3 / H5-5: program-level profile fields. `programProfile` is
+ * { aggression: "conservative" | "standard", unit: "kg" } or absent;
+ * `cycleWeeks` is a whole number of weeks (1-52) or null (no cycle).
+ * Returns message bodies like collectProgramExerciseProfileErrors.
+ */
+export function collectProgramProfileErrors(program) {
+  const errors = [];
+  const profile = program?.programProfile;
+
+  if (!isNullish(profile)) {
+    if (typeof profile !== "object" || Array.isArray(profile)) {
+      errors.push("program profile must be an object.");
+    } else {
+      if (!isNullish(profile.aggression) && !PROGRAM_AGGRESSIONS.includes(profile.aggression)) {
+        errors.push(`program aggression must be one of ${PROGRAM_AGGRESSIONS.join(", ")}.`);
+      }
+
+      if (!isNullish(profile.unit) && profile.unit !== "kg") {
+        errors.push('program unit must be "kg".');
+      }
+    }
+  }
+
+  if (
+    !isNullish(program?.cycleWeeks) &&
+    !(Number.isInteger(program.cycleWeeks) && program.cycleWeeks >= 1 && program.cycleWeeks <= MAX_CYCLE_WEEKS)
+  ) {
+    errors.push(`cycle weeks must be a whole number from 1 to ${MAX_CYCLE_WEEKS}, or empty.`);
+  }
+
+  return errors;
+}
+
+function cleanProgramProfile(profile) {
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+
+  return {
+    aggression: PROGRAM_AGGRESSIONS.includes(profile.aggression) ? profile.aggression : "standard",
+    unit: "kg",
+  };
+}
+
+function cleanProfileOverrides(overrides) {
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+    return null;
+  }
+
+  const cleaned = {};
+
+  PROFILE_OVERRIDE_FIELDS.forEach((field) => {
+    if (!isNullish(overrides[field])) {
+      cleaned[field] = overrides[field];
+    }
+  });
+
+  return Object.keys(cleaned).length ? cleaned : null;
 }
 
 function capitalizeMessage(message) {
@@ -2083,6 +2805,10 @@ export function validateProgramShareStrict(share) {
   const errors = [];
   const days = asArray(share.days);
   const sections = asArray(share.sections).filter((section) => section && typeof section === "object");
+
+  collectProgramProfileErrors(share.program).forEach((message) => {
+    errors.push(`Program: ${message}`);
+  });
   const programExercises = asArray(share.programExercises).filter(
     (programExercise) => programExercise && typeof programExercise === "object",
   );
@@ -2222,6 +2948,15 @@ export function importProgramShare(share) {
     createdAt,
     updatedAt: createdAt,
   };
+
+  if (share.program.programProfile) {
+    program.programProfile = cleanProgramProfile(share.program.programProfile);
+  }
+
+  if (Number.isInteger(share.program.cycleWeeks)) {
+    program.cycleWeeks = share.program.cycleWeeks;
+  }
+
   const importedDays = shareDays.map((day, index) => ({
     ...day,
     id: dayIdMap.get(String(day.id)),
@@ -2251,7 +2986,7 @@ export function importProgramShare(share) {
   const importedState = {
     programId: newProgramId,
     lastCompletedDayId: null,
-    nextRecommendedDayId: importedDays[0]?.id ?? null,
+    nextRecommendedDayId: getFirstScheduledDayId(importedDays),
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -2428,7 +3163,7 @@ export function duplicateProgram(programId) {
   const copiedState = {
     programId: newProgramId,
     lastCompletedDayId: null,
-    nextRecommendedDayId: copiedDays[0]?.id ?? null,
+    nextRecommendedDayId: getFirstScheduledDayId(copiedDays),
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -2672,6 +3407,22 @@ function buildProgramRecordsFromDraft(draft, programId, ids) {
           record.sourceWeight = String(draftExercise.sourceWeight).trim();
         }
 
+        // Phase H5 (H5-1 / H5-3): persisted when the draft exercise carries
+        // them (the draft normaliser does not keep them yet, see H5-3).
+        if (isValidMeasurement(draftExercise.measurement)) {
+          record.measurement = draftExercise.measurement;
+        }
+
+        if (typeof draftExercise.perSide === "boolean") {
+          record.perSide = draftExercise.perSide;
+        }
+
+        const draftOverrides = cleanProfileOverrides(draftExercise.profileOverrides);
+
+        if (draftOverrides && !collectProgramExerciseProfileErrors({ profileOverrides: draftOverrides }).length) {
+          record.profileOverrides = draftOverrides;
+        }
+
         dayOrderIndex += 1;
         programExercises.push(record);
 
@@ -2738,7 +3489,7 @@ export function saveProgramDraft(draft) {
   const programState = {
     programId,
     lastCompletedDayId: null,
-    nextRecommendedDayId: records.days[0]?.id ?? null,
+    nextRecommendedDayId: getFirstScheduledDayId(records.days),
     currentWeek: 1,
     currentCycle: 1,
     lastWorkoutDate: null,
@@ -2808,12 +3559,15 @@ const DRAFT_PRESCRIPTION_COMPARE_FIELDS = [
   "restTime",
   "loadType",
   "weightMode",
+  // H5-17: the measurement is the unit of the prescription.
+  "measurement",
 ];
 
 function comparablePrescription(record, libraryExercise) {
   const profile = resolveProgramExerciseLoadProfile(record, libraryExercise);
 
   return {
+    measurement: getMeasurementProfile(record).measurement,
     exerciseId: String(record.exerciseId ?? ""),
     targetSets: record.targetSets ?? null,
     // A label that only repeats the range ("8-12") equals no label: an AI
@@ -2968,6 +3722,14 @@ export function applyProgramDraft(draft) {
       delete merged.sourceWeight;
     }
 
+    // H5-19: the draft carries the coach profile; a draft exercise without
+    // the key cleared it (back to inference / classification).
+    ["measurement", "perSide", "profileOverrides"].forEach((field) => {
+      if (!hasOwn(record, field)) {
+        delete merged[field];
+      }
+    });
+
     return merged;
   });
   const removedIds = [...existingExerciseById.keys()].filter((id) => !keptIds.has(id));
@@ -3030,6 +3792,14 @@ export function applyProgramDraft(draft) {
     entries.push({ key: STORAGE_KEYS.programProgressions, value: nextProgressions });
   }
 
+  // Decision H5-6: a prescription change or a removal ends the exercise's
+  // hold / manual override, in the same batch.
+  const overrideRemoval = removeOverrideRecords(getProgramOverrides(), [...progressionResetIds], programId);
+
+  if (overrideRemoval.removed) {
+    entries.push({ key: STORAGE_KEYS.programOverrides, value: overrideRemoval.records });
+  }
+
   const states = getProgramStates();
   const stateIndex = states.findIndex((state) => state.programId === programId);
 
@@ -3041,8 +3811,13 @@ export function applyProgramDraft(draft) {
       statePatch.lastCompletedDayId = null;
     }
 
-    if (!state.nextRecommendedDayId || !newDayIds.has(String(state.nextRecommendedDayId))) {
-      statePatch.nextRecommendedDayId = records.days[0]?.id ?? null;
+    // Decision H5-5 / H5-53: an optional day is never "up next", so a
+    // pointer on a day that was removed OR is optional now moves to the next
+    // scheduled day in program order.
+    const repointedDayId = getScheduledDayIdFrom(records.days, state.nextRecommendedDayId);
+
+    if (repointedDayId !== (state.nextRecommendedDayId ?? null)) {
+      statePatch.nextRecommendedDayId = repointedDayId;
     }
 
     if (Object.keys(statePatch).length) {

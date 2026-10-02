@@ -43,6 +43,11 @@ export default function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts
         <RecapNote label="Improved" text={recap.improvedText} />
         <RecapNote label="Watch" text={recap.watchText} />
         <RecapNote label="Next" text={recap.nextText} />
+        {/* H5-10 / H5-12: records, adherence, coach status and comparison lines. */}
+        {recap.recordsText && <RecapNote label="Records" text={recap.recordsText} />}
+        {recap.adherenceText && <RecapNote label="Adherence" text={recap.adherenceText} />}
+        {recap.coachStatusText && <RecapNote label="Coach status" text={recap.coachStatusText} />}
+        {recap.comparisonText && <RecapNote label="Comparison" text={recap.comparisonText} />}
       </div>
 
       <div className="mt-3 grid gap-2 min-[430px]:grid-cols-2">

@@ -8,6 +8,7 @@
 import { workoutProgram } from "../config/workoutProgram.js";
 import { createId } from "./date.js";
 import { generateNextPlan, interpretWellness } from "./progression.js";
+import { deriveProgramStatePatchFromSessions } from "./programStorage.js";
 import { getSessionAnalytics } from "./sessionAnalytics.js";
 import { buildPlannedExercisesSnapshot } from "./sessionEdit.js";
 import {
@@ -30,7 +31,7 @@ export const WORKOUT_SESSION_SCHEMA_VERSION = 6;
  *   workoutDrafts,   // stored workoutDrafts object before this save
  *   draftKey,        // key of the draft being saved (removed from workoutDrafts)
  *   program,         // active program or null
- *   programDays,     // day view models of the active program (next recommended day)
+ *   programDays,     // day view models of the active program (next recommended day, week / cycle)
  *   readinessEntry,  // today's readiness check-in or null
  *   todayDateKey,    // local date key (decision H4-2)
  *   setupCues,       // setup cues snapshot
@@ -117,13 +118,18 @@ export function buildWorkoutSaveBundle({
 
   let programStatePatch;
   if (programId) {
-    const dayIndex = programDays.findIndex((candidate) => candidate.id === day.id);
-    const nextRecommendedDay =
-      dayIndex >= 0 ? programDays[(dayIndex + 1) % programDays.length] : programDays[0];
+    // Decision H5-28: the bundle states the same pointer persistWorkoutSave
+    // writes (H5-5: optional days are never "up next", week / cycle derived
+    // from the sessions). The cycle length comes from the program passed in,
+    // so nothing is read from storage here.
+    const derived = deriveProgramStatePatchFromSessions(programId, nextSessions, programDays, {
+      cycleWeeks: program?.cycleWeeks ?? null,
+    });
 
     programStatePatch = {
+      ...derived,
       lastCompletedDayId: day.id,
-      nextRecommendedDayId: nextRecommendedDay?.id ?? day.id,
+      nextRecommendedDayId: derived.nextRecommendedDayId ?? day.id,
       lastWorkoutDate: session.date,
     };
   }

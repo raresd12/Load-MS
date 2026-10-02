@@ -20,11 +20,19 @@ import ReadinessPage from "./pages/ReadinessPage.jsx";
 import WorkoutLogPage from "./pages/WorkoutLogPage.jsx";
 import WorkoutsPage from "./pages/WorkoutsPage.jsx";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
+import { buildDeloadCardModel } from "./lib/coachControlsView.js";
 import {
   DATE_KEY_RESYNC_INTERVAL_MS,
   getDateRolloverAction,
   getLocalDateKey,
 } from "./lib/date.js";
+import {
+  applyProgramDeload,
+  dismissDeloadSuggestion,
+  endProgramDeload,
+  evaluateDeloadNeed,
+} from "./lib/deload.js";
+import { clearExerciseOverrideChecked, setExerciseOverrideChecked } from "./lib/overrides.js";
 import {
   applyProgramDraft,
   deriveProgramStatePatchFromSessions,
@@ -42,8 +50,10 @@ import {
   seedDefaultProgramIfNeeded,
   setActiveProgramChecked,
   setProgramArchived,
+  updateProgramExerciseProfileChecked,
   updateProgramExerciseTargetChecked,
   updateProgramMetadataChecked,
+  updateProgramProfileChecked,
 } from "./lib/programStorage.js";
 import { openStudioSession, updateStudioSessionDraft } from "./lib/programStudio.js";
 import { createLazyPages } from "./lib/lazyPages.js";
@@ -455,6 +465,27 @@ export default function App() {
   const todayReadinessSummary = todayReadinessEntry
     ? todayReadinessEntry.readiness ?? interpretWellness(todayReadinessEntry.wellness)
     : createNeutralReadiness();
+  // Decision H5-7 / H5-12: the deload observation is evaluated here with an
+  // explicit `now` (the engine never reads the clock); it follows the saved
+  // sessions, the check-ins, the program state and the local date.
+  const deloadEvaluation = useMemo(
+    () =>
+      activeProgram
+        ? evaluateDeloadNeed({
+            program: activeProgram,
+            days: activeProgramDays,
+            sessions,
+            readinessByDate,
+            now: new Date().toISOString(),
+            state: activeProgramState,
+          })
+        : null,
+    [activeProgram, activeProgramDays, sessions, readinessByDate, activeProgramState, todayDateKey],
+  );
+  const deloadModel = useMemo(
+    () => buildDeloadCardModel(deloadEvaluation, activeProgramState?.deload ?? null),
+    [deloadEvaluation, activeProgramState],
+  );
   const beatLastCues = useMemo(
     () =>
       Object.fromEntries(
@@ -668,6 +699,116 @@ export default function App() {
     return result;
   }
 
+  // Decisions H5-3 / H5-12: the coach profile of an exercise and the
+  // program-level aggression / cycle length. Neither is a prescription change,
+  // so the progression and the pending plans are kept; the day view models
+  // are re-read only after the checked write succeeded.
+  function handleUpdateProgramExerciseProfile(programId, programExerciseId, patch) {
+    const result = updateProgramExerciseProfileChecked(programId, programExerciseId, patch);
+
+    if (result.ok) {
+      // Decision H5-17: a measurement change is a unit change; the writer
+      // removed the earned progression and any override, and the pending
+      // plan entry of that exercise (in the old unit) goes with them.
+      if (result.measurementChanged && (programId ?? null) === (activeProgramId ?? null)) {
+        setNextPlans((currentPlans) => removeExerciseFromNextPlans(currentPlans, programExerciseId));
+      }
+
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  function handleUpdateProgramProfile(programId, patch) {
+    const result = updateProgramProfileChecked(programId, patch);
+
+    if (result.ok) {
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  // Decisions H5-6 / H5-12: hold / manual override records sit on top of the
+  // prescription precedence; the resolved plan (activePlan) and every card
+  // re-resolve from the re-read day view model after a successful write.
+  function handleSetExerciseOverride(record) {
+    const result = setExerciseOverrideChecked(record, { now: new Date().toISOString() });
+
+    if (result.ok) {
+      setLastGeneratedPlan(null);
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  function handleClearExerciseOverride(programExerciseId) {
+    const result = clearExerciseOverrideChecked(programExerciseId, activeProgramId);
+
+    if (result.ok) {
+      setLastGeneratedPlan(null);
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  // Decisions H5-7 / H5-12: the deload card writes ProgramState through the
+  // checked writers; the banner appears only after a successful write.
+  function handleApplyDeload(sessionCount) {
+    if (!activeProgram || !deloadEvaluation?.level) {
+      return { ok: false, error: "No deload suggestion is open." };
+    }
+
+    const result = applyProgramDeload({
+      programId: activeProgram.id,
+      level: deloadEvaluation.level,
+      sessions: sessionCount,
+      now: new Date(),
+    });
+
+    if (result.ok) {
+      setLastGeneratedPlan(null);
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  function handleDismissDeload() {
+    if (!activeProgram) {
+      return { ok: false, error: "No active program." };
+    }
+
+    const result = dismissDeloadSuggestion(activeProgram.id, {
+      signals: (deloadEvaluation?.signals ?? []).filter((signal) => signal.met),
+      now: new Date(),
+    });
+
+    if (result.ok) {
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
+  function handleEndDeload() {
+    if (!activeProgram) {
+      return { ok: false, error: "No active program." };
+    }
+
+    const result = endProgramDeload(activeProgram.id);
+
+    if (result.ok) {
+      setLastGeneratedPlan(null);
+      refreshProgramData();
+    }
+
+    return result;
+  }
+
   // Phase H2: the Program Studio session lives in App state so switching tabs
   // does not lose an open draft. The Studio reports every edit back
   // (handleProgramStudioDraftChange) because the Program page unmounts on a
@@ -770,7 +911,9 @@ export default function App() {
 
     if (day && latestSession) {
       const otherSessions = sortedRemaining.filter((candidate) => candidate.id !== latestSession.id);
-      regeneratedPlan = generateNextPlan(day, latestSession, otherSessions);
+      // H5-47: the stored session's own snapshot says whether it was logged
+      // under a deload or a hold; the state active now does not apply to it.
+      regeneratedPlan = generateNextPlan(day, latestSession, otherSessions, { regenerated: true });
 
       if (touchesActivePlan) {
         nextPlansValue = { ...nextPlans, [dayId]: regeneratedPlan };
@@ -994,7 +1137,16 @@ export default function App() {
     setNextPlans(nextPlansValue);
     setWorkoutDrafts(nextWorkoutDrafts);
     setLastGeneratedPlan(generatedPlan);
-    setPostWorkoutRecap(buildPostWorkoutCoachRecap(session, sessions, selectedDay, generatedPlan));
+    // H5-10 / H5-12: records, adherence, coach status and comparison lines
+    // need the program context (records by program + occurrence).
+    setPostWorkoutRecap(
+      buildPostWorkoutCoachRecap(session, sessions, selectedDay, generatedPlan, {
+        programs: allPrograms,
+        programExercises: activeProgramDays.flatMap((day) => day.exercises),
+        exerciseLibrary,
+        activeProgram,
+      }),
+    );
     setDraft(createDraft(selectedDay, generatedPlan, nextSessions));
     setActiveTab("workout-log");
   }
@@ -1042,6 +1194,11 @@ export default function App() {
             todayReadinessEntry={todayReadinessEntry}
             todayReadinessSummary={todayReadinessSummary}
             sessions={sessions}
+            activeProgramDays={activeProgramDays}
+            deloadModel={deloadModel}
+            onApplyDeload={handleApplyDeload}
+            onDismissDeload={handleDismissDeload}
+            onEndDeload={handleEndDeload}
             onGoToReadiness={() => setActiveTab("readiness")}
             onStartWorkout={(dayId) => {
               handleSelectDay(dayId);
@@ -1082,6 +1239,12 @@ export default function App() {
             todayReadinessSummary={todayReadinessSummary}
             setupCues={setupCues}
             beatLastCues={beatLastCues}
+            deloadModel={deloadModel}
+            onApplyDeload={handleApplyDeload}
+            onDismissDeload={handleDismissDeload}
+            onEndDeload={handleEndDeload}
+            onSetOverride={handleSetExerciseOverride}
+            onClearOverride={handleClearExerciseOverride}
             onSelectDay={handleSelectDay}
             onGoToReadiness={() => setActiveTab("readiness")}
             onOpenWorkoutLog={handleOpenWorkoutLog}
@@ -1104,6 +1267,8 @@ export default function App() {
             onUpdateSessionField={updateSessionField}
             onSaveSet={updateSetEntry}
             onTogglePainFlag={toggleExercisePainFlag}
+            onSetOverride={handleSetExerciseOverride}
+            onClearOverride={handleClearExerciseOverride}
             onGoToReadiness={() => setActiveTab("readiness")}
             onGoToWorkouts={() => setActiveTab("workouts")}
             onGoToHistory={() => setActiveTab("history")}
@@ -1123,6 +1288,7 @@ export default function App() {
                 activeProgram={activeProgram}
                 activeProgramDays={activeProgramDays}
                 exerciseLibrary={exerciseLibrary}
+                deloadEvaluation={deloadEvaluation}
               />
             </Suspense>
           </LazyPageBoundary>
@@ -1140,6 +1306,8 @@ export default function App() {
                 onArchiveProgram={handleArchiveProgram}
                 onUpdateProgramMetadata={handleUpdateProgramMetadata}
                 onUpdateProgramExerciseTarget={handleUpdateProgramExerciseTarget}
+                onUpdateProgramExerciseProfile={handleUpdateProgramExerciseProfile}
+                onUpdateProgramProfile={handleUpdateProgramProfile}
                 onImportProgramShare={handleImportProgramShare}
                 studio={programStudio}
                 studioMessage={programStudioMessage}

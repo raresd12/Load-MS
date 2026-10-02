@@ -20,6 +20,8 @@ export const STORAGE_KEYS = {
   // Saved program drafts (decision H2-3): structured draft text only, so the
   // key is tracked (backup / reset) like every other app key.
   programDrafts: "rpe-tracker.program-drafts.v1",
+  // Hold / manual overrides per program exercise (decision H5-6).
+  programOverrides: "rpe-tracker.program-overrides.v1",
 };
 
 export const BACKUP_SCHEMA_VERSION = 1;

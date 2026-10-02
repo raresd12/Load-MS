@@ -2,6 +2,8 @@
 //
 // Workouts and Workout Log both call resolvePrescription so they always show
 // the same sets / reps / kg / RPE / rest. Precedence:
+//   0. "override"    - a manual override record (decision H5-6) fills only the
+//                      fields it sets; a hold sets no value but is reported.
 //   1. "progression" - a stored ProgramProgression earned from a saved session
 //      of this program (it carries sourceSessionId; older earned records that
 //      only carry sourcePlanGeneratedAt with a non-base note are accepted too).
@@ -11,8 +13,17 @@
 // A value that is null/undefined at a higher level falls through to the next
 // level; `fieldSources` records where each value came from and `source` is the
 // highest level that supplied at least one value.
+//
+// Phase H5: an active deload (decision H5-7) scales the resolved load by the
+// level's factor (rounded to the equipment step) and takes one set off
+// accessory exercises AFTER the sources were resolved; the stored sources
+// keep their base values, so the scaling never compounds.
+import { applyDeloadToPrescription } from "./deload.js";
+import { describeOverride, getOverridePrescriptionFields, isOverrideActive } from "./overrides.js";
+import { isDeloadActive } from "./progression.js";
 
 export const PRESCRIPTION_SOURCES = Object.freeze({
+  override: "override",
   progression: "progression",
   plan: "plan",
   target: "target",
@@ -21,7 +32,7 @@ export const PRESCRIPTION_SOURCES = Object.freeze({
 
 export const BASE_PLAN_REASON = "Base program prescription.";
 
-const SOURCE_ORDER = ["progression", "plan", "target", "baseline"];
+const SOURCE_ORDER = ["override", "progression", "plan", "target", "baseline"];
 
 function isPresent(value) {
   return value !== null && value !== undefined && value !== "";
@@ -109,6 +120,12 @@ export function isGeneratedPlanExercise(planExercise, planStatus) {
     return false;
   }
 
+  // A frozen entry (held exercise, session logged under a deload; H5-6 /
+  // H5-7) repeats what was shown and carries no evidence of its own.
+  if (planExercise.held === true || planExercise.deloadSession === true) {
+    return false;
+  }
+
   if (planStatus === "manual" || planExercise.manuallyAdjusted === true) {
     return true;
   }
@@ -117,13 +134,14 @@ export function isGeneratedPlanExercise(planExercise, planStatus) {
   return Boolean(firstReason && firstReason !== BASE_PLAN_REASON);
 }
 
-function buildCandidates({ programExercise, progression, planExercise, baseline, planStatus }) {
+function buildCandidates({ programExercise, progression, planExercise, baseline, planStatus, override }) {
   const progressionUsable = isEarnedProgression(progression, programExercise);
   const planUsable = isGeneratedPlanExercise(planExercise, planStatus);
   const storedReps = progressionUsable ? progression.lastRecommendedReps : null;
   const baselineReps = baseline?.startingReps ?? null;
 
   return {
+    override: override ? getOverridePrescriptionFields(override) : null,
     progression: progressionUsable
       ? {
           sets: progression.lastRecommendedSets,
@@ -194,8 +212,10 @@ function resolveField(field, candidates) {
   return { value: null, source: null };
 }
 
-function describeSource(source, { progression, planExercise, planStatus }) {
+function describeSource(source, { progression, planExercise, planStatus, override }) {
   switch (source) {
+    case "override":
+      return describeOverride(override);
     case "progression":
       return progression?.sourceSessionId
         ? "Earned from your last saved session of this program."
@@ -224,12 +244,21 @@ function describeSource(source, { progression, planExercise, planStatus }) {
  * progression:     stored ProgramProgression record or null.
  * planExercise:    entry of the day's plan (getPlanForDay) for this exercise or null.
  * baseline:        Baseline record or null.
- * planStatus:      optional plan.status ("base" | "generated" | "manual"); when
- *                  omitted the plan exercise counts as generated if its first
- *                  reason is not the base-plan reason.
+ * planStatus:      optional plan.status ("base" | "generated" | "manual" |
+ *                  "deload"); when omitted the plan exercise counts as
+ *                  generated if its first reason is not the base-plan reason.
+ * override:        active override record (decision H5-6) or null; when the
+ *                  argument is omitted the day view model's
+ *                  `programExercise.override` is used.
+ * deload:          active ProgramState.deload (decision H5-7) or null; when
+ *                  omitted `programExercise.deload` from the day view model.
  *
  * Returns { sets, repsMin, repsMax, repsLabel, targetRPE, restSeconds, weight,
- *           source, sourceDetail, fieldSources, coach }.
+ *           source, sourceDetail, fieldSources, coach, override, deload }.
+ * `override` is { mode, remainingSessions, untilDate, note, detail } or null;
+ * `deload` is { level, factor, baseWeight, baseSets, setsReduced,
+ * remainingSessions, detail } or null (the resolved weight / sets are then
+ * the scaled values).
  * `coach` carries the recommendation metadata (note, decision, confidence,
  * warnings, history, profile) from the same source order so Coach Details can
  * show it without a second resolver.
@@ -240,13 +269,20 @@ export function resolvePrescription({
   planExercise = null,
   baseline = null,
   planStatus,
+  override,
+  deload,
 } = {}) {
+  const overrideRecord = override === undefined ? programExercise?.override ?? null : override;
+  const activeOverride = isOverrideActive(overrideRecord) ? overrideRecord : null;
+  const deloadRecord = deload === undefined ? programExercise?.deload ?? null : deload;
+  const activeDeload = isDeloadActive(deloadRecord) ? deloadRecord : null;
   const candidates = buildCandidates({
     programExercise,
     progression,
     planExercise,
     baseline,
     planStatus,
+    override: activeOverride,
   });
   const resolved = {};
   const fieldSources = {};
@@ -257,13 +293,43 @@ export function resolvePrescription({
     fieldSources[field] = source;
   });
 
+  // A manual override that sets one reps bound only (H5 fix round 1): the
+  // other bound comes from the next source, so the range is re-checked
+  // (min never above max) and the label is rebuilt from the resolved range
+  // instead of repeating the lower source's label.
+  const overrideSetsReps = fieldSources.repsMin === "override" || fieldSources.repsMax === "override";
+
+  if (overrideSetsReps) {
+    const min = Number(resolved.repsMin);
+    const max = Number(resolved.repsMax);
+
+    if (Number.isFinite(min) && Number.isFinite(max) && min > max) {
+      if (fieldSources.repsMin === "override") {
+        resolved.repsMax = resolved.repsMin;
+        fieldSources.repsMax = "override";
+      } else {
+        resolved.repsMin = resolved.repsMax;
+        fieldSources.repsMin = "override";
+      }
+    }
+
+    if (fieldSources.repsLabel !== "override") {
+      resolved.repsLabel = repsLabelFromRange({ min: resolved.repsMin, max: resolved.repsMax });
+      fieldSources.repsLabel = resolved.repsLabel === null ? null : "override";
+    }
+  }
+
   if (resolved.repsLabel === null) {
     resolved.repsLabel =
       repsLabelFromRange({ min: resolved.repsMin, max: resolved.repsMax }) ?? "custom";
   }
 
   const usedSources = new Set(Object.values(fieldSources).filter(Boolean));
-  const source = SOURCE_ORDER.find((candidate) => usedSources.has(candidate)) ?? null;
+  // A hold sets no field but is still the top source: the athlete asked for
+  // the prescription to stay where it is.
+  const source = activeOverride
+    ? "override"
+    : (SOURCE_ORDER.find((candidate) => usedSources.has(candidate)) ?? null);
   const { progressionUsable, planUsable } = candidates;
   const coachSource = progressionUsable ? progression : planUsable ? planExercise : null;
 
@@ -284,17 +350,95 @@ export function resolvePrescription({
     exerciseProfile: coachSource?.exerciseProfile ?? planExercise?.exerciseProfile ?? null,
   };
 
+  let deloadInfo = null;
+
+  if (activeDeload) {
+    // H5 fix round 1 (decision H5-18): a number the athlete typed into a
+    // manual override is used as typed. The deload scales only the fields it
+    // resolved from the coach's sources (weight, accessory sets); a manual
+    // weight / set count is kept and the detail says so.
+    const weightFromOverride = fieldSources.weight === "override";
+    const setsFromOverride = fieldSources.sets === "override";
+    const scaled = applyDeloadToPrescription({
+      weight: resolved.weight,
+      sets: resolved.sets,
+      exercise: programExercise ?? {},
+      deload: activeDeload,
+    });
+    const weight = weightFromOverride ? resolved.weight : scaled.weight;
+    const sets = setsFromOverride ? resolved.sets : scaled.sets;
+    const outcome = {
+      ...scaled,
+      weight,
+      sets,
+      setsReduced: setsFromOverride ? false : scaled.setsReduced,
+      weightKept: weightFromOverride,
+      setsKept: setsFromOverride && scaled.setsReduced,
+      weightUnchanged: !weightFromOverride && scaled.weightUnchanged,
+    };
+
+    deloadInfo = {
+      level: scaled.level,
+      factor: scaled.factor,
+      baseWeight: scaled.baseWeight,
+      baseSets: scaled.baseSets,
+      setsReduced: outcome.setsReduced,
+      weightKept: outcome.weightKept,
+      weightUnchanged: outcome.weightUnchanged,
+      remainingSessions: activeDeload.remainingSessions ?? null,
+      detail: describeDeloadPrescription(activeDeload, outcome),
+    };
+    resolved.weight = weight;
+    resolved.sets = sets;
+  }
+
+  const baseDetail = describeSource(source, { progression, planExercise, planStatus, override: activeOverride });
+
   return {
     ...resolved,
     source,
-    sourceDetail: describeSource(source, { progression, planExercise, planStatus }),
+    sourceDetail: deloadInfo ? `${baseDetail} ${deloadInfo.detail}` : baseDetail,
     fieldSources,
     coach,
+    override: activeOverride
+      ? {
+          mode: activeOverride.mode,
+          remainingSessions: activeOverride.remainingSessions ?? null,
+          untilDate: activeOverride.untilDate ?? null,
+          note: activeOverride.note ?? "",
+          detail: describeOverride(activeOverride),
+        }
+      : null,
+    deload: deloadInfo,
   };
+}
+
+function describeDeloadPrescription(deload, scaled) {
+  const label = deload.level === "deload" ? "Deload" : "Lighter week";
+  const remaining = Number.isFinite(deload.remainingSessions)
+    ? ` (${deload.remainingSessions} ${deload.remainingSessions === 1 ? "session" : "sessions"} left)`
+    : "";
+  const percent = Math.round((1 - scaled.factor) * 100);
+  const setNote = scaled.setsReduced
+    ? ", one accessory set off"
+    : scaled.setsKept
+      ? ", your manual set count kept"
+      : "";
+  // The load line states what happened to the load, never a reduction that
+  // did not happen (H5 fix round 1): a manual weight is kept as typed, and a
+  // load at or under one equipment step cannot go lower.
+  const loadNote = scaled.weightKept
+    ? "your manual weight kept as typed"
+    : scaled.weightUnchanged
+      ? "load unchanged (already at the smallest step)"
+      : `load ${percent}% lighter`;
+
+  return `${label}${remaining}: ${loadNote}${setNote}.`;
 }
 
 export function getPrescriptionSourceLabel(source) {
   const labels = {
+    override: "Source: your override",
     progression: "Source: earned progression",
     plan: "Source: generated plan",
     target: "Source: program target",

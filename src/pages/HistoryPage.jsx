@@ -3,6 +3,12 @@ import { ChevronDown, Pencil, Trash2 } from "lucide-react";
 import Metric from "../components/ui/Metric.jsx";
 import ProgressEmptyState from "../components/ui/ProgressEmptyState.jsx";
 import StepperInput from "../components/workout/StepperInput.jsx";
+import { computeSessionAdherence } from "../lib/adherence.js";
+import {
+  formatHistorySetCount,
+  getAdherenceBadge,
+  getHistorySetCountField,
+} from "../lib/coachControlsView.js";
 import {
   buildHistorySessionSummary,
   formatHistoryDateTime,
@@ -18,6 +24,12 @@ import {
 import { buildDraftFromSession } from "../lib/sessionEdit.js";
 import { isRecoverySession } from "../lib/sessionLog.js";
 import { adjustInputValue } from "../lib/sessionNormalize.js";
+
+const ADHERENCE_BADGE_CLASSES = {
+  complete: "border-lime-300/50 bg-lime-300/10 text-lime-100",
+  partial: "border-amber-300/50 bg-amber-300/10 text-amber-100",
+  minimal: "border-zinc-700 bg-zinc-800 text-zinc-200",
+};
 
 export default function HistoryPage({
   sessions,
@@ -109,6 +121,12 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
       getProgramDayViewModels(session.programId).find((day) => day.id === session.dayId) ?? null
     );
   }, [session.programId, session.dayId]);
+  // H5-9 / H5-12: adherence against the session's own plan snapshot (never
+  // the current program); legacy sessions without a snapshot get no badge.
+  const adherenceBadge = useMemo(
+    () => getAdherenceBadge(computeSessionAdherence({ session, exercises: editDay?.exercises ?? [] })),
+    [session, editDay],
+  );
   // Sessions carry `dayType` (saveWorkout); `type` is only a legacy fallback.
   const canEdit = Boolean(session.id && editDay && onUpdateSession && !isRecoverySession(session));
   const canDelete = Boolean(session.id && onDeleteSession);
@@ -143,9 +161,17 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
           <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
             {formatHistoryDateTime(session.date)}
           </p>
-          <h3 className="mt-1 break-words text-lg font-black text-white">
-            {summary.dayName}
-          </h3>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h3 className="break-words text-lg font-black text-white">{summary.dayName}</h3>
+            {adherenceBadge && (
+              <span
+                data-testid="adherence-badge"
+                className={`rounded-[8px] border px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] ${ADHERENCE_BADGE_CLASSES[adherenceBadge.tone]}`}
+              >
+                {adherenceBadge.label}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm font-semibold leading-6 text-zinc-400">
             {summary.programName}
             {summary.dayFocus ? ` | ${summary.dayFocus}` : ""}
@@ -345,7 +371,12 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
           <div key={exercise.id} className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
             <p className="break-words text-sm font-black text-white">{exercise.name}</p>
             <div className="mt-2 space-y-2">
-              {draftExercise.sets.map((set, setIndex) => (
+              {draftExercise.sets.map((set, setIndex) => {
+                // H5-13: a timed / distance set is edited in its own count
+                // (seconds / meters); a legacy reps set stays a reps set.
+                const count = getHistorySetCountField(set, exercise);
+
+                return (
                 <div
                   key={setIndex}
                   className="rounded-[8px] border border-zinc-800 bg-[#111111] p-2"
@@ -355,21 +386,21 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
                   </p>
                   <div className="grid gap-2">
                     <StepperInput
-                      label="Reps"
-                      value={set.reps}
-                      onChange={(value) => updateSet(exercise.id, setIndex, "reps", value)}
+                      label={count.label}
+                      value={set[count.field] ?? ""}
+                      onChange={(value) => updateSet(exercise.id, setIndex, count.field, value)}
                       onStep={(delta) =>
                         updateSet(
                           exercise.id,
                           setIndex,
-                          "reps",
-                          adjustInputValue(set.reps, delta, { min: 0 }),
+                          count.field,
+                          adjustInputValue(set[count.field], delta, { min: 0 }),
                         )
                       }
-                      stepAmount={1}
+                      stepAmount={count.step}
                       type="number"
                       inputMode="numeric"
-                      placeholder="reps"
+                      placeholder={count.noun}
                     />
                     <StepperInput
                       label="Kg"
@@ -410,7 +441,8 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
                     />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -496,7 +528,7 @@ function HistoryExerciseDetail({ exercise }) {
       <div className="mt-3 space-y-1">
         <div className="grid grid-cols-[56px_1fr_1fr_1fr] gap-2 px-2 text-[10px] font-black uppercase tracking-[0.1em] text-zinc-400">
           <span>Set</span>
-          <span>Reps</span>
+          <span>Count</span>
           <span>Kg</span>
           <span>RPE</span>
         </div>
@@ -506,7 +538,7 @@ function HistoryExerciseDetail({ exercise }) {
             className="grid min-h-10 grid-cols-[56px_1fr_1fr_1fr] items-center gap-2 rounded-[8px] border border-zinc-800 bg-[#111111] px-2 text-sm font-bold text-zinc-200"
           >
             <span className="text-zinc-400">S{set.setNumber ?? index + 1}</span>
-            <span>{Number.isFinite(set.reps) ? set.reps : "-"}</span>
+            <span>{formatHistorySetCount(set)}</span>
             <span>{formatHistoryWeight(set.weight)}</span>
             <span>{Number.isFinite(set.rpe) ? set.rpe : "-"}</span>
           </div>

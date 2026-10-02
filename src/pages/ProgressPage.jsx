@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getReadinessCopy, readinessStyles } from "../components/readiness/readinessCopy.js";
 import ProgressEmptyState from "../components/ui/ProgressEmptyState.jsx";
+import {
+  buildRecordsSections,
+  formatDeloadSampleLine,
+  RECORD_ELIGIBILITY_RULE,
+} from "../lib/coachControlsView.js";
 import { formatDateKey } from "../lib/date.js";
+import { computePersonalRecords } from "../lib/personalRecords.js";
+import { getProgramDayViewModels } from "../lib/programStorage.js";
 import {
   buildProgressAnalytics,
   buildSelectedExerciseAnalytics,
@@ -33,10 +40,14 @@ function WeeklyReviewDelta({ label, value, previousValue, formatter }) {
   );
 }
 
-function WeeklyReviewSection({ sessionSummaries, setRecords }) {
+function WeeklyReviewSection({ sessionSummaries, setRecords, sessions, records, deloadEvaluation = null }) {
+  // H5-10: with the stored sessions and the records the review adds the
+  // observations (adherence, hold / override, new records, deload sample).
+  // H5-23: the deload line states the sample of the active program's deload
+  // evaluation (sessions AND check-ins), the same the deload card uses.
   const review = useMemo(
-    () => buildWeeklyReview(sessionSummaries, setRecords),
-    [sessionSummaries, setRecords],
+    () => buildWeeklyReview(sessionSummaries, setRecords, Date.now(), { sessions, records, deloadEvaluation }),
+    [sessionSummaries, setRecords, sessions, records, deloadEvaluation],
   );
 
   return (
@@ -94,7 +105,29 @@ export default function ProgressPage({
   activeProgram,
   activeProgramDays,
   exerciseLibrary,
+  deloadEvaluation = null,
 }) {
+  // H5-8: records by program + occurrence over every program's exercises
+  // (archived ones included, so an old program keeps its own records).
+  const allProgramExercises = useMemo(
+    () => programs.flatMap((program) => getProgramDayViewModels(program.id).flatMap((day) => day.exercises)),
+    [programs],
+  );
+  const personalRecords = useMemo(
+    () =>
+      computePersonalRecords({
+        sessions,
+        programs,
+        programExercises: allProgramExercises,
+        exerciseLibrary,
+        activeProgram,
+      }),
+    [sessions, programs, allProgramExercises, exerciseLibrary, activeProgram],
+  );
+  const recordSections = useMemo(
+    () => buildRecordsSections(personalRecords, { programs, activeProgramId: activeProgram?.id ?? null }),
+    [personalRecords, programs, activeProgram],
+  );
   const analytics = useMemo(
     () =>
       buildProgressAnalytics({
@@ -152,7 +185,20 @@ export default function ProgressPage({
       <WeeklyReviewSection
         sessionSummaries={analytics.sessionSummaries}
         setRecords={analytics.setRecords}
+        sessions={sessions}
+        records={personalRecords}
+        deloadEvaluation={deloadEvaluation}
       />
+
+      {deloadEvaluation && !deloadEvaluation.suggest && !deloadEvaluation.active && (
+        <p className="text-xs font-semibold leading-5 text-zinc-400" data-testid="deload-sample-line">
+          {deloadEvaluation.eligible
+            ? deloadEvaluation.reasons.join(" ")
+            : formatDeloadSampleLine(deloadEvaluation)}
+        </p>
+      )}
+
+      <RecordsSection sections={recordSections} />
 
       <section className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
         <ProgressStatCard
@@ -252,6 +298,81 @@ export default function ProgressPage({
         <ReadinessTrend entries={analytics.readinessEntries} />
       </section>
     </div>
+  );
+}
+
+/**
+ * H5-8 / H5-12: personal records per program exercise (identity = program +
+ * occurrence), with the "across programs" roll-up as a secondary line and a
+ * "?" that quotes the eligibility rule. Nothing here is merged or rewritten.
+ */
+function RecordsSection({ sections }) {
+  return (
+    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4" data-testid="records-section">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">Records</p>
+          <h3 className="mt-1 text-xl font-black text-white">Best per exercise</h3>
+        </div>
+        <details className="relative">
+          <summary
+            aria-label="How records are counted"
+            className="focus-ring flex min-h-9 min-w-9 cursor-pointer list-none items-center justify-center rounded-[8px] border border-zinc-700 text-sm font-black text-zinc-200"
+          >
+            ?
+          </summary>
+          <p className="absolute right-0 z-20 mt-2 w-72 rounded-[8px] border border-zinc-700 bg-[#111111] p-3 text-xs font-semibold leading-5 text-zinc-300 shadow-xl shadow-black/40">
+            {RECORD_ELIGIBILITY_RULE}
+          </p>
+        </details>
+      </div>
+
+      {sections.length ? (
+        <div className="mt-3 space-y-3">
+          {sections.map((group) => (
+            <div key={group.programId ?? "unknown"}>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+                {group.programName}
+                {group.isActive ? " | active" : ""}
+              </p>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                {group.entries.map((entry) => (
+                  <article key={entry.key} className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+                    <p className="break-words text-sm font-black text-white">{entry.name}</p>
+                    <ul className="mt-2 space-y-1">
+                      {entry.lines.map((line, index) => (
+                        <li key={`${line.type}-${index}`} className="flex items-baseline justify-between gap-2 text-xs font-semibold text-zinc-200">
+                          <span>
+                            <span className="text-zinc-400">{line.label}: </span>
+                            {line.value}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-zinc-400">{line.date}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {entry.acrossPrograms && (
+                      <p className="mt-2 text-[11px] font-semibold leading-4 text-zinc-400">{entry.acrossPrograms}</p>
+                    )}
+                    {entry.ineligibleCount > 0 && (
+                      <p className="mt-1 text-[11px] font-semibold leading-4 text-zinc-400">
+                        {entry.ineligibleCount} {entry.ineligibleCount === 1 ? "set" : "sets"} not counted for e1RM (see ?).
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3">
+          <ProgressEmptyState
+            title="No records yet."
+            body="Complete sets logged against a program exercise become its records."
+          />
+        </div>
+      )}
+    </section>
   );
 }
 

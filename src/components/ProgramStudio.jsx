@@ -64,6 +64,7 @@ import {
   setNewLibraryEntryInDraft,
 } from "../lib/importAssistant.js";
 import TechniqueNotesSection from "./import/TechniqueNotesSection.jsx";
+import CoachProfileDisclosure from "./program/CoachProfileDisclosure.jsx";
 
 const AUTOSAVE_DELAY_MS = 800;
 
@@ -913,10 +914,20 @@ function ExerciseScreen({
   onRemove,
   onTechniqueEntry,
   onAcceptTechnique,
+  onUpdateProgramExerciseProfile,
 }) {
   const [form, setForm] = useState(() => createExerciseForm(exercise));
   const [fieldErrors, setFieldErrors] = useState({});
   const errors = grouped.byExerciseId[exercise.id] ?? [];
+  // H5 fix round 1 (decision H5-19): the coach profile travels with the
+  // draft (measurement / perSide / profileOverrides are draft exercise
+  // fields), so the disclosure edits the draft exercise and nothing is
+  // written until Save program. The draft exercise carries its own explicit
+  // fields, so it also tells "set" from "inferred".
+  const profileExercise = useMemo(
+    () => ({ ...exercise, programExerciseId: exercise.id, repsLabel: exercise.targetReps?.label ?? exercise.repsLabel ?? null, repsMin: exercise.targetReps?.min ?? null, repsMax: exercise.targetReps?.max ?? null }),
+    [exercise],
+  );
 
   function changeField(field, value) {
     const nextForm = { ...form, [field]: value };
@@ -1021,6 +1032,16 @@ function ExerciseScreen({
         ) : null}
       </section>
 
+      {onUpdateProgramExerciseProfile ? (
+        <CoachProfileDisclosure
+          programId={draft.sourceProgramId ?? null}
+          exercise={profileExercise}
+          stored={profileExercise}
+          onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
+          onPatchDraft={(patch) => onPatch(patch)}
+        />
+      ) : null}
+
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
         <button type="button" onClick={onBack} className={primaryButtonClassName}>
           <Check aria-hidden="true" size={16} />
@@ -1074,6 +1095,7 @@ export default function ProgramStudio({
   diff: diffProp = null,
   review = null,
   isResumed = false,
+  onUpdateProgramExerciseProfile = null,
 }) {
   const initialRef = useRef(initialDraft ?? draft);
   const [working, setWorking] = useState(draft);
@@ -1359,6 +1381,7 @@ export default function ProgramStudio({
               apply(removeExercise(working, currentDay.id, currentExercise.id));
               setScreen({ kind: "day", dayId: currentDay.id });
             }}
+            onUpdateProgramExerciseProfile={onUpdateProgramExerciseProfile}
             onTechniqueEntry={(entry) => apply(setNewLibraryEntryInDraft(working, entry))}
             onAcceptTechnique={(techniqueDraft, options) => {
               const result = acceptTechniqueDraftIntoDraft(working, currentExercise.id, techniqueDraft, options);

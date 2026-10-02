@@ -4,6 +4,7 @@
 // technical / warm-up view values. Moved verbatim from src/App.jsx.
 // Fixture: scripts/verify-prescription-view.mjs.
 import { workoutProgram } from "../config/workoutProgram.js";
+import { getMeasurementProfile } from "./measurement.js";
 import { getPrescriptionSourceLabel, resolvePrescription } from "./prescription.js";
 import { formatRest, formatWeight } from "./progression.js";
 import { getProgramBaseline, getProgramProgression } from "./programStorage.js";
@@ -54,6 +55,11 @@ export function getWorkoutExerciseRecommendation(programId, exercise, planExerci
     historySampleSize: resolved.coach.historySampleSize,
     progressionMode: resolved.coach.progressionMode,
     exerciseProfile: resolved.coach.exerciseProfile,
+    // H5 fix round 1: the active override / deload of the resolution, so
+    // the manual-override form can prefill the coach's BASE load under a
+    // deload (decision H5-18) instead of the scaled one.
+    override: resolved.override ?? null,
+    deload: resolved.deload ?? null,
   };
 }
 
@@ -153,8 +159,44 @@ export function getProgramNickname(program) {
   return program.name;
 }
 
+const BARE_RANGE_PATTERN = /^\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?$/;
+const SIDE_WORDING_PATTERN = /side|each|per\b|unilateral/i;
+const TARGET_METRIC_LABELS = Object.freeze({ reps: "Reps", time: "Seconds", distance: "Meters" });
+
+/**
+ * The resolved target label in the exercise's measurement (H5 fix round 1,
+ * decision H5-27), the way the Workout Log shows it: a bare count on a timed
+ * / distance exercise gets its unit ("30" -> "30 s"), a per-side exercise
+ * gets "/side" unless the label already names a side ("10-12" -> "10-12/side",
+ * "8-12 per side" stays). A reps label on a plain exercise is returned as it
+ * is, so pre-H5 strips are byte-identical.
+ */
+export function getPrescriptionTargetLabel(displayPlan, exercise = null) {
+  const profile = getMeasurementProfile(exercise ?? {});
+  let label = String(displayPlan?.repsLabel ?? "").trim();
+
+  if (!label) {
+    return label;
+  }
+
+  if (profile.measurement !== "reps" && BARE_RANGE_PATTERN.test(label)) {
+    label = `${label} ${profile.unit}`;
+  }
+
+  if (profile.perSide && !SIDE_WORDING_PATTERN.test(label)) {
+    label = `${label}/side`;
+  }
+
+  return label;
+}
+
+/** "Reps" | "Seconds" | "Meters" for the metric tile next to the target label. */
+export function getPrescriptionTargetMetricLabel(exercise = null) {
+  return TARGET_METRIC_LABELS[getMeasurementProfile(exercise ?? {}).measurement] ?? "Reps";
+}
+
 export function formatPrescriptionStrip(displayPlan, exercise) {
-  return `${displayPlan.sets}x ${displayPlan.repsLabel} | ${formatWeight(displayPlan.recommendedWeight, exercise)} | RPE ${displayPlan.targetRPE} | Rest ${formatRest(displayPlan.restSeconds)}`;
+  return `${displayPlan.sets}x ${getPrescriptionTargetLabel(displayPlan, exercise)} | ${formatWeight(displayPlan.recommendedWeight, exercise)} | RPE ${displayPlan.targetRPE} | Rest ${formatRest(displayPlan.restSeconds)}`;
 }
 
 export function formatTechnicalValue(value) {

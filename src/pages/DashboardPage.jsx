@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { getReadinessCopy, readinessStyles } from "../components/readiness/readinessCopy.js";
 import Metric from "../components/ui/Metric.jsx";
+import DeloadCard from "../components/workout/DeloadCard.jsx";
 import { workoutProgram } from "../config/workoutProgram.js";
 import { formatDateKey, getLocalDateKey } from "../lib/date.js";
 import { formatSetsReps, formatWeight, getPlanForDay } from "../lib/progression.js";
@@ -116,14 +117,21 @@ export default function DashboardPage({
   todayReadinessEntry,
   todayReadinessSummary,
   sessions,
+  activeProgramDays = [],
+  deloadModel = null,
+  onApplyDeload,
+  onDismissDeload,
+  onEndDeload,
   onGoToReadiness,
   onStartWorkout,
   onGoToWorkoutLog,
 }) {
   const copy = getReadinessCopy(todayReadinessSummary);
   const lastSession = sessions[0];
-  const lastSessionMetrics = lastSession ? getDashboardSessionMetrics(lastSession) : null;
-  const weekStats = useMemo(() => buildDashboardWeekStats(sessions), [sessions]);
+  // H5-24: the active program's days let the Dashboard read a set the way
+  // Progress and the recap do, so the three agree on volume.
+  const lastSessionMetrics = lastSession ? getDashboardSessionMetrics(lastSession, { days: activeProgramDays }) : null;
+  const weekStats = useMemo(() => buildDashboardWeekStats(sessions, Date.now(), { days: activeProgramDays }), [sessions, activeProgramDays]);
   const todayDay = nextRecommendedDay ?? selectedDay;
   const todayPlan = todayDay ? getPlanForDay(todayDay, nextPlans[todayDay.id]) : null;
   const todayKey = getLocalDateKey();
@@ -171,6 +179,8 @@ export default function DashboardPage({
           )}
         </div>
       </section>
+
+      <DeloadCard model={deloadModel} onApply={onApplyDeload} onDismiss={onDismissDeload} onEnd={onEndDeload} />
 
       <DashboardTodayWorkoutCard
         day={todayDay}

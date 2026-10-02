@@ -21,9 +21,60 @@ export const PERFORMANCE_METRICS = Object.freeze([
     unit: "kg",
     getValue: (session) => session?.totalVolume,
   }),
+  // Phase H5 (decision H5-10): timed and distance programs report no kg
+  // metric, so their sessions are ranked within total seconds / meters.
+  // Seconds are never ranked against kg or meters.
+  Object.freeze({
+    id: "time",
+    label: "Total time",
+    unit: "s",
+    getValue: (session) => session?.totalSeconds,
+  }),
+  Object.freeze({
+    id: "distance",
+    label: "Total distance",
+    unit: "m",
+    getValue: (session) => session?.totalMeters,
+  }),
 ]);
 
 export const MIN_COMPARABLE_SESSIONS = 2;
+
+/**
+ * getComparableSessionRequirement(sessions, options) ->
+ *   { comparable, metricId, rankedCount, needed, minSessions }
+ *
+ * The exact sample the comparison still needs (H5-10): the metric closest to
+ * the requirement, how many sessions carry it and how many more are needed
+ * ("Not comparable yet: N more sessions needed"). `needed` is 0 when one
+ * metric already has `minSessions` sessions.
+ */
+export function getComparableSessionRequirement(
+  sessions,
+  { metrics = PERFORMANCE_METRICS, minSessions = MIN_COMPARABLE_SESSIONS } = {},
+) {
+  let best = { metricId: null, rankedCount: 0 };
+
+  for (const metric of metrics) {
+    const rankedCount = rankSessionsByMetric(sessions, metric).length;
+
+    if (rankedCount >= minSessions) {
+      return { comparable: true, metricId: metric.id, rankedCount, needed: 0, minSessions };
+    }
+
+    if (rankedCount > best.rankedCount) {
+      best = { metricId: metric.id, rankedCount };
+    }
+  }
+
+  return {
+    comparable: false,
+    metricId: best.metricId,
+    rankedCount: best.rankedCount,
+    needed: Math.max(0, minSessions - best.rankedCount),
+    minSessions,
+  };
+}
 
 function isPositiveNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value > 0;

@@ -26,11 +26,33 @@ export function buildResolvedPlan(programId, day, plan) {
   return {
     ...(plan ?? {}),
     exercises: (day?.exercises ?? []).map((exercise) => {
-      const planExercise = getPlanExercise(plan, exercise.id) ?? {};
+      // The freeze flags of a stored plan entry (`held` / `overrideMode` /
+      // `deloadSession`, H5-6 / H5-7) say what the LAST session was logged
+      // under; they are replaced by the override / deload active NOW (H5 fix
+      // round 1, decision H5-26). A hold that ran out or was cleared is
+      // otherwise copied into the next session's snapshot, read as "Held by
+      // you" in its recap and, through H5-15, frozen again by the engine.
+      const {
+        held: staleHeld,
+        overrideMode: staleOverrideMode,
+        overrideRemainingSessions: staleRemaining,
+        deloadSession: staleDeloadSession,
+        deloadLevel: staleDeloadLevel,
+        ...planExercise
+      } = getPlanExercise(plan, exercise.id) ?? {};
       const prescription = resolved[exercise.id];
+      const override = prescription.override && typeof prescription.override === "object" ? prescription.override : null;
 
       return {
         ...planExercise,
+        ...(override
+          ? {
+              overrideMode: override.mode ?? null,
+              overrideRemainingSessions: override.remainingSessions ?? null,
+              ...(override.mode === "hold" ? { held: true } : {}),
+            }
+          : {}),
+        ...(prescription.deload ? { deloadSession: true, deloadLevel: prescription.deload.level ?? null } : {}),
         exerciseId: exercise.id,
         name: exercise.name,
         sets: prescription.sets,
@@ -41,6 +63,9 @@ export function buildResolvedPlan(programId, day, plan) {
         restSeconds: prescription.restSeconds,
         recommendedWeight: prescription.recommendedWeight,
         prescriptionSource: prescription.source,
+        // H5 fix round 1: the deload of the resolution (base load / sets) so
+        // the Workout Log's manual-override form prefills the base values.
+        ...(prescription.deload ? { deload: prescription.deload } : {}),
       };
     }),
   };
@@ -50,6 +75,14 @@ export function buildPlannedExercisesSnapshot(day, resolvedPlan) {
   return Object.fromEntries(
     (day?.exercises ?? []).map((exercise) => {
       const planExercise = getPlanExercise(resolvedPlan, exercise.id);
+      // The resolved plan entry keeps the H4 key set, so the active override /
+      // deload of the day view model (H5-6 / H5-7) supplies the flags.
+      const overrideMode = planExercise?.overrideMode ?? exercise.override?.mode ?? null;
+      const held = planExercise?.held === true || overrideMode === "hold";
+      const deloadSession = planExercise?.deloadSession === true || Boolean(exercise.deload);
+      // The level travels with the flag so a regeneration after the deload
+      // ended still names it (decision H5-15).
+      const deloadLevel = deloadSession ? planExercise?.deloadLevel ?? exercise.deload?.level ?? null : null;
 
       return [
         exercise.id,
@@ -62,6 +95,13 @@ export function buildPlannedExercisesSnapshot(day, resolvedPlan) {
           recommendedWeight: planExercise?.recommendedWeight ?? exercise.recommendedWeight,
           restSeconds: planExercise?.restSeconds ?? exercise.restSeconds ?? null,
           prescriptionSource: planExercise?.prescriptionSource ?? null,
+          // H5-12: hold / manual override / deload flags of the plan entry are
+          // part of the snapshot only when set, so History and adherence can
+          // tell "held by you" from an engine hold.
+          ...(held ? { held: true } : {}),
+          ...(overrideMode ? { overrideMode } : {}),
+          ...(deloadSession ? { deloadSession: true } : {}),
+          ...(deloadLevel ? { deloadLevel } : {}),
         },
       ];
     }),
@@ -111,6 +151,9 @@ export function buildDraftFromSession(session, day) {
         reps: stringifyDraftValue(loggedSets[index]?.reps),
         weight: stringifyDraftValue(loggedSets[index]?.weight),
         rpe: stringifyDraftValue(loggedSets[index]?.rpe),
+        // H5-13: timed / distance counts travel with the set only when logged.
+        ...(isBlank(loggedSets[index]?.seconds) ? {} : { seconds: stringifyDraftValue(loggedSets[index].seconds) }),
+        ...(isBlank(loggedSets[index]?.meters) ? {} : { meters: stringifyDraftValue(loggedSets[index].meters) }),
       }));
 
       return [
@@ -163,6 +206,8 @@ export function rebuildSessionFromEdits(session, day, edits) {
               reps: stringifyDraftValue(set?.reps),
               weight: stringifyDraftValue(set?.weight),
               rpe: stringifyDraftValue(set?.rpe),
+              ...(isBlank(set?.seconds) ? {} : { seconds: stringifyDraftValue(set.seconds) }),
+              ...(isBlank(set?.meters) ? {} : { meters: stringifyDraftValue(set.meters) }),
             })),
           },
         ];
