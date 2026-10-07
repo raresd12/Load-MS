@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { contrastRatio, parseColor, readRules, readThemeTokens } from "./lib/contrast.mjs";
 
 // Phase H4 / UI track, decisions H4-6 (page / component layout, lazy
 // boundaries, eager training path) and H4-7 (mobile conventions). Pure
@@ -196,7 +197,7 @@ assert.ok(/viewport-fit=cover/.test(html), "index.html viewport uses viewport-fi
 assert.ok(/\.safe-bottom\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/.test(css), "safe-bottom pads by env(safe-area-inset-bottom) with a 0 fallback");
 assert.ok(/\.safe-top\s*\{[^}]*env\(safe-area-inset-top,\s*0px\)/.test(css), "safe-top pads by env(safe-area-inset-top) with a 0 fallback");
 assert.ok(/\.rest-timer-safe\s*\{[^}]*env\(safe-area-inset-bottom,\s*0px\)/.test(css), "the rest timer bar offsets by the bottom inset");
-assert.ok(/button:focus-visible,[\s\S]*outline: 2px solid #bef264/.test(css), "every interactive element gets the lime :focus-visible ring");
+assert.ok(/button:focus-visible,[\s\S]*outline: 2px solid var\(--color-accent(?:-soft)?\)/.test(css), "every interactive element gets the violet :focus-visible ring (HV-5 token)");
 
 const navStart = app.indexOf('aria-label="Main navigation"');
 const nav = app.slice(navStart, app.indexOf("</nav>", navStart));
@@ -232,42 +233,105 @@ assert.ok(/grid-cols-5 gap-1\.5 max-\[359px\]:gap-1 /.test(nav), "mobile nav gap
 const workoutLog = read("src/pages/WorkoutLogPage.jsx");
 assert.ok(/inputMode="decimal"\s+enterKeyHint="done"\s+min="1"\s+max="10"/.test(workoutLog), "session RPE uses the decimal keyboard");
 
-// Contrast floor (decision H4-7, H4 fix round 3): text-zinc-400 (6.9:1 on the
-// zinc-900 / zinc-950 surfaces) is the dimmest text colour. text-zinc-500
-// (3.6:1) down to text-zinc-700 fail WCAG AA for body text, whatever the variant
-// (hover:, sm:, disabled:, group-hover: ...). Placeholders are the one
-// exception (`placeholder:text-zinc-600`, hint text that is replaced by the
-// value). Checked over App.jsx, src/pages and src/components, and over
-// styles.css for a hand-written equivalent.
-const BELOW_FLOOR_TEXT = /(?<![\w-])((?:[\w-]+(?:\[[^\]\s]*\])?:)*)text-zinc-(500|600|700)(?:\/\d+)?(?![\w-])/g;
-function findBelowFloorText(text) {
+// Contrast floor (decision HV-5, replaces the zinc floor of H4-7 / H4 fix
+// round 3): colour comes from the @theme tokens of styles.css and text-3
+// (>= 4.5:1 on bg, surface-1 and surface-2, proven with its table in
+// verify-ui-hv-tokens.mjs) is the dimmest text. A text colour utility with an
+// opacity modifier (text-text-3/50, hover:text-accent/40 ...) must still reach
+// 4.5:1 on surface-2, the lightest surface text sits on, whatever the variant
+// (hover:, sm:, disabled:, placeholder: ...). text-sm/6 is a size with a line
+// height, not a colour. Placeholders use text-3 itself (no dimmer exception
+// any more). Checked over App.jsx, src/pages and src/components, and over
+// styles.css for a literal colour below the floor.
+const TEXT_WITH_OPACITY = /(?<![\w-])((?:[\w-]+(?:\[[^\]\s]*\])?:)*)text-([a-z0-9-]+)\/(\d+|\[[^\]\s]+\])(?![\w-])/g;
+const opacityOf = (modifier) => {
+  const inner = modifier.replace(/^\[|\]$/g, "");
+  return /%$/.test(inner) || /^\d+$/.test(modifier) ? Number.parseFloat(inner) / 100 : Number.parseFloat(inner);
+};
+function colourTokensOf(tokens) {
+  const colours = new Map();
+  for (const [name, value] of tokens) {
+    const colour = name.startsWith("--color-") ? parseColor(value) : null;
+    if (colour) {
+      colours.set(name.slice("--color-".length), colour);
+    }
+  }
+  return colours;
+}
+function findBelowFloorText(text, colours, surface) {
   const found = [];
   text.split(/\r?\n/).forEach((line, index) => {
-    for (const match of line.matchAll(BELOW_FLOOR_TEXT)) {
-      const variants = match[1].split(":").filter(Boolean);
-      if (variants.includes("placeholder")) {
+    for (const match of line.matchAll(TEXT_WITH_OPACITY)) {
+      const base = colours.get(match[2]);
+      if (!base) {
         continue;
       }
-      found.push(`${index + 1}: ${match[0]}`);
+      const ratio = contrastRatio({ ...base, a: base.a * opacityOf(match[3]) }, surface);
+      if (!(ratio >= 4.5)) {
+        found.push(`${index + 1}: ${match[0]} (${ratio.toFixed(2)}:1)`);
+      }
     }
   });
   return found;
 }
-// The check itself: what it must catch and what it must let through.
-assert.deepEqual(findBelowFloorText('<p className="text-xs text-zinc-500">'), ["1: text-zinc-500"]);
-assert.deepEqual(findBelowFloorText('className="hover:text-zinc-600 sm:text-zinc-500/80"'), ["1: hover:text-zinc-600", "1: sm:text-zinc-500/80"]);
-assert.deepEqual(findBelowFloorText("`min-[430px]:text-zinc-700 ${x}`"), ["1: min-[430px]:text-zinc-700"]);
-assert.deepEqual(findBelowFloorText('className="text-zinc-400 placeholder:text-zinc-600 border-zinc-700 focus:placeholder:text-zinc-500"'), []);
-assert.deepEqual(findBelowFloorText('className="bg-lime-300 text-zinc-950 text-zinc-800"'), [], "zinc-800 / 900 / 950 is dark text on the lime surfaces, not muted text");
-for (const { file, text } of uiSources) {
-  const found = findBelowFloorText(text);
-  assert.deepEqual(found, [], `${file}: text below the text-zinc-400 contrast floor (${found.join("; ")})`);
+const PLACEHOLDER_TEXT = /(?<![\w-])(?:[\w-]+(?:\[[^\]\s]*\])?:)*placeholder:text-[^\s"'`}]+/g;
+const findPlaceholderColours = (text) => (text.match(PLACEHOLDER_TEXT) ?? []).filter((match) => !/placeholder:text-text-3$/.test(match));
+// The checks themselves, on a fixed token set: what they must catch and what
+// they must let through.
+{
+  const colours = colourTokensOf(
+    new Map([
+      ["--color-text-1", "rgba(255,255,255,0.92)"],
+      ["--color-text-3", "rgba(255,255,255,0.52)"],
+      ["--color-accent", "#a78bfa"],
+      ["--font-sans", "Inter"],
+    ]),
+  );
+  const surface = parseColor("#1a1a20");
+  assert.deepEqual(findBelowFloorText('<p className="text-xs text-text-3/50">', colours, surface), ["1: text-text-3/50 (2.35:1)"]);
+  assert.deepEqual(findBelowFloorText('className="hover:text-accent/40 sm:placeholder:text-text-1/[0.3]"', colours, surface), [
+    "1: hover:text-accent/40 (2.09:1)",
+    "1: sm:placeholder:text-text-1/[0.3] (2.49:1)",
+  ]);
+  assert.deepEqual(findBelowFloorText('className="text-text-1/90 text-sm/6 text-text-3 text-accent text-[11px]/4"', colours, surface), []);
+  assert.deepEqual(findPlaceholderColours('className="placeholder:text-text-3 focus:placeholder:text-text-2 placeholder:text-zinc-600"'), [
+    "focus:placeholder:text-text-2",
+    "placeholder:text-zinc-600",
+  ]);
 }
-assert.deepEqual(findBelowFloorText(css), [], "styles.css applies no text colour below the floor");
-assert.ok(!/(?<!-)color:\s*(#71717a|#52525b|#3f3f46)\b/i.test(css), "styles.css sets no zinc-500 / 600 / 700 text colour by hex");
+const theme = readThemeTokens(css);
+assert.ok(theme.found, "styles.css declares the HV-5 colour tokens in @theme");
+const themeColours = colourTokensOf(theme.tokens);
+const floorSurface = themeColours.get("surface-2");
+assert.ok(floorSurface && themeColours.get("text-3"), "the surface-2 and text-3 tokens are colours");
+assert.ok(contrastRatio(themeColours.get("text-3"), floorSurface) >= 4.5, "text-3 itself meets 4.5:1 on surface-2");
+for (const { file, text } of uiSources) {
+  const found = findBelowFloorText(text, themeColours, floorSurface);
+  assert.deepEqual(found, [], `${file}: text below the text-3 contrast floor (${found.join("; ")})`);
+  const placeholders = findPlaceholderColours(text);
+  assert.deepEqual(placeholders, [], `${file}: placeholders use text-3 (${placeholders.join("; ")})`);
+}
+assert.deepEqual(findBelowFloorText(css, themeColours, floorSurface), [], "styles.css applies no text colour below the floor");
+for (const rule of readRules(css)) {
+  if (/(?<![\w-])background(?:-color)?\s*:/.test(rule.body)) {
+    continue;
+  }
+  for (const match of rule.body.matchAll(/(?<![\w-])color\s*:\s*([^;]+);/g)) {
+    const literal = parseColor(match[1].replace(/!important/, "").trim());
+    if (literal) {
+      assert.ok(contrastRatio(literal, floorSurface) >= 4.5, `styles.css ${rule.selector}: color ${match[1].trim()} is below 4.5:1 on surface-2`);
+    }
+  }
+  if (/::placeholder/.test(rule.selector)) {
+    for (const match of rule.body.matchAll(/(?<![\w-])color\s*:\s*([^;]+);/g)) {
+      assert.match(match[1].trim(), /^var\(--color-text-3\)$/, `styles.css ${rule.selector}: placeholders use text-3`);
+    }
+  }
+}
 assert.ok(
-  uiSources.some(({ text }) => text.includes("placeholder:text-zinc-600")),
-  "placeholders keep their own dimmer colour (the exception is still in use)",
+  uiSources.some(({ text }) => /placeholder:text-text-3(?![\w/-])/.test(text)) ||
+    readRules(css).some((rule) => /::placeholder/.test(rule.selector) && /(?<![\w-])color\s*:\s*var\(--color-text-3\)/.test(rule.body)),
+  "placeholders are styled with text-3 (a placeholder:text-text-3 utility or a ::placeholder rule)",
 );
 
 // Icon-only buttons carry an aria-label: every <button ...> whose only child is
