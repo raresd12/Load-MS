@@ -18,8 +18,8 @@ export default defineConfig({
         name: "Load MS / RPE Tracker",
         short_name: "Load MS",
         description: "A local RPE-based workout tracker for training, readiness, and progression.",
-        theme_color: "#111111",
-        background_color: "#111111",
+        theme_color: "#0a0a0f",
+        background_color: "#0a0a0f",
         display: "standalone",
         orientation: "portrait",
         start_url: "./",
@@ -118,6 +118,9 @@ export default defineConfig({
     // data in its own app-data chunk the shared prescriptionView chunk is
     // 150.7 kB and the largest chunk is ProgramPage at 214.7 kB; 235 keeps
     // the guard's 15 % rule (215-246) with about 20 kB of headroom.
-    chunkSizeWarningLimit: 235,
+    // Visual refresh (decision HV-12): the shorter class strings bring
+    // ProgramPage to 203.2 kB, so the 15 % rule caps the limit at 233;
+    // 230 keeps about 27 kB of headroom.
+    chunkSizeWarningLimit: 230,
   },
 });

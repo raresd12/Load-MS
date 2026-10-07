@@ -1,11 +1,58 @@
 @import "tailwindcss";
 
+/*
+ * Decision HV-11: `short:` applies on a short layout viewport (landscape
+ * phones, small windows). The set entry tightens there so Save Set still
+ * clears the rest timer and the bottom nav when a field is focused (H4-10).
+ */
+@custom-variant short (@media (max-height: 520px));
+
+/*
+ * Decision HV-1: the palette and radii of the visual refresh (owner's brief,
+ * 2026-10-01: clean black and violet). Every colour in src/ comes from these
+ * tokens, through the utilities Tailwind generates from them (bg-surface-1,
+ * text-text-2, border-line, rounded-card ...) or through var(--color-*) in
+ * this file; no raw Tailwind palette colour (zinc-*, lime-*, amber-* ...) is
+ * used. `static` emits every variable on :root even when no utility names it,
+ * so the component classes below can read all of them. Dark only.
+ */
+@theme static {
+  --color-bg: #0a0a0f;
+  --color-bg-bar: #0d0d13;
+  --color-surface-1: #131318;
+  --color-surface-2: #1a1a20;
+  --color-surface-3: #212128;
+  --color-line: rgba(255, 255, 255, 0.1);
+  --color-line-accent: rgba(167, 139, 250, 0.35);
+  --color-text-1: rgba(255, 255, 255, 0.92);
+  --color-text-2: rgba(255, 255, 255, 0.7);
+  --color-text-3: rgba(255, 255, 255, 0.52);
+  --color-accent: #a78bfa;
+  --color-accent-fg: #2e1065;
+  --color-accent-soft: #c4b5fd;
+  --color-accent-tint: rgba(124, 58, 237, 0.18);
+  --color-accent-tint-strong: rgba(124, 58, 237, 0.3);
+  --color-good: #4ade80;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
+  --color-good-tint: rgba(74, 222, 128, 0.15);
+  --color-warn-tint: rgba(251, 191, 36, 0.15);
+  --color-bad-tint: rgba(248, 113, 113, 0.15);
+  --radius-card: 16px;
+  --radius-block: 12px;
+  --radius-control: 12px;
+}
+
+/* Decision HV-1 / HV-3: motion tokens are plain custom properties. */
 :root {
   color-scheme: dark;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  background: #111111;
+  background: var(--color-bg);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
 }
 
 * {
@@ -45,15 +92,13 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  background:
-    linear-gradient(180deg, rgba(37, 37, 37, 0.84) 0%, rgba(17, 17, 17, 1) 44%),
-    #111111;
-  color: #f8f8f8;
+  background: var(--color-bg);
+  color: var(--color-text-1);
 }
 
 /*
  * Decision H4-7: these base rules sit in the base layer so Tailwind's
- * utilities (text-sm, font-black, text-[10px] ...) win on buttons and fields.
+ * utilities (text-sm, font-semibold, text-[10px] ...) win on buttons and fields.
  * Unlayered, the `font: inherit` reset beat every utility and rendered all
  * controls at 16px / 400, which truncated the bottom-nav labels at 360 px.
  */
@@ -76,19 +121,18 @@ body {
   }
 }
 
+/*
+ * Decision H4-7, restyled by HV-2: every interactive element shows the same
+ * focus ring for keyboard users (2px accent-soft, 2px offset on the page
+ * background), whether or not it carries .focus-ring / .btn / .field /
+ * .nav-item.
+ */
 .focus-ring {
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
 
-.focus-ring:focus-visible {
-  outline-color: #bef264;
-}
-
-/*
- * Decision H4-7: every interactive element shows the same lime focus ring for
- * keyboard users, whether or not it carries the .focus-ring class.
- */
+.focus-ring:focus-visible,
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
@@ -96,8 +140,17 @@ select:focus-visible,
 textarea:focus-visible,
 summary:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid #bef264;
+  outline: 2px solid var(--color-accent-soft);
   outline-offset: 2px;
+}
+
+/*
+ * Decision HV-11: a control that sits on an accent fill (the rest timer's
+ * done state) draws its ring in accent-fg, 5.6:1 on accent; accent-soft would
+ * be 1.47:1 there, below the 3:1 a focus indicator needs.
+ */
+.focus-on-accent:focus-visible {
+  outline-color: var(--color-accent-fg);
 }
 
 /*
@@ -116,4 +169,372 @@ summary:focus-visible,
 
 .rest-timer-safe {
   bottom: calc(var(--rest-timer-bottom, 84px) + env(safe-area-inset-bottom, 0px));
+}
+
+/*
+ * Decision HV-2: the shared component classes. They sit in the components
+ * layer, so a utility on the same element (w-full, mt-4, px-3 ...) still
+ * wins. Colours, radii and timings come only from the tokens above.
+ */
+@layer components {
+  /* Buttons: .btn plus exactly one variant; .btn-sm shrinks any of them. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      transform var(--duration-fast) var(--ease-out),
+      background-color var(--duration-fast) var(--ease-out),
+      border-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out),
+      opacity var(--duration-fast) var(--ease-out);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--color-accent);
+    color: var(--color-accent-fg);
+  }
+
+  .btn-secondary {
+    border-color: var(--color-line);
+    background-color: var(--color-surface-2);
+    color: var(--color-text-1);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--color-accent-soft);
+  }
+
+  .btn-danger {
+    background-color: var(--color-bad-tint);
+    color: var(--color-bad);
+  }
+
+  @media (hover: hover) {
+    .btn-primary:hover:not(:disabled) {
+      background-color: var(--color-accent-soft);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background-color: var(--color-surface-3);
+    }
+
+    .btn-ghost:hover:not(:disabled) {
+      background-color: var(--color-accent-tint);
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      border-color: var(--color-bad);
+    }
+  }
+
+  .btn-sm {
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+
+  /* Surfaces */
+  .card {
+    border-radius: var(--radius-card);
+    background-color: var(--color-surface-1);
+    padding: 16px;
+  }
+
+  .card-active {
+    border: 1px solid var(--color-line-accent);
+    border-radius: var(--radius-card);
+    background-color: var(--color-accent-tint);
+    padding: 16px;
+  }
+
+  .card-inset {
+    border-radius: var(--radius-block);
+    background-color: var(--color-surface-2);
+    padding: 12px;
+  }
+
+  /* Labels: sentence case, no tracking (the uppercase eyebrows are gone). */
+  .label,
+  .label-accent {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--color-text-3);
+  }
+
+  .label-accent {
+    color: var(--color-accent-soft);
+  }
+
+  /* Fields: input, select, textarea. 16px text keeps iOS from zooming. */
+  .field {
+    min-height: 48px;
+    padding: 0 12px;
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-control);
+    background-color: var(--color-surface-2);
+    color: var(--color-text-1);
+    font-size: 16px;
+    line-height: 1.5;
+    transition: border-color var(--duration-fast) var(--ease-out);
+  }
+
+  textarea.field {
+    padding: 12px;
+  }
+
+  .field::placeholder {
+    color: var(--color-text-3);
+    opacity: 1;
+  }
+
+  .field:focus {
+    border-color: var(--color-line-accent);
+  }
+
+  .field:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .field-lg {
+    min-height: 56px;
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  /* Pills: .pill plus at most one colour variant. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background-color: var(--color-surface-2);
+    /* HV-11: a neutral pill keeps its shape on a surface-2 block (.card-inset). */
+    box-shadow: inset 0 0 0 1px var(--color-line);
+    color: var(--color-text-2);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+  }
+
+  .pill-accent,
+  .pill-good,
+  .pill-warn,
+  .pill-bad {
+    box-shadow: none;
+  }
+
+  .pill-accent {
+    background-color: var(--color-accent-tint);
+    color: var(--color-accent-soft);
+  }
+
+  .pill-good {
+    background-color: var(--color-good-tint);
+    color: var(--color-good);
+  }
+
+  .pill-warn {
+    background-color: var(--color-warn-tint);
+    color: var(--color-warn);
+  }
+
+  .pill-bad {
+    background-color: var(--color-bad-tint);
+    color: var(--color-bad);
+  }
+
+  /*
+   * Status blocks (Progress trend and insight chips; the class names come
+   * from src/lib/sessionAnalytics.js as toneClass).
+   */
+  .tone-good,
+  .tone-steady,
+  .tone-caution,
+  .tone-neutral {
+    border: 1px solid var(--color-line);
+  }
+
+  .tone-good {
+    border-color: rgba(74, 222, 128, 0.3);
+    background-color: var(--color-good-tint);
+    color: var(--color-good);
+  }
+
+  .tone-steady {
+    border-color: var(--color-line-accent);
+    background-color: var(--color-accent-tint);
+    color: var(--color-accent-soft);
+  }
+
+  .tone-caution {
+    border-color: rgba(251, 191, 36, 0.3);
+    background-color: var(--color-warn-tint);
+    color: var(--color-warn);
+  }
+
+  .tone-neutral {
+    background-color: var(--color-surface-2);
+    color: var(--color-text-2);
+  }
+
+  /* Bottom nav item; active = aria-current="page" or .nav-item-active. */
+  .nav-item {
+    border-radius: 10px;
+    background-color: transparent;
+    color: var(--color-text-3);
+    -webkit-tap-highlight-color: transparent;
+    transition:
+      background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+
+  @media (hover: hover) {
+    .nav-item:hover {
+      color: var(--color-text-1);
+    }
+  }
+
+  .nav-item[aria-current="page"],
+  .nav-item.nav-item-active {
+    background-color: var(--color-accent-tint);
+    color: var(--color-accent);
+  }
+
+  /* Progress track and fill (set progress, rest timer, adherence). */
+  .bar {
+    height: 6px;
+    overflow: hidden;
+    border-radius: 999px;
+    background-color: var(--color-surface-2);
+  }
+
+  .bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background-color: var(--color-accent);
+    transition: width var(--duration-base) var(--ease-out);
+  }
+
+  /* Decision HV-3: motion. */
+  /*
+   * HV-11: fill mode backwards, so nothing of the animation stays on the
+   * wrapper once it ends (no transform, no stacking context).
+   */
+  .page-enter {
+    animation: hv-page-enter var(--duration-base) var(--ease-out) backwards;
+  }
+
+  .banner-enter {
+    animation: hv-banner-enter var(--duration-base) var(--ease-out) both;
+  }
+
+  .set-saved {
+    animation: hv-set-saved 600ms var(--ease-out);
+  }
+
+  /*
+   * Decision HV-12: the chevron of a <details> summary turns when the
+   * disclosure is open. Bound to its own details (direct child of the
+   * summary), so a nested disclosure does not turn with its parent.
+   */
+  .disclosure-chevron {
+    flex-shrink: 0;
+    transition: rotate var(--duration-base) var(--ease-out);
+  }
+
+  details[open] > summary > .disclosure-chevron {
+    rotate: 180deg;
+  }
+}
+
+/*
+ * Decision HV-11: the page fade animates opacity only. A transform (even
+ * translateY(0) while the animation runs or fills) makes the wrapper the
+ * containing block of its position:fixed children (rest timer, full-screen
+ * source view), which then sit at the bottom of the page instead of the
+ * viewport.
+ */
+@keyframes hv-page-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hv-banner-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The highlight fades back to the element's own background. */
+@keyframes hv-set-saved {
+  from {
+    background-color: var(--color-accent-tint);
+  }
+}
+
+/*
+ * Decision HV-3: no motion for people who ask for none. Animations jump to
+ * their end state and transitions apply at once; the press scale is off,
+ * for .btn and for the active:scale-* utilities (HV-11).
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+
+  /* HV-11: also the Tailwind press scale (active:scale-*), which sets `scale`. */
+  *:active {
+    scale: none !important;
+  }
 }
