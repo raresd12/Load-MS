@@ -72,20 +72,20 @@ export default function WorkoutsPage({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           Workouts
         </p>
-        <h2 className="mt-1 text-xl font-black text-white sm:hidden">
+        <h2 className="mt-1 text-[17px] font-semibold text-text-1 sm:hidden">
           {getProgramNickname(activeProgram)}
         </h2>
-        <h2 className="mt-1 hidden text-2xl font-black text-white sm:block">
+        <h2 className="mt-1 hidden text-[22px] font-semibold text-text-1 sm:block">
           {activeProgram?.name ?? workoutProgram.name}
         </h2>
-        <div className="mt-3 space-y-1 text-sm font-bold text-zinc-300 sm:hidden">
-          <p>Selected: <span className="text-white">{day.name}</span></p>
-          <p>Readiness: <span className="text-white">{todayReadinessEntry ? readinessCopy.label : "Not saved"}</span></p>
-          <p>Next: <span className="text-white">{nextRecommendedDay?.name ?? "Not set yet"}</span></p>
+        <div className="mt-3 space-y-1 text-sm font-semibold text-text-2 sm:hidden">
+          <p>Selected: <span className="text-text-1">{day.name}</span></p>
+          <p>Readiness: <span className="text-text-1">{todayReadinessEntry ? readinessCopy.label : "Not saved"}</span></p>
+          <p>Next: <span className="text-text-1">{nextRecommendedDay?.name ?? "Not set yet"}</span></p>
         </div>
         <div className="mt-4 hidden gap-3 sm:grid sm:grid-cols-4">
           <Metric label="Selected day" value={day.shortName ?? day.name} />
@@ -101,12 +101,12 @@ export default function WorkoutsPage({
           />
         </div>
         {programState?.lastWorkoutDate && (
-          <p className="mt-3 hidden text-xs font-semibold text-zinc-400 sm:block">
+          <p className="mt-3 hidden text-xs font-semibold text-text-2 sm:block">
             Last program workout: {new Date(programState.lastWorkoutDate).toLocaleString()}
           </p>
         )}
         {todayReadinessEntry && (
-          <p className="mt-3 hidden text-sm font-semibold text-zinc-300 sm:block">
+          <p className="mt-3 hidden text-sm font-semibold text-text-2 sm:block">
             {readinessCopy.summary}
           </p>
         )}
@@ -114,7 +114,7 @@ export default function WorkoutsPage({
           <button
             type="button"
             onClick={() => onOpenWorkoutLog(day.id)}
-            className="focus-ring min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+            className="focus-ring min-h-11 btn btn-primary w-full sm:w-auto"
           >
             Open in Workout Log
           </button>
@@ -123,10 +123,10 @@ export default function WorkoutsPage({
               type="button"
               onClick={() => setShortOnTime((current) => !current)}
               aria-pressed={shortOnTime}
-              className={`focus-ring min-h-11 w-full rounded-[8px] border px-4 text-sm font-black sm:w-auto ${
+              className={`focus-ring min-h-11 w-full rounded-control border px-4 text-sm font-semibold sm:w-auto ${
                 shortOnTime
-                  ? "border-amber-300/70 bg-amber-300/15 text-amber-100"
-                  : "border-zinc-700 bg-[#171717] text-zinc-200 hover:bg-zinc-800"
+                  ? "border-warn/40 bg-warn-tint text-warn"
+                  : "border-line bg-surface-2 text-text-1 hover:bg-surface-3"
               }`}
             >
               {shortOnTime ? "Short on time: ON" : "Short on time?"}
@@ -138,18 +138,18 @@ export default function WorkoutsPage({
       <DeloadCard model={deloadModel} onApply={onApplyDeload} onDismiss={onDismissDeload} onEnd={onEndDeload} />
 
       {shortOnTime && day.type !== "recovery" && (
-        <section className="rounded-[8px] border border-amber-300/40 bg-amber-300/10 p-3 min-[430px]:p-4">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+        <section className="rounded-block bg-warn-tint p-3 min-[430px]:p-4">
+          <p className="label text-warn">
             Short on time mode
           </p>
           {hasPriorityRanking ? (
-            <p className="mt-1 text-sm font-semibold leading-6 text-amber-100">
+            <p className="mt-1 text-sm font-semibold leading-6 text-warn">
               Showing only the essentials. {trimmedExercises.length > 0
                 ? `${trimmedExercises.length} ${trimmedExercises.length === 1 ? "exercise is" : "exercises are"} hidden - skip ${trimmedExercises.length === 1 ? "it" : "them"} guilt-free today, the priority work still moves you forward.`
                 : "Everything on this day is priority work, so nothing was trimmed."}
             </p>
           ) : (
-            <p className="mt-1 text-sm font-semibold leading-6 text-amber-100">
+            <p className="mt-1 text-sm font-semibold leading-6 text-warn">
               This day doesn't rank exercises, so nothing was trimmed. If you must cut, keep the
               first exercises in each section and shorten rests on the rest.
             </p>
@@ -183,11 +183,11 @@ export default function WorkoutsPage({
           </div>
           <section className="space-y-4">
             <div className="hidden sm:block">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+              <p className="label-accent">
                 Selected workout
               </p>
-              <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
-              <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
+              <h2 className="mt-1 text-[22px] font-semibold text-text-1">{day.name}</h2>
+              <p className="mt-1 text-sm font-semibold text-text-2">{day.focus}</p>
             </div>
             <WorkoutWarmupPanel day={day} />
 
@@ -208,15 +208,15 @@ export default function WorkoutsPage({
               if (!sectionExercises.length) {
                 return (
                   <div key={section.id} className="space-y-3">
-                    <div className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-2">
-                      <h3 className="text-sm font-black uppercase tracking-[0.14em] text-lime-300">
+                    <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+                      <h3 className="label-accent">
                         {section.name}
                       </h3>
-                      <span className="text-xs font-bold text-zinc-400">
+                      <span className="text-xs font-semibold text-text-2">
                         skipped today
                       </span>
                     </div>
-                    <p className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-semibold text-zinc-400">
+                    <p className="card-inset text-sm font-medium text-text-2">
                       All {allSectionExercises.length} exercises here are optional when time is tight.
                     </p>
                   </div>
@@ -225,11 +225,11 @@ export default function WorkoutsPage({
 
               return (
                 <div key={section.id} className="space-y-3">
-                  <div className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-2">
-                    <h3 className="text-sm font-black uppercase tracking-[0.14em] text-lime-300">
+                  <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+                    <h3 className="label-accent">
                       {section.name}
                     </h3>
-                    <span className="text-xs font-bold text-zinc-400">
+                    <span className="text-xs font-semibold text-text-2">
                       {sectionExercises.length} exercises
                       {trimmedCount > 0 ? ` (${trimmedCount} skipped)` : ""}
                     </span>
@@ -267,26 +267,26 @@ function WorkoutWarmupPanel({ day }) {
   }
 
   return (
-    <details className="rounded-[8px] border border-zinc-800 bg-zinc-900">
+    <details className="card">
       <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 min-[430px]:px-4">
         <span className="min-w-0">
-          <span className="block text-xs font-black uppercase tracking-[0.16em] text-lime-300">
+          <span className="label-accent">
             {formatTechnicalValue(day.warmup?.title) || "Warm-up & Activation"}
           </span>
-          <span className="mt-1 block text-sm font-semibold text-zinc-400">
+          <span className="mt-1 block text-sm font-semibold text-text-2">
             {warmupItems.length} quick {warmupItems.length === 1 ? "item" : "items"} before training
           </span>
         </span>
-        <ChevronDown aria-hidden="true" size={18} className="shrink-0 text-zinc-400" />
+        <ChevronDown aria-hidden="true" size={18} className="disclosure-chevron text-text-2" />
       </summary>
-      <div className="space-y-2 border-t border-zinc-800 p-3 min-[430px]:p-4">
+      <div className="space-y-2 border-t border-line p-3 min-[430px]:p-4">
         {warmupItems.map((item) => (
-          <div key={item.id} className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+          <div key={item.id} className="card-inset px-3 py-2">
             <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-start min-[430px]:justify-between">
               <div className="min-w-0">
-                <p className="font-black text-white">{item.name || "Warm-up item"}</p>
+                <p className="font-semibold text-text-1">{item.name || "Warm-up item"}</p>
                 {item.prescription && (
-                  <p className="mt-1 text-sm font-black text-lime-100">{item.prescription}</p>
+                  <p className="mt-1 text-sm font-semibold text-accent-soft">{item.prescription}</p>
                 )}
               </div>
               {item.videoUrl && (
@@ -294,14 +294,14 @@ function WorkoutWarmupPanel({ day }) {
                   href={item.videoUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="focus-ring inline-flex min-h-9 w-fit items-center rounded-[8px] text-sm font-black text-sky-300 underline underline-offset-4 hover:text-sky-200"
+                  className="focus-ring btn btn-ghost inline-flex w-fit items-center underline underline-offset-4"
                 >
                   Check Video
                 </a>
               )}
             </div>
             {item.notes && (
-              <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">{item.notes}</p>
+              <p className="mt-2 text-sm font-semibold leading-6 text-text-2">{item.notes}</p>
             )}
           </div>
         ))}
@@ -314,7 +314,7 @@ function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelec
   return (
     <section className="space-y-3">
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+        <p className="label-accent">
           Select day
         </p>
       </div>
@@ -328,32 +328,32 @@ function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelec
               key={day.id}
               type="button"
               onClick={() => onSelectDay(day.id)}
-              className={`focus-ring min-h-20 rounded-[8px] border p-3 text-left transition ${
+              className={`focus-ring min-h-20 p-3 text-left transition ${
                 isSelected
-                  ? "border-lime-300 bg-lime-300/10"
-                  : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+                  ? "card-active"
+                  : "card hover:bg-surface-2"
               }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-black text-white">{day.name}</p>
-                  <p className="mt-1 text-xs font-semibold text-zinc-400">{day.focus}</p>
+                  <p className="text-sm font-semibold text-text-1">{day.name}</p>
+                  <p className="mt-1 text-xs font-semibold text-text-2">{day.focus}</p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   {day.isOptional && (
-                    <span className="rounded-[8px] border border-amber-300/60 bg-amber-300/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-amber-100">
+                    <span className="pill pill-warn">
                       Optional
                     </span>
                   )}
                   {isSelected && (
-                    <span className="rounded-[8px] bg-lime-300 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">
+                    <span className="pill pill-accent">
                       Selected
                     </span>
                   )}
                 </div>
               </div>
               {isNextRecommended && (
-                <p className="mt-2 text-xs font-black uppercase tracking-[0.08em] text-amber-200">
+                <p className="label-accent mb-0 mt-2">
                   Next recommended
                 </p>
               )}
@@ -367,17 +367,17 @@ function WorkoutDaySelector({ days, selectedDayId, nextRecommendedDayId, onSelec
 
 function WorkoutRecoveryView({ day, onOpenWorkoutLog }) {
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <section className="card">
+      <p className="label-accent">
         Recovery day
       </p>
-      <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
-      <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
+      <h2 className="mt-1 text-[22px] font-semibold text-text-1">{day.name}</h2>
+      <p className="mt-1 text-sm font-semibold text-text-2">{day.focus}</p>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {(day.activities ?? []).map((activity) => (
           <div
             key={activity}
-            className="rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-3 text-sm font-bold text-zinc-200"
+            className="card-inset px-3 py-3 text-sm font-semibold text-text-1"
           >
             {activity}
           </div>
@@ -386,7 +386,7 @@ function WorkoutRecoveryView({ day, onOpenWorkoutLog }) {
       <button
         type="button"
         onClick={onOpenWorkoutLog}
-        className="focus-ring mt-4 min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+        className="focus-ring btn btn-primary mt-4 min-h-11"
       >
         Open in Workout Log
       </button>
@@ -417,30 +417,30 @@ function WorkoutExerciseCard({
   const prescriptionText = formatPrescriptionStrip(displayPlan, exercise);
 
   return (
-    <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+    <article className="card p-3 min-[430px]:p-4">
       <div className="min-w-0">
         <div className="hidden flex-wrap gap-2 sm:flex">
-          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+          <span className="pill">
             {exercise.category}
           </span>
-          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+          <span className="pill">
             {exercise.progressionType}
           </span>
           {displayPlan.conservative && (
-            <span className="rounded-[8px] bg-amber-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
+            <span className="pill pill-warn">
               Conservative
             </span>
           )}
         </div>
-        <h3 className="break-words text-xl font-black leading-tight text-white sm:mt-3 sm:text-2xl">
+        <h3 className="break-words text-[17px] font-semibold leading-tight text-text-1 sm:mt-3 sm:text-2xl">
           {exercise.name}
         </h3>
-        <p className="mt-1 hidden text-sm font-semibold text-zinc-400 sm:block">
+        <p className="mt-1 hidden text-sm font-semibold text-text-2 sm:block">
           {exercise.muscleGroup || exercise.equipment}
         </p>
       </div>
 
-      <p className="mt-3 rounded-[8px] border border-lime-300 bg-lime-950/70 px-3 py-2 text-sm font-black text-white shadow-sm shadow-lime-950/40">
+      <p className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold tabular-nums text-text-1">
         {prescriptionText}
       </p>
 
@@ -468,13 +468,13 @@ function WorkoutExerciseCard({
       </div>
 
       {primaryCue && (
-        <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-100">
+        <p className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">
           Main cue: {primaryCue}
         </p>
       )}
 
       {beatLastCue && (
-        <div className="mt-3 hidden rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-semibold text-lime-100 sm:block">
+        <div className="mt-3 hidden rounded-block bg-accent-tint px-3 py-2 text-xs font-semibold text-accent-soft sm:block">
           <p>{beatLastCue.summary}</p>
           <p className="mt-1">{beatLastCue.target}</p>
         </div>
@@ -484,15 +484,15 @@ function WorkoutExerciseCard({
         <button
           type="button"
           onClick={() => setIsInfoOpen((current) => !current)}
-          className="focus-ring flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          className="focus-ring btn btn-secondary flex min-h-11 items-center justify-center gap-2 px-3"
         >
-          <Info aria-hidden="true" size={16} className="text-lime-300" />
+          <Info aria-hidden="true" size={16} className="text-accent-soft" />
           {isInfoOpen ? "Close Details" : "More Info"}
         </button>
         <button
           type="button"
           onClick={onOpenWorkoutLog}
-          className="focus-ring min-h-11 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+          className="focus-ring min-h-11 btn btn-ghost px-3"
         >
           <span className="sm:hidden">Log</span>
           <span className="hidden sm:inline">Open Log</span>
@@ -531,48 +531,49 @@ function CoachRecommendationSummary({ displayPlan, exercise = null }) {
   }
 
   return (
-    <div className="mt-2 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
+    <div className="card-inset mt-2 px-3 py-2">
       {overrideLine && (
-        <p className="mb-2 text-xs font-black text-amber-100" data-testid="coach-override-source">
+        <p className="mb-2 text-xs font-semibold text-warn" data-testid="coach-override-source">
           {overrideLine}
         </p>
       )}
       {deloadLine && (
-        <p className="mb-2 text-xs font-black text-sky-100" data-testid="coach-deload-source">
+        <p className="mb-2 text-xs font-semibold text-accent-soft" data-testid="coach-deload-source">
           {deloadLine}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {decisionLabel && (
-          <span className="rounded-[8px] bg-lime-300/15 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-lime-100">
+          <span className="pill pill-accent">
             {decisionLabel}
           </span>
         )}
         {confidenceLabel && (
-          <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-400">
+          <span className="pill">
             {confidenceLabel}
           </span>
         )}
       </div>
 
       {reason && (
-        <p className="mt-2 text-xs font-semibold leading-5 text-zinc-300">
+        <p className="mt-2 text-xs font-semibold leading-5 text-text-2">
           {reason}
         </p>
       )}
 
+      {/* Decision HV-11: warnings are sentences, so they are rounded blocks, not pills. */}
       {visibleWarnings.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className="mt-2 grid gap-1.5">
           {visibleWarnings.map((warning) => (
-            <span
+            <p
               key={warning}
-              className="rounded-[8px] border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-[11px] font-bold leading-4 text-amber-100/90"
+              className="tone-caution rounded-block px-3 py-1.5 text-xs font-medium leading-5"
             >
               {warning}
-            </span>
+            </p>
           ))}
           {hiddenWarningCount > 0 && (
-            <span className="rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-bold text-zinc-400">
+            <span className="pill justify-self-start">
               +{hiddenWarningCount} more
             </span>
           )}
@@ -588,11 +589,11 @@ function CoachDetailRow({ label, value }) {
   }
 
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-400">
+    <div className="rounded-control bg-surface-1 px-3 py-2">
+      <p className="label">
         {label}
       </p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-200">{value}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-text-1">{value}</p>
     </div>
   );
 }
@@ -635,13 +636,13 @@ function CoachRecommendationDetails({ displayPlan }) {
   }
 
   return (
-    <details className="mt-2 rounded-[8px] border border-zinc-800 bg-[#141414] px-3 py-2">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+    <details className="card-inset mt-2 px-3 py-2">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
         Coach Details
-        <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+        <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron text-text-2" />
       </summary>
 
-      <div className="border-t border-zinc-800 pt-3">
+      <div className="border-t border-line pt-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <CoachDetailRow label="Decision" value={decisionLabel} />
           <CoachDetailRow label="Confidence" value={confidenceLabel} />
@@ -654,7 +655,7 @@ function CoachRecommendationDetails({ displayPlan }) {
         </div>
 
         {displayPlan.sourceLabel && (
-          <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">
+          <p className="label mt-2">
             {displayPlan.sourceLabel}
             {displayPlan.sourceDetail &&
             (displayPlan.source === "progression" || displayPlan.source === "plan")
@@ -664,20 +665,17 @@ function CoachRecommendationDetails({ displayPlan }) {
         )}
 
         {warnings.length > 0 && (
-          <div className="mt-2 rounded-[8px] border border-amber-300/20 bg-amber-300/10 px-3 py-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-100/70">
+          <div className="mt-2 rounded-block bg-warn-tint px-3 py-2">
+            <p className="label text-warn">
               Warnings
             </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <ul className="mt-1 grid list-disc gap-1 pl-4 text-xs font-medium leading-5 text-warn">
               {warnings.map((warning) => (
-                <span
-                  key={warning}
-                  className="rounded-[8px] border border-amber-300/20 bg-[#111111] px-2 py-1 text-[11px] font-bold leading-4 text-amber-100/90"
-                >
+                <li key={warning}>
                   {warning}
-                </span>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         )}
       </div>
@@ -691,12 +689,12 @@ function TrainingGuidance({ savedEntry, readiness }) {
   return (
     <section
       data-testid="training-guidance"
-      className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4"
+      className="card"
     >
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <p className="label-accent">
         Today's Training Guidance
       </p>
-      <p className="mt-2 text-sm font-bold text-zinc-100">
+      <p className="mt-2 text-sm font-semibold text-text-1">
         {savedEntry
           ? copy.guidance
           : "No saved readiness yet. Use the planned work, let RPE guide the session, and add a check-in when you can for sharper coaching."}

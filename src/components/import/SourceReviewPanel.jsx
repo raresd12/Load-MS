@@ -41,14 +41,14 @@ export default function SourceReviewPanel({ source }) {
     <section
       aria-label="Source"
       data-testid="source-review-panel"
-      className="rounded-[8px] border border-zinc-700 bg-[#111111] p-3"
+      className="card-inset"
     >
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-300">
+      <p className="label">
         Source - kept in this tab only
       </p>
 
       {!source && (
-        <p className="mt-2 text-sm font-bold leading-6 text-zinc-400">
+        <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
           The source is no longer in memory (the page was left or reloaded). The draft is still here; choose the
           source again and press Extract to compare them side by side.
         </p>
@@ -56,13 +56,13 @@ export default function SourceReviewPanel({ source }) {
 
       {source?.kind === "text" && (
         <>
-          <p className="mt-1 break-words text-sm font-black text-white">{source.title}</p>
-          {source.note ? <p className="text-xs font-bold text-zinc-400">{source.note}</p> : null}
+          <p className="mt-1 break-words text-sm font-semibold text-text-1">{source.title}</p>
+          {source.note ? <p className="text-xs font-semibold text-text-2">{source.note}</p> : null}
           <div className="relative mt-2">
             <Search
               aria-hidden="true"
               size={14}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-2"
             />
             <input
               type="search"
@@ -71,22 +71,22 @@ export default function SourceReviewPanel({ source }) {
               placeholder="Search the sent text"
               aria-label="Search the sent text"
               autoComplete="off"
-              className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-zinc-950 pl-9 pr-3 text-sm font-bold text-white placeholder:text-zinc-600"
+              className="focus-ring min-h-11 field w-full pl-9 pr-3"
             />
           </div>
           {query.trim() ? (
-            <p role="status" className="mt-1 text-xs font-bold text-zinc-400">
+            <p role="status" className="mt-1 text-xs font-semibold text-text-2">
               {matches.count} {matches.count === 1 ? "match" : "matches"}
             </p>
           ) : null}
           <pre
             tabIndex={0}
             aria-label="Text that was sent"
-            className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 lg:max-h-[70vh]"
+            className="card-inset mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-text-1 lg:max-h-[70vh]"
           >
             {matches.segments.map((segment, index) =>
               segment.match ? (
-                <mark key={index} className="rounded-[2px] bg-lime-300 text-zinc-950">
+                <mark key={index} className="bg-accent text-accent-fg">
                   {segment.text}
                 </mark>
               ) : (
@@ -99,7 +99,7 @@ export default function SourceReviewPanel({ source }) {
 
       {source?.kind === "images" && (
         <>
-          <p className="mt-1 text-xs font-bold text-zinc-400">
+          <p className="mt-1 text-xs font-semibold text-text-2">
             {images.length} {images.length === 1 ? "photo" : "photos"} sent in this order. Tap one to enlarge it.
           </p>
           <ul className="mt-2 grid grid-cols-2 gap-2 min-[430px]:grid-cols-3">
@@ -109,14 +109,14 @@ export default function SourceReviewPanel({ source }) {
                   type="button"
                   onClick={() => setEnlargedIndex(index)}
                   aria-label={`Enlarge page ${index + 1}: ${image.name}`}
-                  className="focus-ring block w-full overflow-hidden rounded-[8px] border border-zinc-700 bg-zinc-950 text-left hover:border-lime-300/60"
+                  className="focus-ring block w-full overflow-hidden rounded-control border border-line bg-bg text-left hover:border-line-accent"
                 >
                   <img src={image.url} alt="" className="h-28 w-full object-cover" />
                   <span className="block px-2 py-1">
-                    <span className="block text-[11px] font-black uppercase tracking-[0.12em] text-lime-300">
+                    <span className="label-accent">
                       Page {index + 1}
                     </span>
-                    <span className="block truncate text-xs font-bold text-zinc-300">{image.name}</span>
+                    <span className="block truncate text-xs font-semibold text-text-2">{image.name}</span>
                   </span>
                 </button>
               </li>
@@ -127,16 +127,16 @@ export default function SourceReviewPanel({ source }) {
 
       {source?.kind === "pdf" && (
         <>
-          <p className="mt-1 break-all text-sm font-black text-white">
-            {source.name} <span className="font-bold text-zinc-400">({formatFileSize(source.sizeBytes)})</span>
+          <p className="mt-1 break-all text-sm font-semibold text-text-1">
+            {source.name} <span className="font-semibold text-text-2">({formatFileSize(source.sizeBytes)})</span>
           </p>
           <object
             data={source.url}
             type="application/pdf"
             aria-label={`PDF source: ${source.name}`}
-            className="mt-2 h-96 w-full rounded-[8px] border border-zinc-800 bg-zinc-950 lg:h-[70vh]"
+            className="card-inset mt-2 h-96 w-full lg:h-[70vh]"
           >
-            <p className="p-3 text-sm font-bold leading-6 text-zinc-300">
+            <p className="p-3 text-sm font-semibold leading-6 text-text-2">
               This browser cannot show the PDF inside the page. Open {source.name} in your PDF viewer to compare
               it with the extraction.
             </p>
@@ -149,17 +149,17 @@ export default function SourceReviewPanel({ source }) {
           role="dialog"
           aria-modal="true"
           aria-label={`Page ${enlargedIndex + 1}: ${enlarged.name}`}
-          className="fixed inset-0 z-50 flex flex-col bg-black/95 p-3"
+          className="fixed inset-0 z-50 flex flex-col bg-bg/95 p-3"
           onClick={() => setEnlargedIndex(-1)}
         >
           <div className="flex items-center justify-between gap-3">
-            <p className="min-w-0 truncate text-sm font-black text-white">
+            <p className="min-w-0 truncate text-sm font-semibold text-text-1">
               Page {enlargedIndex + 1} of {images.length} - {enlarged.name}
             </p>
             <button
               type="button"
               onClick={() => setEnlargedIndex(-1)}
-              className="focus-ring inline-flex min-h-11 shrink-0 items-center gap-1 rounded-[8px] border border-zinc-600 px-3 text-sm font-black text-white hover:bg-zinc-800"
+              className="focus-ring btn btn-secondary inline-flex min-h-11 shrink-0 items-center gap-1 px-3"
             >
               <X aria-hidden="true" size={16} />
               Close
@@ -174,7 +174,7 @@ export default function SourceReviewPanel({ source }) {
                 type="button"
                 disabled={enlargedIndex === 0}
                 onClick={() => setEnlargedIndex((index) => Math.max(0, index - 1))}
-                className="focus-ring min-h-11 rounded-[8px] border border-zinc-600 px-4 text-sm font-black text-white hover:bg-zinc-800 disabled:opacity-40"
+                className="focus-ring min-h-11 btn btn-secondary"
               >
                 Previous page
               </button>
@@ -182,7 +182,7 @@ export default function SourceReviewPanel({ source }) {
                 type="button"
                 disabled={enlargedIndex === images.length - 1}
                 onClick={() => setEnlargedIndex((index) => Math.min(images.length - 1, index + 1))}
-                className="focus-ring min-h-11 rounded-[8px] border border-zinc-600 px-4 text-sm font-black text-white hover:bg-zinc-800 disabled:opacity-40"
+                className="focus-ring min-h-11 btn btn-secondary"
               >
                 Next page
               </button>

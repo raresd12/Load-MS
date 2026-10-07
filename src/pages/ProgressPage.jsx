@@ -30,12 +30,12 @@ function WeeklyReviewDelta({ label, value, previousValue, formatter }) {
   const detail = hasComparison ? `Last week: ${formatter(previousValue)}` : "No data last week";
 
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">{label}</p>
-      <p className="mt-1 break-words text-lg font-black text-white">
+    <div className="card-inset">
+      <p className="label">{label}</p>
+      <p className="mt-1 break-words text-lg font-semibold text-text-1">
         {Number.isFinite(value) && value > 0 ? formatter(value) : value === 0 ? formatter(0) : "--"}
       </p>
-      <p className="mt-1 text-xs font-semibold text-zinc-400">{detail}</p>
+      <p className="mt-1 text-xs font-semibold text-text-2">{detail}</p>
     </div>
   );
 }
@@ -51,11 +51,11 @@ function WeeklyReviewSection({ sessionSummaries, setRecords, sessions, records, 
   );
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <section className="card p-3 min-[430px]:p-4">
+      <p className="label-accent">
         Weekly review
       </p>
-      <h3 className="mt-1 text-xl font-black text-white">Last 7 days vs the week before</h3>
+      <h3 className="mt-1 text-[17px] font-semibold text-text-1">Last 7 days vs the week before</h3>
 
       <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <WeeklyReviewDelta
@@ -88,7 +88,7 @@ function WeeklyReviewSection({ sessionSummaries, setRecords, sessions, records, 
         {review.notes.map((note) => (
           <p
             key={note}
-            className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-semibold leading-6 text-zinc-200"
+            className="card-inset px-3 py-2 text-sm font-semibold leading-6 text-text-1"
           >
             {note}
           </p>
@@ -163,20 +163,21 @@ export default function ProgressPage({
     ? buildSelectedExerciseAnalytics(selectedExercise, analytics.setRecords)
     : null;
 
+  // Decisions HV-1 / HV-11: numbers are tabular; the page root sets it once.
   return (
-    <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <div className="space-y-5 tabular-nums">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           Progress Analytics
         </p>
         <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-2xl font-black text-white">Progress</h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+            <h2 className="text-[22px] font-semibold text-text-1">Progress</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
               Local training trends from saved workouts and readiness check-ins.
             </p>
           </div>
-          <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-black text-zinc-200">
+          <span className="card-inset px-3 py-2 text-sm font-semibold text-text-1">
             {activeProgram?.nickname || activeProgram?.name || "No active program"}
           </span>
         </div>
@@ -191,7 +192,7 @@ export default function ProgressPage({
       />
 
       {deloadEvaluation && !deloadEvaluation.suggest && !deloadEvaluation.active && (
-        <p className="text-xs font-semibold leading-5 text-zinc-400" data-testid="deload-sample-line">
+        <p className="text-xs font-semibold leading-5 text-text-2" data-testid="deload-sample-line">
           {deloadEvaluation.eligible
             ? deloadEvaluation.reasons.join(" ")
             : formatDeloadSampleLine(deloadEvaluation)}
@@ -251,15 +252,15 @@ export default function ProgressPage({
 
       <ReadinessPerformanceSection analysis={analytics.readinessPerformance} />
 
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+      <section className="card p-3 min-[430px]:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+            <p className="label-accent">
               Exercise progress
             </p>
-            <h3 className="mt-1 text-xl font-black text-white">Select an exercise</h3>
+            <h3 className="mt-1 text-[17px] font-semibold text-text-1">Select an exercise</h3>
           </div>
-          <span className="rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+          <span className="pill">
             {analytics.loggedExerciseCount} logged
           </span>
         </div>
@@ -267,13 +268,13 @@ export default function ProgressPage({
         {analytics.exerciseOptions.length ? (
           <>
             <label className="mt-4 block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+              <span className="label mb-2">
                 Exercise
               </span>
               <select
                 value={selectedExerciseKey}
                 onChange={(event) => setSelectedExerciseKey(event.target.value)}
-                className="focus-ring min-h-12 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-black text-white"
+                className="focus-ring min-h-12 field w-full"
               >
                 {analytics.exerciseOptions.map((option) => (
                   <option key={option.key} value={option.key}>
@@ -308,20 +309,20 @@ export default function ProgressPage({
  */
 function RecordsSection({ sections }) {
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4" data-testid="records-section">
+    <section className="card p-3 min-[430px]:p-4" data-testid="records-section">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">Records</p>
-          <h3 className="mt-1 text-xl font-black text-white">Best per exercise</h3>
+          <p className="label-accent">Records</p>
+          <h3 className="mt-1 text-[17px] font-semibold text-text-1">Best per exercise</h3>
         </div>
         <details className="relative">
           <summary
             aria-label="How records are counted"
-            className="focus-ring flex min-h-9 min-w-9 cursor-pointer list-none items-center justify-center rounded-[8px] border border-zinc-700 text-sm font-black text-zinc-200"
+            className="focus-ring btn btn-secondary flex min-w-11 cursor-pointer list-none items-center justify-center"
           >
             ?
           </summary>
-          <p className="absolute right-0 z-20 mt-2 w-72 rounded-[8px] border border-zinc-700 bg-[#111111] p-3 text-xs font-semibold leading-5 text-zinc-300 shadow-xl shadow-black/40">
+          <p className="card-inset absolute right-0 z-20 mt-2 w-72 border border-line bg-surface-3 text-xs font-semibold leading-5 text-text-2">
             {RECORD_ELIGIBILITY_RULE}
           </p>
         </details>
@@ -331,30 +332,30 @@ function RecordsSection({ sections }) {
         <div className="mt-3 space-y-3">
           {sections.map((group) => (
             <div key={group.programId ?? "unknown"}>
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+              <p className="label">
                 {group.programName}
                 {group.isActive ? " | active" : ""}
               </p>
               <div className="mt-2 grid gap-2 md:grid-cols-2">
                 {group.entries.map((entry) => (
-                  <article key={entry.key} className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-                    <p className="break-words text-sm font-black text-white">{entry.name}</p>
+                  <article key={entry.key} className="card-inset">
+                    <p className="break-words text-sm font-semibold text-text-1">{entry.name}</p>
                     <ul className="mt-2 space-y-1">
                       {entry.lines.map((line, index) => (
-                        <li key={`${line.type}-${index}`} className="flex items-baseline justify-between gap-2 text-xs font-semibold text-zinc-200">
+                        <li key={`${line.type}-${index}`} className="flex items-baseline justify-between gap-2 text-xs font-semibold text-text-1">
                           <span>
-                            <span className="text-zinc-400">{line.label}: </span>
+                            <span className="text-text-2">{line.label}: </span>
                             {line.value}
                           </span>
-                          <span className="shrink-0 text-[11px] text-zinc-400">{line.date}</span>
+                          <span className="shrink-0 text-[11px] text-text-2">{line.date}</span>
                         </li>
                       ))}
                     </ul>
                     {entry.acrossPrograms && (
-                      <p className="mt-2 text-[11px] font-semibold leading-4 text-zinc-400">{entry.acrossPrograms}</p>
+                      <p className="mt-2 text-[11px] font-semibold leading-4 text-text-2">{entry.acrossPrograms}</p>
                     )}
                     {entry.ineligibleCount > 0 && (
-                      <p className="mt-1 text-[11px] font-semibold leading-4 text-zinc-400">
+                      <p className="mt-1 text-[11px] font-semibold leading-4 text-text-2">
                         {entry.ineligibleCount} {entry.ineligibleCount === 1 ? "set" : "sets"} not counted for e1RM (see ?).
                       </p>
                     )}
@@ -390,7 +391,7 @@ function ExerciseProgressPanel({ exercise, stats }) {
           body="It can still appear here from the active program. Log sets to unlock trends."
         />
         {exercise.prescription && (
-          <p className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-black text-zinc-200">
+          <p className="card-inset mt-3 px-3 py-2 text-sm font-semibold text-text-1">
             Current target: {exercise.prescription}
           </p>
         )}
@@ -444,15 +445,15 @@ function ExerciseProgressPanel({ exercise, stats }) {
         />
       </div>
 
-      <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <div className="card-inset">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm font-black text-white">{exercise.name}</p>
-            <p className="mt-1 text-xs font-semibold text-zinc-400">
+            <p className="text-sm font-semibold text-text-1">{exercise.name}</p>
+            <p className="mt-1 text-xs font-semibold text-text-2">
               {exercise.programName ?? "Logged exercise"} {exercise.dayName ? `| ${exercise.dayName}` : ""}
             </p>
           </div>
-          <span className="rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+          <span className="pill">
             {stats.completedSets.length} sets
           </span>
         </div>
@@ -471,7 +472,7 @@ function ExerciseProgressPanel({ exercise, stats }) {
               ))}
           </div>
         ) : (
-          <p className="mt-3 text-sm font-semibold text-zinc-400">
+          <p className="mt-3 text-sm font-semibold text-text-2">
             No recent session trend available yet.
           </p>
         )}
@@ -485,24 +486,24 @@ function ExerciseDetailCard({ exercise, stats }) {
   const latestSession = stats.latestSession;
 
   return (
-    <article className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3 min-[430px]:p-4">
+    <article className="card-inset min-[430px]:p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-lime-300">
+          <p className="label-accent">
             Exercise Detail
           </p>
-          <h4 className="mt-1 break-words text-xl font-black text-white">{exercise.name}</h4>
-          <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+          <h4 className="mt-1 break-words text-[17px] font-semibold text-text-1">{exercise.name}</h4>
+          <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
             {exercise.programName ?? "Logged exercise"}
             {exercise.dayName ? ` | ${exercise.dayName}` : ""}
           </p>
         </div>
-        <span className={`w-fit rounded-[8px] px-2.5 py-1 text-xs font-black uppercase tracking-[0.08em] ${trend.toneClass}`}>
+        <span className={`pill w-fit ${trend.toneClass}`}>
           {trend.label}
         </span>
       </div>
 
-      <p className="mt-3 text-sm font-semibold leading-6 text-zinc-300">{trend.body}</p>
+      <p className="mt-3 text-sm font-semibold leading-6 text-text-2">{trend.body}</p>
 
       <div className="mt-3 grid gap-2 min-[430px]:grid-cols-2 xl:grid-cols-4">
         <ExerciseDetailMetric
@@ -532,39 +533,39 @@ function ExerciseDetailCard({ exercise, stats }) {
 
 function ExerciseDetailMetric({ label, value, detail }) {
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-400">{label}</p>
-      <p className="mt-1 break-words text-sm font-black text-white">{value}</p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">{detail}</p>
+    <div className="rounded-control bg-surface-1 px-3 py-2">
+      <p className="label">{label}</p>
+      <p className="mt-1 break-words text-sm font-semibold text-text-1">{value}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-text-2">{detail}</p>
     </div>
   );
 }
 
 function ProgressStatCard({ label, value, detail }) {
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">
+    <div className="card-inset">
+      <p className="label">
         {label}
       </p>
-      <p className="mt-1 break-words text-lg font-black text-white">{value}</p>
-      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">{detail}</p>
+      <p className="mt-1 break-words text-lg font-semibold text-text-1">{value}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-text-2">{detail}</p>
     </div>
   );
 }
 
 function ProgressInsightCard({ insight }) {
   return (
-    <article className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+    <article className="card-inset">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">
+        <p className="label">
           {insight.title}
         </p>
-        <span className={`rounded-[8px] px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${insight.toneClass}`}>
+        <span className={`pill ${insight.toneClass}`}>
           {insight.status}
         </span>
       </div>
-      <p className="mt-2 text-lg font-black text-white">{insight.value}</p>
-      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">{insight.body}</p>
+      <p className="mt-2 text-lg font-semibold text-text-1">{insight.value}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-text-2">{insight.body}</p>
     </article>
   );
 }
@@ -575,18 +576,18 @@ function ReadinessPerformanceSection({ analysis }) {
   }
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+    <section className="card p-3 min-[430px]:p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          <p className="label-accent">
             Readiness vs Performance
           </p>
-          <h3 className="mt-1 text-xl font-black text-white">Recovery signal check</h3>
-          <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+          <h3 className="mt-1 text-[17px] font-semibold text-text-1">Recovery signal check</h3>
+          <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
             Conservative read on readiness, session RPE, and logged work. No causation claims.
           </p>
         </div>
-        <span className="w-fit rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-xs font-black uppercase tracking-[0.08em] text-zinc-300">
+        <span className="pill w-fit">
           {analysis.linkedSessionCount} linked sessions
         </span>
       </div>
@@ -615,8 +616,8 @@ function ReadinessPerformanceSection({ analysis }) {
       </div>
 
       <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">
+        <div className="card-inset">
+          <p className="label">
             Readiness distribution
           </p>
           <div className="mt-3 grid grid-cols-3 gap-2">
@@ -629,14 +630,14 @@ function ReadinessPerformanceSection({ analysis }) {
             ))}
           </div>
           {analysis.statusCounts.missing > 0 && (
-            <p className="mt-3 text-xs font-semibold leading-5 text-zinc-400">
+            <p className="mt-3 text-xs font-semibold leading-5 text-text-2">
               {analysis.statusCounts.missing} saved sessions have no readiness snapshot.
             </p>
           )}
         </div>
 
-        <div className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-zinc-400">
+        <div className="card-inset">
+          <p className="label">
             Avg session RPE by readiness
           </p>
           <div className="mt-3 space-y-2">
@@ -651,7 +652,7 @@ function ReadinessPerformanceSection({ analysis }) {
         </div>
       </div>
 
-      <p className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-sm font-semibold leading-6 text-zinc-300">
+      <p className="card-inset mt-3 px-3 py-2 text-sm font-semibold leading-6 text-text-2">
         {analysis.performanceNote}
       </p>
     </section>
@@ -662,9 +663,9 @@ function ReadinessStatusCount({ status, count }) {
   const copy = getReadinessCopy({ status });
 
   return (
-    <div className={`rounded-[8px] px-3 py-2 text-center ${readinessStyles[status] ?? readinessStyles.yellow}`}>
-      <p className="text-xl font-black">{count}</p>
-      <p className="mt-1 text-[10px] font-black uppercase tracking-[0.1em]">{copy.label}</p>
+    <div className={`rounded-control px-3 py-2 text-center ${readinessStyles[status] ?? readinessStyles.yellow}`}>
+      <p className="text-xl font-semibold">{count}</p>
+      <p className="label text-current mt-1">{copy.label}</p>
     </div>
   );
 }
@@ -678,17 +679,17 @@ function ReadinessRpeRow({ status, entry }) {
     : 0;
 
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+    <div className="rounded-control bg-surface-1 px-3 py-2">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-black text-white">{copy.label}</p>
-        <p className="text-xs font-bold text-zinc-400">
+        <p className="text-sm font-semibold text-text-1">{copy.label}</p>
+        <p className="text-xs font-semibold text-text-2">
           {averageRpe} | {count} {count === 1 ? "session" : "sessions"}
         </p>
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+      <div className="bar mt-2">
         <div
-          className={`h-full rounded-full ${
-            status === "green" ? "bg-lime-300" : status === "red" ? "bg-red-300" : "bg-amber-300"
+          className={`bar-fill ${
+            status === "green" ? "bg-good" : status === "red" ? "bg-bad" : "bg-warn"
           }`}
           style={{ width: `${width}%` }}
         />
@@ -702,31 +703,31 @@ function ExerciseTrendRow({ entry, maxValue }) {
   const width = maxValue > 0 ? Math.max(8, Math.min(100, (value / maxValue) * 100)) : 0;
 
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+    <div className="card-inset py-2">
       <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-start min-[430px]:justify-between">
-        <p className="text-sm font-black text-white">{formatProgressDate(entry.date)}</p>
-        <p className="text-xs font-semibold leading-5 text-zinc-400 min-[430px]:text-right">
+        <p className="text-sm font-semibold text-text-1">{formatProgressDate(entry.date)}</p>
+        <p className="text-xs font-semibold leading-5 text-text-2 min-[430px]:text-right">
           Total {entry.totalReps} reps | Avg RPE {formatAverage(entry.averageRpe)}
         </p>
       </div>
-      <p className="mt-2 text-xs font-semibold leading-5 text-zinc-300">{entry.setSummary}</p>
+      <p className="mt-2 text-xs font-semibold leading-5 text-text-2">{entry.setSummary}</p>
       <div className="mt-2 flex flex-wrap gap-1.5">
-        <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-2 py-1 text-[11px] font-black text-zinc-300">
+        <span className="pill">
           Best: {formatBestWeightReps(entry.bestSet)}
         </span>
         {entry.totalVolume > 0 && (
-          <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-2 py-1 text-[11px] font-black text-zinc-300">
+          <span className="pill">
             Volume {formatVolume(entry.totalVolume)}
           </span>
         )}
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+      <div className="bar mt-2">
         <div
-          className="h-full rounded-full bg-lime-300"
+          className="bar-fill"
           style={{ width: `${width}%` }}
         />
       </div>
-      <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.1em] text-zinc-400">
+      <p className="label mt-1">
         {entry.bestEstimatedStrength
           ? `Best e1RM ${formatKg(entry.bestEstimatedStrength)}`
           : entry.totalVolume
@@ -741,8 +742,8 @@ function RecentWorkoutTrend({ sessions }) {
   const recentSessions = sessions.slice(0, 5);
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <section className="card p-3 min-[430px]:p-4">
+      <p className="label-accent">
         Recent workouts
       </p>
       {recentSessions.length ? (
@@ -750,17 +751,17 @@ function RecentWorkoutTrend({ sessions }) {
           {recentSessions.map((session) => (
             <div
               key={session.id ?? `${session.date}-${session.dayName}`}
-              className="flex items-center justify-between gap-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2"
+              className="card-inset flex items-center justify-between gap-3 px-3 py-2"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-black text-white">
+                <p className="truncate text-sm font-semibold text-text-1">
                   {session.dayName ?? "Workout"}
                 </p>
-                <p className="text-xs font-semibold text-zinc-400">
+                <p className="text-xs font-semibold text-text-2">
                   {formatProgressDate(session.date)}
                 </p>
               </div>
-              <span className="shrink-0 rounded-[8px] bg-zinc-800 px-2.5 py-1 text-xs font-black text-zinc-300">
+              <span className="shrink-0 rounded-control bg-surface-3 px-2.5 py-1 text-xs font-semibold text-text-2">
                 RPE {formatAverage(numberValue(session.sessionRpe, null))}
               </span>
             </div>
@@ -780,8 +781,8 @@ function ReadinessTrend({ entries }) {
   const recentEntries = entries.slice(0, 7);
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <section className="card p-3 min-[430px]:p-4">
+      <p className="label-accent">
         Readiness trend
       </p>
       {recentEntries.length ? (
@@ -793,22 +794,22 @@ function ReadinessTrend({ entries }) {
             return (
               <div
                 key={entry.sessionId ? `${entry.date}:${entry.sessionId}` : entry.date}
-                className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2"
+                className="card-inset px-3 py-2"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-black text-white">{formatDateKey(entry.date)}</p>
-                  <p className="text-xs font-black text-zinc-300">
+                  <p className="text-sm font-semibold text-text-1">{formatDateKey(entry.date)}</p>
+                  <p className="text-xs font-semibold text-text-2">
                     {copy.label} {entry.readiness.averageScore.toFixed(1)}
                   </p>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+                <div className="bar mt-2">
                   <div
-                    className={`h-full rounded-full ${
+                    className={`bar-fill ${
                       entry.readiness.status === "green"
-                        ? "bg-lime-300"
+                        ? "bg-good"
                         : entry.readiness.status === "red"
-                          ? "bg-red-300"
-                          : "bg-amber-300"
+                          ? "bg-bad"
+                          : "bg-warn"
                     }`}
                     style={{ width: `${width}%` }}
                   />

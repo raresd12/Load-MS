@@ -13,9 +13,9 @@ import TechniqueDraftReview, { TechniqueDraftBadge, TechniqueRows } from "./Tech
 import { useTechniqueDrafts } from "./useTechniqueDrafts.js";
 
 const notesButtonClassName =
-  "focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] border px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-50";
+  "focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-control border px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50";
 const notesFieldClassName =
-  "focus-ring w-full resize-y rounded-[8px] border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm font-bold text-white placeholder:text-zinc-600";
+  "focus-ring field w-full resize-y py-2";
 
 /**
  * Technique notes of ONE new exercise in the Studio exercise editor
@@ -73,13 +73,13 @@ export default function TechniqueNotesSection({ exercise, onChangeEntry, onAccep
   return (
     <section
       data-testid="technique-notes-section"
-      className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3"
+      className="card-inset"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Technique notes</p>
+        <p className="label-accent">Technique notes</p>
         {isAiTechniqueEntry(entry) ? <TechniqueDraftBadge /> : null}
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+      <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
         How the exercise is performed. Saved with this new exercise when the program is saved; no sets, kg or
         rest here.
       </p>
@@ -90,14 +90,14 @@ export default function TechniqueNotesSection({ exercise, onChangeEntry, onAccep
             <TechniqueRows entry={entry} />
           </div>
         ) : (
-          <p className="mt-2 text-sm font-semibold text-zinc-400">No technique notes yet.</p>
+          <p className="mt-2 text-sm font-semibold text-text-2">No technique notes yet.</p>
         )
       ) : (
         <div className="mt-3 space-y-3">
           <div>
             <label
               htmlFor={`technique-mainCue-${exercise.id}`}
-              className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400"
+              className="label"
             >
               Main Cue (one short sentence)
             </label>
@@ -113,7 +113,7 @@ export default function TechniqueNotesSection({ exercise, onChangeEntry, onAccep
             <div key={field}>
               <label
                 htmlFor={`technique-${field}-${exercise.id}`}
-                className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400"
+                className="label"
               >
                 {label} (one bullet per line)
               </label>
@@ -134,7 +134,7 @@ export default function TechniqueNotesSection({ exercise, onChangeEntry, onAccep
           type="button"
           onClick={toggleEditing}
           aria-pressed={isEditing}
-          className={`${notesButtonClassName} border-zinc-700 text-zinc-100 hover:bg-zinc-800`}
+          className={`${notesButtonClassName} border-line text-text-1 hover:bg-surface-3`}
         >
           <Pencil aria-hidden="true" size={15} />
           {isEditing ? "Done editing notes" : "Edit notes"}
@@ -156,13 +156,13 @@ export default function TechniqueNotesSection({ exercise, onChangeEntry, onAccep
               detectLibraryLanguage(getLibraryCatalog()),
             )
           }
-          className={`${notesButtonClassName} border-lime-300/60 text-lime-200 hover:bg-lime-300/10`}
+          className={`${notesButtonClassName} border-line-accent text-accent-soft hover:bg-accent-tint`}
         >
           <Sparkles aria-hidden="true" size={15} />
           Draft technique notes with AI
         </button>
       </div>
-      <p className="mt-2 text-xs font-bold leading-5 text-zinc-400">
+      <p className="mt-2 text-xs font-semibold leading-5 text-text-2">
         {hasKey
           ? "The exercise name, equipment and muscles are sent to Google when you ask for a draft. Nothing is applied until you accept it."
           : "AI drafts need your Gemini API key: save it in the AI Program Import Assistant on the Program page."}

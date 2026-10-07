@@ -29,15 +29,15 @@ const PICKER_MODES = [
 
 const MIB = 1024 * 1024;
 const pickButtonClassName =
-  "focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-dashed border-zinc-600 px-4 text-sm font-black text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50";
+  "focus-ring btn btn-secondary flex min-h-11 w-full items-center justify-center gap-2 border-dashed";
 const photoButtonClassName =
-  "focus-ring inline-flex min-h-10 min-w-10 items-center justify-center gap-1 rounded-[8px] border border-zinc-700 px-2 text-xs font-black text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40";
+  "focus-ring btn btn-secondary inline-flex min-w-11 items-center justify-center gap-1 px-2 text-xs";
 
 function PickerAlert({ children }) {
   return (
     <p
       role="alert"
-      className="mt-2 break-words rounded-[8px] border border-amber-400/50 bg-amber-400/10 px-3 py-2 text-sm font-bold text-amber-100"
+      className="mt-2 break-words rounded-block bg-warn-tint px-3 py-2 text-sm font-semibold text-warn"
     >
       {children}
     </p>
@@ -83,7 +83,7 @@ export default function SourcePicker({
       <div
         role="tablist"
         aria-label="Program source"
-        className="mt-4 grid grid-cols-3 gap-1 rounded-[8px] border border-zinc-700 bg-[#111111] p-1"
+        className="card-inset mt-4 grid grid-cols-3 gap-1 p-1"
       >
         {PICKER_MODES.map((entry) => {
           const Icon = entry.icon;
@@ -97,8 +97,8 @@ export default function SourcePicker({
               aria-selected={isActive}
               data-source-mode={entry.id}
               onClick={() => onModeChange(entry.id)}
-              className={`focus-ring flex min-h-11 flex-col items-center justify-center gap-1 rounded-[6px] px-1 py-1.5 text-[11px] font-black leading-tight min-[430px]:flex-row min-[430px]:gap-1.5 min-[430px]:text-xs ${
-                isActive ? "bg-lime-300 text-zinc-950" : "text-zinc-400 hover:text-white"
+              className={`focus-ring flex min-h-11 flex-col items-center justify-center gap-1 rounded-control px-1 py-1.5 text-[11px] font-semibold leading-tight min-[430px]:flex-row min-[430px]:gap-1.5 min-[430px]:text-xs ${
+                isActive ? "bg-accent text-accent-fg" : "text-text-2 hover:text-text-1"
               }`}
             >
               <Icon aria-hidden="true" size={14} className="shrink-0" />
@@ -113,7 +113,7 @@ export default function SourcePicker({
           <>
             <label
               htmlFor="ai-source-text"
-              className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400"
+              className="label"
             >
               Program text from your source
             </label>
@@ -123,9 +123,9 @@ export default function SourcePicker({
               onChange={(event) => onTextChange(event.target.value)}
               maxLength={maxTextChars}
               placeholder={"Day 1 - Upper\nBench Press 4x6-8 RPE 8, rest 3 min\nRow 4x8-10\n..."}
-              className="focus-ring mt-1 min-h-40 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm font-bold text-white placeholder:text-zinc-600"
+              className="focus-ring field mt-1 min-h-40 w-full resize-y py-3"
             />
-            <p className="mt-1 text-xs font-bold text-zinc-400">
+            <p className="mt-1 text-xs font-semibold text-text-2">
               {String(text ?? "").length.toLocaleString("en-US")} of {maxTextChars.toLocaleString("en-US")} characters
             </p>
           </>
@@ -156,7 +156,7 @@ export default function SourcePicker({
               <ImageIcon aria-hidden="true" size={16} />
               {photos.length ? "Add photos" : "Choose photos (JPG, PNG, WebP)"}
             </button>
-            <p className="mt-2 text-xs leading-5 text-zinc-400">
+            <p className="mt-2 text-xs leading-5 text-text-2">
               Up to {SOURCE_LIMITS.MAX_IMAGES_PER_SOURCE} photos of the same program, each up to{" "}
               {Math.round(SOURCE_LIMITS.MAX_IMAGE_FILE_BYTES / MIB)} MB. They are sent as pages in the order
               shown here.
@@ -168,19 +168,19 @@ export default function SourcePicker({
                   {photos.map((photo, index) => (
                     <li
                       key={photo.id}
-                      className="flex items-center gap-3 rounded-[8px] border border-zinc-700 bg-[#111111] p-2"
+                      className="flex items-center gap-3 card-inset p-2"
                     >
                       <img
                         src={photo.url}
                         alt={`Page ${index + 1}: ${photo.name}`}
-                        className="h-16 w-16 shrink-0 rounded-[6px] border border-zinc-800 bg-zinc-950 object-cover"
+                        className="h-16 w-16 shrink-0 rounded-control border border-line bg-bg object-cover"
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-black uppercase tracking-[0.12em] text-lime-300">
+                        <p className="label-accent">
                           Page {index + 1} of {photos.length}
                         </p>
-                        <p className="break-all text-sm font-bold text-white">{photo.name}</p>
-                        <p className="text-xs font-bold text-zinc-400">{formatFileSize(photo.sizeBytes)}</p>
+                        <p className="break-all text-sm font-semibold text-text-1">{photo.name}</p>
+                        <p className="text-xs font-semibold text-text-2">{formatFileSize(photo.sizeBytes)}</p>
                         <div className="mt-1 flex flex-wrap gap-1.5">
                           <button
                             type="button"
@@ -217,7 +217,7 @@ export default function SourcePicker({
                     </li>
                   ))}
                 </ol>
-                <p className="mt-2 text-xs font-bold text-zinc-300" data-testid="photo-total">
+                <p className="mt-2 text-xs font-semibold text-text-2" data-testid="photo-total">
                   {photoSummary.label}
                 </p>
               </>
@@ -253,7 +253,7 @@ export default function SourcePicker({
               <FileText aria-hidden="true" size={16} />
               Choose file (PDF, DOCX, XLSX, TXT, MD, CSV)
             </button>
-            <p className="mt-2 text-xs leading-5 text-zinc-400">
+            <p className="mt-2 text-xs leading-5 text-text-2">
               One file at a time: PDF up to {Math.round(SOURCE_LIMITS.MAX_PDF_FILE_BYTES / MIB)} MB, Word / Excel
               (.docx, .xlsx) up to {Math.round(SOURCE_LIMITS.MAX_OFFICE_FILE_BYTES / MIB)} MB, text up to{" "}
               {Math.round(SOURCE_LIMITS.MAX_TEXT_FILE_BYTES / MIB)} MB. Word and Excel files are read on this
@@ -262,30 +262,30 @@ export default function SourcePicker({
             </p>
 
             {file && (
-              <div className="mt-2 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2">
+              <div className="card-inset mt-2 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="min-w-0 break-all text-sm font-bold text-white">
+                  <p className="min-w-0 break-all text-sm font-semibold text-text-1">
                     {file.name}{" "}
-                    <span className="font-bold text-zinc-400">({formatFileSize(file.sizeBytes)})</span>
+                    <span className="font-semibold text-text-2">({formatFileSize(file.sizeBytes)})</span>
                   </p>
                   <button
                     type="button"
                     disabled={disabled}
                     onClick={onClearFile}
                     aria-label="Remove selected file"
-                    className="focus-ring shrink-0 rounded-[8px] p-2 text-zinc-400 hover:text-white disabled:opacity-40"
+                    className="focus-ring shrink-0 rounded-control p-2 text-text-2 hover:text-text-1 disabled:opacity-40"
                   >
                     <X aria-hidden="true" size={16} />
                   </button>
                 </div>
                 {file.status === "reading" && (
-                  <p role="status" className="mt-1 flex items-center gap-2 text-xs font-bold text-zinc-300">
+                  <p role="status" className="mt-1 flex items-center gap-2 text-xs font-semibold text-text-2">
                     <Loader2 aria-hidden="true" size={14} className="animate-spin" />
                     Reading the file on this device...
                   </p>
                 )}
                 {file.status === "ready" && file.kind === "pdf" && (
-                  <p className="mt-1 text-xs font-bold text-zinc-400">
+                  <p className="mt-1 text-xs font-semibold text-text-2">
                     The PDF is sent as it is when you press Extract.
                   </p>
                 )}
@@ -293,7 +293,7 @@ export default function SourcePicker({
                   <div className="mt-2">
                     <label
                       htmlFor="ai-source-file-text"
-                      className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400"
+                      className="label"
                     >
                       Text that will be sent
                     </label>
@@ -301,12 +301,12 @@ export default function SourcePicker({
                       id="ai-source-file-text"
                       readOnly
                       value={file.source.text}
-                      className="focus-ring mt-1 h-48 w-full resize-y rounded-[8px] border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs leading-5 text-zinc-200"
+                      className="focus-ring field mt-1 h-48 w-full resize-y py-2 font-mono text-xs leading-5"
                     />
                     {fileMeta?.lines.map((line) => (
                       <p
                         key={line}
-                        className={`mt-1 text-xs font-bold ${line.startsWith("Truncated") ? "text-amber-200" : "text-zinc-400"}`}
+                        className={`mt-1 text-xs font-semibold ${line.startsWith("Truncated") ? "text-warn" : "text-text-2"}`}
                       >
                         {line}
                       </p>
@@ -314,7 +314,7 @@ export default function SourcePicker({
                     {fileMeta?.warnings.length ? (
                       <ul className="mt-1 ml-3 list-disc space-y-0.5" aria-label="What was left out of the file">
                         {fileMeta.warnings.map((warning, index) => (
-                          <li key={`${index}-${warning}`} className="break-words text-xs font-bold text-amber-200">
+                          <li key={`${index}-${warning}`} className="break-words text-xs font-semibold text-warn">
                             {warning}
                           </li>
                         ))}
@@ -329,7 +329,7 @@ export default function SourcePicker({
         )}
       </div>
 
-      <p className="mt-3 text-xs font-bold leading-5 text-zinc-300" data-testid="source-privacy-note">
+      <p className="mt-3 text-xs font-semibold leading-5 text-text-2" data-testid="source-privacy-note">
         {SOURCE_PRIVACY_NOTE}
       </p>
     </div>

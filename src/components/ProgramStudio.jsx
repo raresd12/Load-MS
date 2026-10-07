@@ -77,21 +77,21 @@ const ORIGIN_LABELS = {
 };
 
 const LIBRARY_STATUS_TAGS = {
-  library: { label: "Library", className: "border-lime-300/40 bg-lime-300/10 text-lime-200" },
-  new: { label: "New", className: "border-amber-400/40 bg-amber-400/10 text-amber-200" },
-  unmatched: { label: "Unmatched", className: "border-red-400/50 bg-red-400/10 text-red-100" },
+  library: { label: "Library", className: "pill-accent" },
+  new: { label: "New", className: "pill-warn" },
+  unmatched: { label: "Unmatched", className: "pill-bad" },
 };
 
 const inputClassName =
-  "focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600";
+  "focus-ring min-h-11 field w-full";
 const textareaClassName =
-  "focus-ring min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-bold text-white placeholder:text-zinc-600";
+  "focus-ring min-h-20 field w-full resize-y py-2";
 const smallButtonClassName =
-  "focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-[8px] border border-zinc-700 px-2.5 text-xs font-black text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40";
+  "focus-ring btn btn-secondary inline-flex items-center justify-center gap-1 px-2.5 text-xs";
 const primaryButtonClassName =
-  "focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-50";
+  "focus-ring btn btn-primary inline-flex min-h-11 items-center justify-center gap-2";
 const secondaryButtonClassName =
-  "focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800";
+  "focus-ring btn btn-secondary inline-flex min-h-11 items-center justify-center gap-2";
 
 function confirmAction(message) {
   if (typeof window === "undefined" || typeof window.confirm !== "function") {
@@ -119,7 +119,7 @@ function useSyncedText(value) {
 function FieldLabel({ label, tag, htmlFor }) {
   return (
     <span className="mb-2 flex items-center justify-between gap-2">
-      <label htmlFor={htmlFor} className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+      <label htmlFor={htmlFor} className="label">
         {label}
       </label>
       {tag ? <ProvenanceTag label={tag} /> : null}
@@ -133,7 +133,7 @@ function ProvenanceTag({ label }) {
   }
 
   return (
-    <span className="rounded-[4px] border border-zinc-800 px-1.5 py-0.5 text-[10px] font-bold lowercase tracking-[0.04em] text-zinc-400">
+    <span className="pill lowercase">
       {label}
     </span>
   );
@@ -155,9 +155,9 @@ function TextField({ id, label, value, onChange, placeholder = "", inputMode = "
           setText(event.target.value);
           onChange(event.target.value);
         }}
-        className={`${inputClassName} ${error ? "border-red-400/60" : ""}`}
+        className={`${inputClassName} ${error ? "border-bad/40" : ""}`}
       />
-      {error ? <p className="mt-1 text-xs font-bold text-red-200">{error}</p> : null}
+      {error ? <p className="mt-1 text-xs font-medium text-bad">{error}</p> : null}
     </div>
   );
 }
@@ -205,16 +205,16 @@ function SelectField({ id, label, value, options, onChange, tag = "" }) {
 
 function CheckboxField({ id, label, checked, onChange, tag = "" }) {
   return (
-    <label htmlFor={id} className="flex min-h-11 items-center justify-between gap-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3">
+    <label htmlFor={id} className="card-inset flex min-h-11 items-center justify-between gap-3 px-3">
       <span className="flex items-center gap-3">
         <input
           id={id}
           type="checkbox"
           checked={checked}
           onChange={(event) => onChange(event.target.checked)}
-          className="focus-ring h-5 w-5 accent-lime-300"
+          className="focus-ring h-5 w-5 accent-accent"
         />
-        <span className="text-sm font-bold text-zinc-100">{label}</span>
+        <span className="text-sm font-semibold text-text-1">{label}</span>
       </span>
       {tag ? <ProvenanceTag label={tag} /> : null}
     </label>
@@ -225,7 +225,7 @@ function StatusTag({ status }) {
   const tag = LIBRARY_STATUS_TAGS[status] ?? LIBRARY_STATUS_TAGS.unmatched;
 
   return (
-    <span className={`rounded-[4px] border px-1.5 py-0.5 text-[10px] font-black ${tag.className}`}>{tag.label}</span>
+    <span className={`pill ${tag.className}`}>{tag.label}</span>
   );
 }
 
@@ -235,7 +235,7 @@ function ErrorBadge({ count }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-[4px] border border-red-400/50 bg-red-400/10 px-1.5 py-0.5 text-[10px] font-black text-red-100">
+    <span className="pill pill-bad">
       <TriangleAlert aria-hidden="true" size={11} />
       {count} {count === 1 ? "issue" : "issues"}
     </span>
@@ -248,11 +248,11 @@ function ErrorList({ messages, title = "" }) {
   }
 
   return (
-    <div role="alert" className="rounded-[8px] border border-red-400/30 bg-red-500/10 px-3 py-2">
-      {title ? <p className="text-xs font-black uppercase tracking-[0.14em] text-red-200">{title}</p> : null}
+    <div role="alert" className="rounded-block bg-bad-tint px-3 py-2">
+      {title ? <p className="label text-bad">{title}</p> : null}
       <ul className={`space-y-1 ${title ? "mt-1" : ""}`}>
         {messages.map((message, index) => (
-          <li key={`${index}-${message}`} className="break-words text-sm font-semibold text-red-100">
+          <li key={`${index}-${message}`} className="break-words text-sm font-semibold text-bad">
             {message}
           </li>
         ))}
@@ -261,23 +261,23 @@ function ErrorList({ messages, title = "" }) {
   );
 }
 
-function Panel({ title, tone = "zinc", children, defaultOpen = true }) {
+function Panel({ title, tone = "neutral", children, defaultOpen = true }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  const border = tone === "lime" ? "border-lime-300/30 bg-lime-300/5" : tone === "cyan" ? "border-cyan-400/30 bg-cyan-400/5" : tone === "amber" ? "border-amber-400/30 bg-amber-400/5" : "border-zinc-800 bg-[#111111]";
-  const titleColor = tone === "lime" ? "text-lime-200" : tone === "cyan" ? "text-cyan-200" : tone === "amber" ? "text-amber-200" : "text-zinc-300";
+  const border = tone === "accent" ? "border-line-accent bg-accent-tint" : tone === "warn" ? "border-warn/40 bg-warn-tint" : "border-line bg-surface-2";
+  const titleColor = tone === "accent" ? "text-accent-soft" : tone === "warn" ? "text-warn" : "text-text-2";
 
   return (
-    <div className={`rounded-[8px] border ${border} px-3 py-2`}>
+    <div className={`rounded-control border ${border} px-3 py-2`}>
       <button
         type="button"
         onClick={() => setIsOpen((open) => !open)}
         aria-expanded={isOpen}
-        className="focus-ring flex min-h-10 w-full items-center justify-between gap-3 text-left"
+        className="focus-ring flex min-h-11 w-full items-center justify-between gap-3 text-left"
       >
-        <span className={`text-xs font-black uppercase tracking-[0.14em] ${titleColor}`}>{title}</span>
-        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-zinc-400 transition ${isOpen ? "rotate-180" : ""}`} />
+        <span className={`pill ${titleColor}`}>{title}</span>
+        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-text-2 transition ${isOpen ? "rotate-180" : ""}`} />
       </button>
-      {isOpen ? <div className="mt-2 border-t border-zinc-800/80 pt-2">{children}</div> : null}
+      {isOpen ? <div className="mt-2 border-t border-line pt-2">{children}</div> : null}
     </div>
   );
 }
@@ -291,8 +291,8 @@ function DiffPanel({ diff, mode }) {
 
   if (diff.ok === false) {
     return (
-      <Panel title="Changes vs saved program" tone="amber">
-        <p className="text-sm font-semibold text-amber-100">{diff.error}</p>
+      <Panel title="Changes vs saved program" tone="warn">
+        <p className="text-sm font-semibold text-warn">{diff.error}</p>
       </Panel>
     );
   }
@@ -300,10 +300,10 @@ function DiffPanel({ diff, mode }) {
   const Group = ({ title, lines }) =>
     lines.length ? (
       <div>
-        <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">{title}</p>
+        <p className="label">{title}</p>
         <ul className="mt-1 space-y-0.5">
           {lines.map((line, index) => (
-            <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-zinc-200">
+            <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-text-1">
               {line}
             </li>
           ))}
@@ -320,9 +320,9 @@ function DiffPanel({ diff, mode }) {
     described.changed.length;
 
   return (
-    <Panel title={`Changes vs saved program (${changeCount})`} tone="lime" defaultOpen={mode === "review"}>
+    <Panel title={`Changes vs saved program (${changeCount})`} tone="accent" defaultOpen={mode === "review"}>
       {described.isEmpty ? (
-        <p className="text-sm font-semibold text-zinc-400">No differences from the saved program yet.</p>
+        <p className="text-sm font-semibold text-text-2">No differences from the saved program yet.</p>
       ) : (
         <div className="space-y-3">
           <Group title="Program details" lines={described.program} />
@@ -332,14 +332,14 @@ function DiffPanel({ diff, mode }) {
           <Group title="Moved exercises" lines={described.moved} />
           {described.changed.length ? (
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Changed exercises</p>
+              <p className="label">Changed exercises</p>
               <ul className="mt-1 space-y-1.5">
                 {described.changed.map((entry, index) => (
                   <li key={`${index}-${entry.title}`}>
-                    <p className="break-words text-sm font-black text-zinc-100">{entry.title}</p>
+                    <p className="break-words text-sm font-semibold text-text-1">{entry.title}</p>
                     <ul className="ml-3 list-disc space-y-0.5">
                       {entry.fields.map((line, lineIndex) => (
-                        <li key={`${lineIndex}-${line}`} className="break-words text-xs font-semibold text-zinc-300">
+                        <li key={`${lineIndex}-${line}`} className="break-words text-xs font-semibold text-text-2">
                           {line}
                         </li>
                       ))}
@@ -349,7 +349,7 @@ function DiffPanel({ diff, mode }) {
               </ul>
             </div>
           ) : null}
-          <p className="text-xs font-semibold leading-5 text-zinc-400">
+          <p className="text-xs font-semibold leading-5 text-text-2">
             Exercises whose prescription changed lose their earned progression and pending plan, so the next
             session starts from the new target. Workout history is never touched.
           </p>
@@ -369,15 +369,15 @@ function ReviewNotesPanel({ review, draft }) {
   const hasAiNotes = changes.length || removed.length || uncertainty.length;
 
   return (
-    <Panel title={review?.title ?? "Review before saving"} tone="amber">
+    <Panel title={review?.title ?? "Review before saving"} tone="warn">
       <div className="space-y-3">
         {review?.instruction ? (
-          <p className="break-words text-sm font-semibold text-zinc-300">
-            <span className="text-zinc-400">Instruction: </span>
+          <p className="break-words text-sm font-semibold text-text-2">
+            <span className="text-text-2">Instruction: </span>
             {review.instruction}
           </p>
         ) : null}
-        <p className="text-sm font-semibold leading-6 text-zinc-300">
+        <p className="text-sm font-semibold leading-6 text-text-2">
           {summary.exerciseCount} {summary.exerciseCount === 1 ? "exercise" : "exercises"} on {summary.dayCount}{" "}
           {summary.dayCount === 1 ? "day" : "days"}
           {newExercises ? ` - ${newExercises}` : ""}
@@ -386,10 +386,10 @@ function ReviewNotesPanel({ review, draft }) {
         </p>
         {changes.length ? (
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">What the AI changed</p>
+            <p className="label">What the AI changed</p>
             <ul className="mt-1 ml-3 list-disc space-y-0.5">
               {changes.map((line, index) => (
-                <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-zinc-200">
+                <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-text-1">
                   {line}
                 </li>
               ))}
@@ -398,10 +398,10 @@ function ReviewNotesPanel({ review, draft }) {
         ) : null}
         {removed.length ? (
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Not echoed by the AI (removed)</p>
+            <p className="label">Not echoed by the AI (removed)</p>
             <ul className="mt-1 ml-3 list-disc space-y-0.5">
               {removed.map((entry, index) => (
-                <li key={`${index}-${entry.refId ?? entry.name}`} className="break-words text-sm font-semibold text-zinc-200">
+                <li key={`${index}-${entry.refId ?? entry.name}`} className="break-words text-sm font-semibold text-text-1">
                   {entry.name}
                 </li>
               ))}
@@ -410,10 +410,10 @@ function ReviewNotesPanel({ review, draft }) {
         ) : null}
         {uncertainty.length ? (
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-200">Uncertainty disclosed</p>
+            <p className="label text-warn">Uncertainty disclosed</p>
             <ul className="mt-1 ml-3 list-disc space-y-0.5">
               {uncertainty.map((line, index) => (
-                <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-amber-100">
+                <li key={`${index}-${line}`} className="break-words text-sm font-semibold text-warn">
                   {line}
                 </li>
               ))}
@@ -421,9 +421,9 @@ function ReviewNotesPanel({ review, draft }) {
           </div>
         ) : null}
         {!hasAiNotes && review?.origin !== "file-import" ? (
-          <p className="text-sm font-semibold text-zinc-400">No changes or uncertainty were reported.</p>
+          <p className="text-sm font-semibold text-text-2">No changes or uncertainty were reported.</p>
         ) : null}
-        <p className="text-xs font-semibold leading-5 text-zinc-400">
+        <p className="text-xs font-semibold leading-5 text-text-2">
           Nothing is saved until you press the save button below. Cancel discards this draft and leaves your
           programs untouched.
         </p>
@@ -464,9 +464,9 @@ function WarmupEditor({ day, onChange }) {
   }
 
   return (
-    <div className="rounded-[8px] border border-cyan-400/30 bg-cyan-400/5 p-3">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-cyan-200/90">Warm-up - informational only</p>
-      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+    <div className="rounded-block bg-accent-tint p-3">
+      <p className="label-accent">Warm-up - informational only</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
         Instructions shown before the working sets. Warm-up items are never logged, never progressed and never
         become Library exercises.
       </p>
@@ -474,9 +474,9 @@ function WarmupEditor({ day, onChange }) {
         <div className="mt-3 space-y-3">
           <TextField id={`warmup-title-${day.id}`} label="Warm-up title" value={title} onChange={(value) => commit(value, rows)} />
           {rows.map((row, index) => (
-            <div key={row.id} className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+            <div key={row.id} className="card-inset">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-zinc-400">Item {index + 1}</p>
+                <p className="label">Item {index + 1}</p>
                 <button
                   type="button"
                   onClick={() => commit(title, rows.filter((entry) => entry.id !== row.id))}
@@ -494,13 +494,13 @@ function WarmupEditor({ day, onChange }) {
                 <TextField id={`warmup-${row.id}-video`} label="Video URL" value={row.videoUrl} onChange={(value) => updateRow(row.id, "videoUrl", value)} placeholder="Optional" />
               </div>
               {!row.name.trim() && !row.prescription.trim() ? (
-                <p className="mt-2 text-xs font-bold text-amber-200">Give this item a name or a prescription, or it is dropped on save.</p>
+                <p className="mt-2 text-xs font-semibold text-warn">Give this item a name or a prescription, or it is dropped on save.</p>
               ) : null}
             </div>
           ))}
         </div>
       ) : (
-        <p className="mt-2 text-sm font-semibold text-zinc-400">No warm-up on this day.</p>
+        <p className="mt-2 text-sm font-semibold text-text-2">No warm-up on this day.</p>
       )}
       <button
         type="button"
@@ -539,8 +539,8 @@ function ProgramScreen({
       {review ? <ReviewNotesPanel review={review} draft={draft} /> : null}
       {diff ? <DiffPanel diff={diff} mode={mode} /> : null}
 
-      <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Program details</p>
+      <section className="card-inset">
+        <p className="label-accent">Program details</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <TextField
             id="studio-program-name"
@@ -556,9 +556,9 @@ function ProgramScreen({
         </div>
       </section>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <section className="card-inset">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+          <p className="label-accent">
             Days ({draft.days.length}) - {summary.exerciseCount} {summary.exerciseCount === 1 ? "exercise" : "exercises"}
           </p>
         </div>
@@ -569,7 +569,7 @@ function ProgramScreen({
               const errorCount = grouped.byDayId[day.id]?.length ?? 0;
 
               return (
-                <li key={day.id} className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+                <li key={day.id} className="rounded-block bg-surface-1 p-3">
                   <button
                     type="button"
                     onClick={() => onOpenDay(day.id)}
@@ -577,17 +577,17 @@ function ProgramScreen({
                   >
                     <span className="min-w-0">
                       <span className="flex flex-wrap items-center gap-2">
-                        <span className="break-words text-sm font-black text-white">{day.name || `Day ${index + 1}`}</span>
-                        {day.isOptional ? <span className="rounded-[4px] border border-zinc-700 px-1.5 py-0.5 text-[10px] font-black text-zinc-400">Optional</span> : null}
+                        <span className="break-words text-sm font-semibold text-text-1">{day.name || `Day ${index + 1}`}</span>
+                        {day.isOptional ? <span className="pill">Optional</span> : null}
                         <ErrorBadge count={errorCount} />
                       </span>
-                      <span className="mt-1 block text-xs font-semibold text-zinc-400">
+                      <span className="mt-1 block text-xs font-semibold text-text-2">
                         {day.focus ? `${day.focus} | ` : ""}
                         {exerciseCount} {exerciseCount === 1 ? "exercise" : "exercises"}
                         {day.warmup ? ` | warm-up: ${day.warmup.items.length} ${day.warmup.items.length === 1 ? "item" : "items"}` : ""}
                       </span>
                     </span>
-                    <span className="shrink-0 rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+                    <span className="pill shrink-0">
                       Open
                     </span>
                   </button>
@@ -619,7 +619,7 @@ function ProgramScreen({
             })}
           </ul>
         ) : (
-          <p className="mt-2 text-sm font-semibold text-zinc-400">No days yet. A program needs at least one day.</p>
+          <p className="mt-2 text-sm font-semibold text-text-2">No days yet. A program needs at least one day.</p>
         )}
         <button type="button" onClick={onAddDay} className={`${secondaryButtonClassName} mt-3 w-full sm:w-auto`}>
           <Plus aria-hidden="true" size={15} />
@@ -655,8 +655,8 @@ function DayScreen({
         Back to program
       </button>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Day {dayIndex + 1}</p>
+      <section className="card-inset">
+        <p className="label-accent">Day {dayIndex + 1}</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <TextField id={`day-name-${day.id}`} label="Day name" value={day.name} onChange={(value) => onDayMeta({ name: value })} placeholder="Required" error={grouped.byDayId[day.id]?.find((message) => /day name/i.test(message)) ?? ""} />
           <TextField id={`day-focus-${day.id}`} label="Focus" value={day.focus} onChange={(value) => onDayMeta({ focus: value })} placeholder="Upper push, legs..." />
@@ -668,9 +668,9 @@ function DayScreen({
       <WarmupEditor key={day.id} day={day} onChange={onWarmup} />
 
       <section className="space-y-3">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Working exercises</p>
+        <p className="label-accent">Working exercises</p>
         {day.sections.map((section, sectionIndex) => (
-          <div key={section.id} className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+          <div key={section.id} className="card-inset">
             <div className="grid gap-2">
               <TextField
                 id={`section-name-${section.id}`}
@@ -711,19 +711,19 @@ function DayScreen({
                   const otherSections = day.sections.filter((entry) => entry.id !== section.id);
 
                   return (
-                    <li key={exercise.id} className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+                    <li key={exercise.id} className="rounded-block bg-surface-1 p-3">
                       <button type="button" onClick={() => onOpenExercise(exercise.id)} className="focus-ring flex w-full items-start justify-between gap-3 text-left">
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-2">
-                            <span className="break-words text-sm font-black text-white">{exercise.name || "Unnamed exercise"}</span>
+                            <span className="break-words text-sm font-semibold text-text-1">{exercise.name || "Unnamed exercise"}</span>
                             <StatusTag status={exercise.libraryStatus} />
-                            {exercise.isOptional ? <span className="rounded-[4px] border border-zinc-700 px-1.5 py-0.5 text-[10px] font-black text-zinc-400">Optional</span> : null}
+                            {exercise.isOptional ? <span className="pill">Optional</span> : null}
                             <ErrorBadge count={errorCount} />
                           </span>
-                          <span className="mt-1 block text-xs font-semibold leading-5 text-zinc-400">{formatDraftPrescription(exercise)}</span>
-                          {exercise.sourceWeight ? <span className="block text-xs font-semibold text-zinc-400">Source listed: {exercise.sourceWeight}</span> : null}
+                          <span className="mt-1 block text-xs font-semibold leading-5 text-text-2">{formatDraftPrescription(exercise)}</span>
+                          {exercise.sourceWeight ? <span className="block text-xs font-semibold text-text-2">Source listed: {exercise.sourceWeight}</span> : null}
                         </span>
-                        <span className="shrink-0 rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">Edit</span>
+                        <span className="pill shrink-0">Edit</span>
                       </button>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <button type="button" disabled={exerciseIndex === 0} onClick={() => onMoveExercise(exercise.id, { index: exerciseIndex - 1 })} className={smallButtonClassName} aria-label={`Move ${exercise.name} up`}>
@@ -743,7 +743,7 @@ function DayScreen({
                                 onMoveExercise(exercise.id, { sectionId: event.target.value });
                               }
                             }}
-                            className="focus-ring min-h-10 rounded-[8px] border border-zinc-700 bg-[#111111] px-2 text-xs font-black text-zinc-200"
+                            className="focus-ring field px-2 text-xs"
                           >
                             <option value="">Move to section...</option>
                             {otherSections.map((entry) => (
@@ -772,7 +772,7 @@ function DayScreen({
                 })}
               </ul>
             ) : (
-              <p className="mt-2 text-sm font-semibold text-zinc-400">No exercises in this section.</p>
+              <p className="mt-2 text-sm font-semibold text-text-2">No exercises in this section.</p>
             )}
             <button type="button" onClick={() => onAddExercise(section.id)} className={`${secondaryButtonClassName} mt-3 w-full sm:w-auto`}>
               <Plus aria-hidden="true" size={15} />
@@ -803,14 +803,14 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
     : null;
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+    <section className="card-inset">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Library match</p>
+        <p className="label-accent">Library match</p>
         <ProvenanceTag label={getProvenanceLabel(exercise, "exerciseId")} />
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <StatusTag status={exercise.libraryStatus} />
-        <p className="min-w-0 break-words text-sm font-bold text-zinc-100">
+        <p className="min-w-0 break-words text-sm font-semibold text-text-1">
           {exercise.libraryStatus === "library" && matched
             ? `${matched.name}${matched.equipment ? ` - ${matched.equipment}` : ""}${matched.category ? ` - ${matched.category}` : ""}`
             : exercise.libraryStatus === "new"
@@ -849,26 +849,26 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
                       onPick(entry.id);
                       setIsOpen(false);
                     }}
-                    className={`focus-ring flex min-h-11 w-full items-center justify-between gap-2 rounded-[8px] border px-3 text-left ${
-                      isCurrent ? "border-lime-300/60 bg-lime-300/10" : "border-zinc-800 bg-zinc-900 hover:bg-zinc-800"
+                    className={`focus-ring flex min-h-11 w-full items-center justify-between gap-2 rounded-control border px-3 text-left ${
+                      isCurrent ? "border-line-accent bg-accent-tint" : "border-line bg-surface-1 hover:bg-surface-3"
                     }`}
                   >
                     <span className="min-w-0">
-                      <span className="block break-words text-sm font-black text-white">{entry.name}</span>
-                      <span className="block text-xs font-semibold text-zinc-400">
+                      <span className="block break-words text-sm font-semibold text-text-1">{entry.name}</span>
+                      <span className="block text-xs font-semibold text-text-2">
                         {[entry.equipment, entry.category, (entry.mainMuscles ?? []).slice(0, 2).join(", ")].filter(Boolean).join(" - ")}
                       </span>
                     </span>
-                    {proposedIds.has(String(entry.id)) ? <StatusTag status="new" /> : isCurrent ? <Check aria-hidden="true" size={16} className="shrink-0 text-lime-300" /> : null}
+                    {proposedIds.has(String(entry.id)) ? <StatusTag status="new" /> : isCurrent ? <Check aria-hidden="true" size={16} className="shrink-0 text-accent-soft" /> : null}
                   </button>
                 </li>
               );
             })}
-            {!results.length ? <li className="px-1 text-sm font-semibold text-zinc-400">No Library exercise matches "{query}".</li> : null}
+            {!results.length ? <li className="px-1 text-sm font-semibold text-text-2">No Library exercise matches "{query}".</li> : null}
           </ul>
-          <div className="rounded-[8px] border border-amber-400/30 bg-amber-400/5 p-3">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">New exercise (no technique content yet)</p>
-            <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+          <div className="rounded-block bg-warn-tint p-3">
+            <p className="label text-warn">New exercise (no technique content yet)</p>
+            <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
               Adds a private Library entry with this name when the program is saved. Technique notes can be added here,
               under "Technique notes", before you save; the Library shows them but cannot edit them yet.
             </p>
@@ -888,7 +888,7 @@ function LibraryPicker({ draft, exercise, library, onPick, onProposeNew }) {
                   onProposeNew(newName.trim());
                   setIsOpen(false);
                 }}
-                className={`${secondaryButtonClassName} shrink-0 border-amber-400/50 text-amber-100 disabled:cursor-not-allowed disabled:opacity-50`}
+                className={`${secondaryButtonClassName} shrink-0 border-warn/40 text-warn disabled:cursor-not-allowed disabled:opacity-50`}
               >
                 <Plus aria-hidden="true" size={15} />
                 Use as new exercise
@@ -965,12 +965,12 @@ function ExerciseScreen({
         Back to {day.name}
       </button>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
+      <section className="card-inset">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="break-words text-lg font-black text-white">{exercise.name || "Unnamed exercise"}</h3>
+          <h3 className="break-words text-[17px] font-semibold text-text-1">{exercise.name || "Unnamed exercise"}</h3>
           <StatusTag status={exercise.libraryStatus} />
         </div>
-        <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">{formatDraftPrescription(exercise)}</p>
+        <p className="mt-1 text-xs font-semibold leading-5 text-text-2">{formatDraftPrescription(exercise)}</p>
         {exercise.libraryStatus !== "library" ? (
           <div className="mt-3">
             <TextField
@@ -997,8 +997,8 @@ function ExerciseScreen({
         />
       ) : null}
 
-      <section className="rounded-[8px] border border-zinc-800 bg-[#111111] p-3">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Prescription</p>
+      <section className="card-inset">
+        <p className="label-accent">Prescription</p>
         <div className="mt-3 grid gap-3 min-[430px]:grid-cols-2">
           <TextField id={`ex-sets-${exercise.id}`} label="Sets" value={form.targetSets} onChange={(value) => changeField("targetSets", value)} inputMode="numeric" tag={tag("targetSets")} error={fieldErrors.targetSets ?? ""} />
           <TextField id={`ex-rpe-${exercise.id}`} label="Target RPE" value={form.targetRPE} onChange={(value) => changeField("targetRPE", value)} inputMode="decimal" tag={tag("targetRPE")} error={fieldErrors.targetRPE ?? ""} />
@@ -1012,13 +1012,13 @@ function ExerciseScreen({
           <SelectField id={`ex-mode-${exercise.id}`} label="Weight mode" value={exercise.weightMode ?? "kg"} options={WEIGHT_MODES} onChange={(value) => changeField("weightMode", value)} tag={tag("weightMode")} />
           <CheckboxField id={`ex-optional-${exercise.id}`} label="Optional exercise" checked={Boolean(exercise.isOptional)} onChange={(value) => changeField("isOptional", value)} tag={tag("isOptional")} />
           {exercise.sourceWeight ? (
-            <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
+            <div className="card-inset py-2">
               <span className="flex items-center justify-between gap-2">
-                <span className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">Source listed</span>
+                <span className="label">Source listed</span>
                 <ProvenanceTag label={tag("sourceWeight")} />
               </span>
-              <p className="mt-1 break-words text-sm font-bold text-zinc-200">{exercise.sourceWeight}</p>
-              <p className="text-xs font-semibold text-zinc-400">Reference only - never used as a target or by the coach.</p>
+              <p className="mt-1 break-words text-sm font-semibold text-text-1">{exercise.sourceWeight}</p>
+              <p className="text-xs font-semibold text-text-2">Reference only - never used as a target or by the coach.</p>
             </div>
           ) : null}
         </div>
@@ -1054,7 +1054,7 @@ function ExerciseScreen({
               onRemove();
             }
           }}
-          className={`${secondaryButtonClassName} text-red-100`}
+          className={`${secondaryButtonClassName} text-bad`}
         >
           <Trash2 aria-hidden="true" size={15} />
           Remove exercise
@@ -1274,12 +1274,12 @@ export default function ProgramStudio({
   const errorCount = validation.errors.length;
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4" data-testid="program-studio">
+    <section className="card p-3 min-[430px]:p-4" data-testid="program-studio">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">Program Studio</p>
-          <h2 className="mt-1 break-words text-2xl font-black text-white">{title}</h2>
-          <p className="mt-1 text-xs font-semibold text-zinc-400">
+          <p className="label-accent">Program Studio</p>
+          <h2 className="mt-1 break-words text-[22px] font-semibold text-text-1">{title}</h2>
+          <p className="mt-1 text-xs font-semibold text-text-2">
             {ORIGIN_LABELS[working.origin] ?? "Draft"} | {summary.dayCount} {summary.dayCount === 1 ? "day" : "days"} | {summary.exerciseCount}{" "}
             {summary.exerciseCount === 1 ? "exercise" : "exercises"}
             {dirty ? " | unsaved changes" : ""}
@@ -1309,26 +1309,26 @@ export default function ProgramStudio({
       ) : null}
 
       {errorCount > 0 ? (
-        <div className="mt-3 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-2">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+        <div className="mt-3 rounded-block bg-warn-tint px-3 py-2">
+          <p className="label text-warn">
             {errorCount} {errorCount === 1 ? "issue" : "issues"} to fix before saving
           </p>
           <ul className="mt-1 space-y-0.5">
             {grouped.all.slice(0, 8).map((entry, index) => (
-              <li key={`${index}-${entry.path}`} className="break-words text-xs font-semibold text-amber-100">
-                <span className="text-amber-200/80">{entry.label}: </span>
+              <li key={`${index}-${entry.path}`} className="break-words text-xs font-semibold text-warn">
+                <span className="text-warn">{entry.label}: </span>
                 {entry.message}
               </li>
             ))}
-            {grouped.all.length > 8 ? <li className="text-xs font-semibold text-amber-200/80">and {grouped.all.length - 8} more...</li> : null}
+            {grouped.all.length > 8 ? <li className="text-xs font-semibold text-warn">and {grouped.all.length - 8} more...</li> : null}
           </ul>
         </div>
       ) : (
-        <p className="mt-3 text-xs font-semibold text-zinc-400">
+        <p className="mt-3 text-xs font-semibold text-text-2">
           Draft is valid. Nothing is written until you press {saveLabel}.
         </p>
       )}
-      {autosaveState ? <p className="mt-1 text-xs font-semibold text-zinc-400">{autosaveState}</p> : null}
+      {autosaveState ? <p className="mt-1 text-xs font-semibold text-text-2">{autosaveState}</p> : null}
 
       <div className="mt-4">
         {screen.kind === "program" || !currentDay ? (
@@ -1396,7 +1396,7 @@ export default function ProgramStudio({
         )}
       </div>
 
-      <div className="mt-5 flex flex-col gap-2 border-t border-zinc-800 pt-4 sm:flex-row">
+      <div className="mt-5 flex flex-col gap-2 border-t border-line pt-4 sm:flex-row">
         <button type="button" onClick={handleSave} disabled={!validation.valid || isSaving} className={`${primaryButtonClassName} flex-1`}>
           <Check aria-hidden="true" size={16} />
           {saveLabel}

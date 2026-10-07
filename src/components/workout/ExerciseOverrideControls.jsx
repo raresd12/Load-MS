@@ -13,10 +13,10 @@ import {
 import { getLocalDateKey } from "../../lib/date.js";
 
 const overrideFieldClassName =
-  "focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-black text-white placeholder:text-zinc-600";
+  "focus-ring min-h-11 field w-full";
 // 44 px targets on the phone (H5 fix round 1).
 const smallActionClassName =
-  "focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800";
+  "focus-ring min-h-11 btn btn-secondary px-3 text-xs";
 
 /**
  * Decision H5-12: hold / manual override for one program exercise, on the
@@ -89,14 +89,14 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
   }
 
   return (
-    <div className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] p-3" data-testid="exercise-override-controls">
+    <div className="mt-3 rounded-block border border-line p-3" data-testid="exercise-override-controls">
       {active ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <span className="rounded-[8px] border border-amber-300/50 bg-amber-300/10 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-amber-100">
+            <span className="pill pill-warn">
               {formatOverrideBadge(active)}
             </span>
-            <p className="mt-2 text-xs font-semibold leading-5 text-zinc-400">
+            <p className="mt-2 text-xs font-semibold leading-5 text-text-2">
               {active.mode === "hold"
                 ? "The coach keeps the current targets and writes no progression evidence until the hold ends."
                 : "Your numbers replace the coach's for the next sessions; the engine keeps learning from what you log."}
@@ -108,7 +108,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <p className="mr-auto text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Coach controls</p>
+          <p className="label mb-0 mr-auto">Coach controls</p>
           <button type="button" onClick={() => openForm("hold")} aria-expanded={mode === "hold"} className={smallActionClassName}>
             Hold
           </button>
@@ -121,7 +121,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
       {mode === "hold" && !active && (
         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <label className="block">
-            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">
+            <span className="label mb-1">
               Hold for (sessions)
             </span>
             <select
@@ -138,7 +138,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
           </label>
           {/* Decision H5-31: optional end date; the hold ends at whichever comes first. */}
           <label className="block">
-            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">
+            <span className="label mb-1">
               Until date (optional)
             </span>
             <input
@@ -163,7 +163,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
                 }),
               )
             }
-            className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+            className="focus-ring min-h-11 btn btn-primary"
           >
             Apply hold
           </button>
@@ -172,11 +172,11 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
 
       {mode === "manual" && !active && (
         <div className="mt-3 space-y-2">
-          <p className="text-xs font-semibold leading-5 text-zinc-400">
+          <p className="text-xs font-semibold leading-5 text-text-2">
             Leave a field blank to keep the coach's value for it. Weight takes {rules.allowsBodyweight ? "kg or BW" : "kg"}; the {rules.countNoun} range needs both bounds or neither.
           </p>
           {baseNote && (
-            <p className="text-xs font-semibold leading-5 text-sky-100" data-testid="manual-override-base-note">
+            <p className="text-xs font-semibold leading-5 text-accent-soft" data-testid="manual-override-base-note">
               {baseNote}
             </p>
           )}
@@ -187,7 +187,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
             <ManualField label={rules.minLabel} value={manualForm.repsMin} inputMode={rules.wholeCount ? "numeric" : "decimal"} onChange={(value) => setManualForm((current) => ({ ...current, repsMin: value }))} />
             <ManualField label={rules.maxLabel} value={manualForm.repsMax} inputMode={rules.wholeCount ? "numeric" : "decimal"} onChange={(value) => setManualForm((current) => ({ ...current, repsMax: value }))} />
             <label className="block">
-              <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">Sessions</span>
+              <span className="label mb-1">Sessions</span>
               <select
                 value={manualForm.sessions}
                 onChange={(event) => setManualForm((current) => ({ ...current, sessions: event.target.value }))}
@@ -204,7 +204,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
           <button
             type="button"
             onClick={() => submit(buildManualOverrideRecord({ programId, programExerciseId, form: manualForm, exercise }))}
-            className="focus-ring min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+            className="focus-ring min-h-11 btn btn-primary w-full sm:w-auto"
           >
             Apply manual override
           </button>
@@ -212,7 +212,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
       )}
 
       {errors.length > 0 && (
-        <div role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
+        <div role="alert" className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-xs font-medium text-bad">
           {errors.map((error) => (
             <p key={error}>{error}</p>
           ))}
@@ -225,7 +225,7 @@ export default function ExerciseOverrideControls({ programId, exercise, prescrip
 function ManualField({ label, value, onChange, inputMode = "text", placeholder = "" }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">{label}</span>
+      <span className="label mb-1">{label}</span>
       <input
         type="text"
         inputMode={inputMode}

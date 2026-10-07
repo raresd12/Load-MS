@@ -141,10 +141,10 @@ export default function ProgramCard({
 
   return (
     <article
-      className={`rounded-[8px] border p-3 min-[430px]:p-4 ${
+      className={`rounded-control border p-3 min-[430px]:p-4 ${
         isActive
-          ? "border-lime-300/60 bg-lime-300/10"
-          : "border-zinc-800 bg-[#171717]"
+          ? "border-line-accent bg-accent-tint"
+          : "border-line bg-surface-2"
       }`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -153,17 +153,17 @@ export default function ProgramCard({
             {isActive && <ProgramBadge tone="active">Active</ProgramBadge>}
             {program.isDefault && <ProgramBadge tone="default">Default</ProgramBadge>}
           </div>
-          <h3 className="mt-3 text-lg font-black text-white">{program.name}</h3>
+          <h3 className="mt-3 text-[17px] font-semibold text-text-1">{program.name}</h3>
           {program.nickname && (
-            <p className="mt-1 text-sm font-bold text-lime-100">{program.nickname}</p>
+            <p className="mt-1 text-sm font-semibold text-accent-soft">{program.nickname}</p>
           )}
-          <p className="mt-1 text-sm font-semibold text-zinc-400">
+          <p className="mt-1 text-sm font-semibold text-text-2">
             {program.goal || "Local guest-mode program"}
           </p>
           {program.description && (
-            <p className="mt-2 text-sm leading-6 text-zinc-400">{program.description}</p>
+            <p className="mt-2 text-sm leading-6 text-text-2">{program.description}</p>
           )}
-          <p className="mt-2 text-xs font-semibold text-zinc-400">
+          <p className="mt-2 text-xs font-semibold text-text-2">
             Created {formatProgramDate(program.createdAt)} | Updated {formatProgramDate(program.updatedAt)}
           </p>
         </div>
@@ -172,10 +172,10 @@ export default function ProgramCard({
             type="button"
             disabled={isActive}
             onClick={setActive}
-            className={`focus-ring min-h-11 w-full rounded-[8px] px-3 text-sm font-black ${
+            className={`focus-ring btn min-h-11 w-full px-3 text-sm ${
               isActive
-                ? "cursor-not-allowed bg-zinc-800 text-zinc-400"
-                : "bg-lime-300 text-zinc-950 hover:bg-lime-200"
+                ? "btn-secondary text-text-2 disabled:cursor-default disabled:opacity-100"
+                : "btn-primary"
             }`}
           >
             {isActive ? "Active Program" : "Set Active"}
@@ -183,14 +183,14 @@ export default function ProgramCard({
           <button
             type="button"
             onClick={() => onDuplicateProgram(program.id)}
-            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+            className="focus-ring min-h-11 btn btn-secondary w-full px-3"
           >
             Duplicate Program
           </button>
           <button
             type="button"
             onClick={() => setIsEditing((current) => !current)}
-            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+            className="focus-ring min-h-11 btn btn-secondary w-full px-3"
           >
             {isEditing ? "Close Edit" : "Edit Details"}
           </button>
@@ -198,7 +198,7 @@ export default function ProgramCard({
             <button
               type="button"
               onClick={() => onEditProgram(program.id)}
-              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-200 hover:bg-lime-300/10"
+              className="focus-ring btn btn-ghost flex min-h-11 w-full items-center justify-center gap-2 px-3"
             >
               <Pencil aria-hidden="true" size={15} />
               Edit Program
@@ -209,7 +209,7 @@ export default function ProgramCard({
               type="button"
               onClick={() => setIsAiEditOpen((current) => !current)}
               aria-expanded={isAiEditOpen}
-              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+              className="focus-ring btn btn-secondary flex min-h-11 w-full items-center justify-center gap-2 px-3"
             >
               <Sparkles aria-hidden="true" size={15} />
               {isAiEditOpen ? "Close AI Edit" : "Edit with AI"}
@@ -218,7 +218,7 @@ export default function ProgramCard({
           <button
             type="button"
             onClick={() => downloadProgramShareFile(program)}
-            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+            className="focus-ring btn btn-secondary flex min-h-11 w-full items-center justify-center gap-2 px-3"
           >
             <Download aria-hidden="true" size={15} />
             Share File
@@ -227,7 +227,7 @@ export default function ProgramCard({
             <button
               type="button"
               onClick={archiveProgram}
-              className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-300 hover:bg-zinc-800"
+              className="focus-ring btn btn-secondary flex min-h-11 w-full items-center justify-center gap-2 px-3"
             >
               <Archive aria-hidden="true" size={15} />
               Archive
@@ -239,7 +239,7 @@ export default function ProgramCard({
       {archiveError && (
         <p
           role="alert"
-          className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+          className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
         >
           {archiveError}
         </p>
@@ -251,7 +251,7 @@ export default function ProgramCard({
         <Metric label="Week" value={programState.currentWeek} />
         <Metric label="Cycle" value={programState.currentCycle} />
       </div>
-      <p className="mt-2 text-xs font-semibold text-zinc-400" data-testid="program-week-label">
+      <p className="mt-2 text-xs font-semibold text-text-2" data-testid="program-week-label">
         {formatProgramWeekLabel(programState, program)} | Coach aggression:{" "}
         {program.programProfile?.aggression === "conservative" ? "conservative" : "standard"}
       </p>
@@ -280,9 +280,9 @@ export default function ProgramCard({
       <details
         open={isEditorOpen}
         onToggle={(event) => setIsEditorOpen(event.currentTarget.open)}
-        className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+        className="card-inset mt-4 py-2"
       >
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
           Prescription editor
           <ChevronDown
             aria-hidden="true"
@@ -305,9 +305,9 @@ export default function ProgramCard({
       <details
         open={isPreviewOpen}
         onToggle={(event) => setIsPreviewOpen(event.currentTarget.open)}
-        className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+        className="card-inset mt-4 py-2"
       >
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
           Read-only program preview
           <ChevronDown
             aria-hidden="true"
@@ -392,15 +392,15 @@ function ProgramAiEditForm({ program, onOpenStudio, onClose }) {
   }
 
   return (
-    <div className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">Edit with AI</p>
-      <p className="mt-1 text-sm leading-6 text-zinc-400">
+    <div className="card-inset mt-4">
+      <p className="label-accent">Edit with AI</p>
+      <p className="mt-1 text-sm leading-6 text-text-2">
         Describe one change (for example "swap the second day's rows for pull-ups" or "add face pulls
         at the end of Day 3"). The AI returns a revised draft you review in the Studio before anything is applied.
         Your targets and history stay as they are until you press Apply Changes. No weights are ever
         invented.
       </p>
-      <label htmlFor={`ai-edit-${program.id}`} className="mt-3 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+      <label htmlFor={`ai-edit-${program.id}`} className="label mt-3">
         Instruction
       </label>
       <textarea
@@ -410,17 +410,17 @@ function ProgramAiEditForm({ program, onOpenStudio, onClose }) {
         rows={3}
         maxLength={2000}
         placeholder="Replace barbell rows with dumbbell rows and add a finisher to Day 1"
-        className="focus-ring mt-1 min-h-20 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-bold text-white placeholder:text-zinc-600"
+        className="focus-ring field mt-1 min-h-20 w-full resize-y py-2"
       />
       {!hasKey && (
-        <p className="mt-2 text-xs font-bold text-amber-200">
+        <p className="mt-2 text-xs font-semibold text-warn">
           A saved Gemini API key is required (see the AI Program Import Assistant section).
         </p>
       )}
       {error && (
         <p
           role="alert"
-          className="mt-2 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+          className="mt-2 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
         >
           {error}
         </p>
@@ -430,7 +430,7 @@ function ProgramAiEditForm({ program, onOpenStudio, onClose }) {
           type="button"
           onClick={askAi}
           disabled={isBusy}
-          className="focus-ring flex min-h-11 flex-1 items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-60"
+          className="focus-ring btn btn-primary flex min-h-11 flex-1 items-center justify-center gap-2"
         >
           <Sparkles aria-hidden="true" size={16} />
           {isBusy ? "Asking AI..." : "Ask AI"}
@@ -439,7 +439,7 @@ function ProgramAiEditForm({ program, onOpenStudio, onClose }) {
           type="button"
           onClick={onClose}
           disabled={isBusy}
-          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-300 hover:bg-zinc-800 disabled:opacity-60"
+          className="focus-ring min-h-11 btn btn-secondary"
         >
           Cancel
         </button>
@@ -460,15 +460,15 @@ function createProgramMetadataForm(program) {
 
 function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSave }) {
   return (
-    <div className="mt-4 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+    <div className="card-inset mt-4">
       <div className="grid gap-3 sm:grid-cols-2">
         {isDefaultProgram ? (
-          <div className="rounded-[8px] border border-amber-300/30 bg-amber-300/10 px-3 py-3">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-100/80">
+          <div className="rounded-block bg-warn-tint px-3 py-3">
+            <p className="label text-warn">
               Program name locked
             </p>
-            <p className="mt-1 text-sm font-black text-white">{form.name}</p>
-            <p className="mt-2 text-xs font-semibold leading-5 text-amber-100/80">
+            <p className="mt-1 text-sm font-semibold text-text-1">{form.name}</p>
+            <p className="mt-2 text-xs font-semibold leading-5 text-warn">
               The default program's core name is protected. Edit the nickname for mobile display.
             </p>
           </div>
@@ -479,13 +479,13 @@ function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSav
         <ProgramTextArea label="Description" value={form.description} onChange={(value) => onChange("description", value)} />
         <ProgramTextArea label="Goal" value={form.goal} onChange={(value) => onChange("goal", value)} />
         <label className="block">
-          <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+          <span className="label mb-2">
             Coach aggression
           </span>
           <select
             value={form.aggression}
             onChange={(event) => onChange("aggression", event.target.value)}
-            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white"
+            className="focus-ring min-h-11 field w-full"
           >
             <option value="standard">standard</option>
             <option value="conservative">conservative</option>
@@ -499,7 +499,7 @@ function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSav
           inputMode="numeric"
         />
       </div>
-      <p className="mt-3 text-xs font-semibold leading-5 text-zinc-400">
+      <p className="mt-3 text-xs font-semibold leading-5 text-text-2">
         Profile changes affect future recommendations only. Conservative needs two strong sessions in a
         row before a step up and takes one step at a time.
       </p>
@@ -507,14 +507,14 @@ function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSav
         <button
           type="button"
           onClick={onSave}
-          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950"
+          className="focus-ring min-h-11 btn btn-primary px-3"
         >
           Save Program Details
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100"
+          className="focus-ring min-h-11 btn btn-secondary px-3"
         >
           Cancel
         </button>
@@ -525,16 +525,16 @@ function ProgramMetadataForm({ isDefaultProgram, form, onChange, onCancel, onSav
 
 function DefaultProgramEditorLock({ onDuplicate }) {
   return (
-    <div className="mt-3 rounded-[8px] border border-amber-300/30 bg-amber-300/10 p-3">
-      <p className="text-sm font-black text-amber-100">Duplicate to edit prescriptions.</p>
-      <p className="mt-2 text-sm leading-6 text-amber-100/80">
+    <div className="mt-3 rounded-block bg-warn-tint p-3">
+      <p className="text-sm font-semibold text-warn">Duplicate to edit prescriptions.</p>
+      <p className="mt-2 text-sm leading-6 text-warn">
         The default program is protected so the preloaded template stays available. Make a copy,
         then edit sets, reps, kg, RPE, rest, and notes on the duplicate.
       </p>
       <button
         type="button"
         onClick={onDuplicate}
-        className="focus-ring mt-3 min-h-11 w-full rounded-[8px] bg-amber-300 px-3 text-sm font-black text-zinc-950 sm:w-auto"
+        className="focus-ring btn btn-primary mt-3 min-h-11 w-full px-3 text-sm sm:w-auto"
       >
         Duplicate to Edit
       </button>
@@ -551,9 +551,9 @@ function ProgramPreview({ days }) {
           : [{ id: "main", name: "Main Work" }];
 
         return (
-          <div key={day.id} className="rounded-[8px] bg-[#111111] p-3">
-            <h4 className="font-black text-white">{day.name}</h4>
-            <p className="mt-1 text-xs font-semibold text-zinc-400">{day.focus}</p>
+          <div key={day.id} className="rounded-block bg-surface-1 p-3">
+            <h4 className="font-semibold text-text-1">{day.name}</h4>
+            <p className="mt-1 text-xs font-semibold text-text-2">{day.focus}</p>
             {sections.map((section) => {
               const exercises = day.exercises.filter((exercise) =>
                 exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
@@ -565,17 +565,17 @@ function ProgramPreview({ days }) {
 
               return (
                 <div key={section.id} className="mt-3">
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+                  <p className="label-accent">
                     {section.name}
                   </p>
                   <div className="mt-2 space-y-2">
                     {exercises.map((exercise) => (
                       <div
                         key={exercise.id}
-                        className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2"
+                        className="rounded-control bg-surface-2 px-3 py-2"
                       >
-                        <p className="font-black text-white">{exercise.name}</p>
-                        <p className="mt-1 text-xs font-semibold leading-5 text-zinc-400">
+                        <p className="font-semibold text-text-1">{exercise.name}</p>
+                        <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
                           {exercise.sets}x {exercise.repsLabel} | {formatWeight(exercise.recommendedWeight, exercise)} | RPE {exercise.targetRPE} | {formatRest(exercise.restSeconds)}
                         </p>
                       </div>

@@ -32,16 +32,16 @@ export default function DeloadCard({ model, onApply, onDismiss, onEnd }) {
     return (
       <section
         data-testid="deload-active-banner"
-        className="flex flex-col gap-2 rounded-[8px] border border-sky-300/40 bg-sky-300/10 p-3 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between min-[430px]:p-4"
+        className="card-active flex flex-col gap-2 p-3 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between min-[430px]:p-4"
       >
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-sky-200">{model.title}</p>
-          <p className="mt-1 text-sm font-black text-white">{model.line}</p>
-          <p className="mt-1 text-xs font-semibold leading-5 text-zinc-300">
+          <p className="label-accent">{model.title}</p>
+          <p className="text-sm font-medium text-text-1">{model.line}</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-text-2">
             Loads are scaled at resolution time; your logged history stays as it is.
           </p>
           {error && (
-            <p role="alert" className="mt-2 text-xs font-bold text-red-100">
+            <p role="alert" className="mt-2 text-xs font-medium text-bad">
               {error}
             </p>
           )}
@@ -50,7 +50,7 @@ export default function DeloadCard({ model, onApply, onDismiss, onEnd }) {
           <button
             type="button"
             onClick={() => run(onEnd)}
-            className="focus-ring min-h-11 shrink-0 rounded-[8px] border border-sky-300/50 px-4 text-sm font-black text-sky-100 hover:bg-sky-300/10"
+            className="focus-ring btn btn-secondary min-h-11 shrink-0"
           >
             End early
           </button>
@@ -60,25 +60,25 @@ export default function DeloadCard({ model, onApply, onDismiss, onEnd }) {
   }
 
   return (
-    <section data-testid="deload-suggestion-card" className="rounded-[8px] border border-amber-300/50 bg-amber-300/10 p-3 min-[430px]:p-4">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">Coach observation</p>
-      <h3 className="mt-1 text-xl font-black text-white">{model.title}</h3>
-      <p className="mt-2 text-sm font-semibold leading-6 text-amber-100">{model.line}</p>
+    <section data-testid="deload-suggestion-card" className="card p-3 min-[430px]:p-4">
+      <p className="label-accent">Coach observation</p>
+      <h3 className="mt-1 text-[17px] font-semibold text-text-1">{model.title}</h3>
+      <p className="mt-2 text-sm font-medium leading-6 text-text-2">{model.line}</p>
       <ul className="mt-3 space-y-1.5">
         {model.signals.map((signal) => (
           <li
             key={signal.key}
-            className={`rounded-[8px] border px-3 py-2 text-xs font-semibold leading-5 ${
-              signal.met ? "border-amber-300/40 bg-[#111111] text-amber-100" : "border-zinc-800 bg-[#111111] text-zinc-400"
+            className={`card-inset py-2 text-xs font-medium leading-5 ${
+              signal.met ? "text-text-1" : "text-text-3"
             }`}
           >
-            <span className="mr-2 text-[10px] font-black uppercase tracking-[0.1em]">{signal.met ? "Present" : "Not present"}</span>
+            <span className={`pill mr-2 ${signal.met ? "pill-warn" : ""}`}>{signal.met ? "Present" : "Not present"}</span>
             {signal.detail}
           </li>
         ))}
       </ul>
       {error && (
-        <p role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
+        <p role="alert" className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-xs font-medium text-bad">
           {error}
         </p>
       )}
@@ -88,7 +88,7 @@ export default function DeloadCard({ model, onApply, onDismiss, onEnd }) {
             key={count}
             type="button"
             onClick={() => run(() => onApply?.(count))}
-            className="focus-ring min-h-11 rounded-[8px] bg-amber-300 px-3 text-sm font-black text-zinc-950 hover:bg-amber-200"
+            className="focus-ring btn btn-secondary min-h-11"
           >
             Apply for {count} sessions
           </button>
@@ -96,7 +96,7 @@ export default function DeloadCard({ model, onApply, onDismiss, onEnd }) {
         <button
           type="button"
           onClick={() => run(onDismiss)}
-          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          className="focus-ring btn btn-ghost min-h-11"
         >
           Not now
         </button>

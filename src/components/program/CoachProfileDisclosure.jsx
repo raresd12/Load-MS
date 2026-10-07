@@ -13,7 +13,7 @@ import {
 } from "../../lib/coachControlsView.js";
 
 const profileFieldClassName =
-  "focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-bold text-white placeholder:text-zinc-600";
+  "focus-ring min-h-11 field w-full";
 
 const TRI_STATE_OPTIONS = [
   { value: "", label: "classified" },
@@ -98,26 +98,26 @@ export default function CoachProfileDisclosure({
     <details
       open={isOpen}
       onToggle={(event) => setIsOpen(event.currentTarget.open)}
-      className="rounded-[8px] border border-zinc-800 bg-[#111111]"
+      className="card-inset"
       data-testid="coach-profile-disclosure"
     >
-      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-black text-zinc-100">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold text-text-1">
         Advanced: coach profile
-        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-zinc-400 transition ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden="true" size={16} className={`shrink-0 text-text-2 transition ${isOpen ? "rotate-180" : ""}`} />
       </summary>
-      <div className="space-y-3 border-t border-zinc-800 p-3">
-        <p className="text-xs font-semibold leading-5 text-zinc-400">{COACH_PROFILE_NOTE}</p>
+      <div className="space-y-3 border-t border-line p-3">
+        <p className="text-xs font-semibold leading-5 text-text-2">{COACH_PROFILE_NOTE}</p>
         <dl className="grid gap-1.5 min-[430px]:grid-cols-2">
           {COACH_PROFILE_FIELDS.map((field) => (
-            <div key={field} className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
-              <dt className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-400">{COACH_PROFILE_LABELS[field]}</dt>
-              <dd className="mt-0.5 text-xs font-bold text-zinc-200">{description[field]}</dd>
+            <div key={field} className="rounded-control bg-surface-1 px-3 py-2">
+              <dt className="label">{COACH_PROFILE_LABELS[field]}</dt>
+              <dd className="mt-0.5 text-xs font-semibold text-text-1">{description[field]}</dd>
             </div>
           ))}
         </dl>
 
         {readOnlyNote ? (
-          <p className="rounded-[8px] border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-semibold leading-5 text-amber-100">
+          <p className="rounded-block bg-warn-tint px-3 py-2 text-xs font-semibold leading-5 text-warn">
             {readOnlyNote}
           </p>
         ) : (
@@ -133,22 +133,22 @@ export default function CoachProfileDisclosure({
               <SelectRow id={`profile-cap-${programExerciseId}`} label={COACH_PROFILE_LABELS.canIncreaseLoad} value={form.canIncreaseLoad} onChange={(value) => updateField("canIncreaseLoad", value)} options={TRI_STATE_OPTIONS} />
             </div>
             {errors.length > 0 && (
-              <div role="alert" className="rounded-[8px] border border-red-400/30 bg-red-500/10 px-3 py-2">
+              <div role="alert" className="rounded-block bg-bad-tint px-3 py-2">
                 {errors.map((error) => (
-                  <p key={error} className="text-sm font-semibold text-red-100">
+                  <p key={error} className="text-sm font-semibold text-bad">
                     {error}
                   </p>
                 ))}
               </div>
             )}
             {saveMessage && (
-              <p className="rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-black text-lime-100">{saveMessage}</p>
+              <p className="rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">{saveMessage}</p>
             )}
             <button
               type="button"
               onClick={save}
               disabled={!canEdit}
-              className="focus-ring min-h-11 w-full rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              className="focus-ring min-h-11 btn btn-ghost w-full px-3 sm:w-auto"
             >
               {draftMode ? "Set Coach Profile in Draft" : "Save Coach Profile"}
             </button>
@@ -162,7 +162,7 @@ export default function CoachProfileDisclosure({
 function SelectRow({ id, label, value, onChange, options }) {
   return (
     <label htmlFor={id} className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">{label}</span>
+      <span className="label mb-2">{label}</span>
       <select id={id} value={value} onChange={(event) => onChange(event.target.value)} className={profileFieldClassName}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -177,7 +177,7 @@ function SelectRow({ id, label, value, onChange, options }) {
 function InputRow({ id, label, value, onChange, placeholder = "" }) {
   return (
     <label htmlFor={id} className="block">
-      <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">{label}</span>
+      <span className="label mb-2">{label}</span>
       <input
         id={id}
         type="text"

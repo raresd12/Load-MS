@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Download, Trash2, Upload } from "lucide-react";
+import { ChevronDown, Download, Trash2, Upload } from "lucide-react";
 import { getLocalDateKey } from "../lib/date.js";
 import {
   createLocalBackup,
@@ -119,47 +119,47 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           App Settings
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">Settings</h2>
-        <div className="mt-4 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-3">
-          <p className="text-sm font-black text-lime-100">Guest Mode</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-lime-100/90">
+        <h2 className="mt-1 text-[22px] font-semibold text-text-1">Settings</h2>
+        <div className="mt-4 rounded-block bg-accent-tint px-3 py-3">
+          <p className="text-sm font-semibold text-accent-soft">Guest Mode</p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-accent-soft">
             Your data is saved only on this device/browser.
           </p>
         </div>
       </section>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-sm font-black text-white">Backup</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-zinc-400">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="text-sm font-semibold text-text-1">Backup</p>
+        <p className="mt-1 text-sm font-semibold leading-6 text-text-2">
           Export a JSON backup before switching phones, clearing browser data, or testing risky changes.
         </p>
         <button
           type="button"
           onClick={handleExportData}
-          className="focus-ring mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+          className="focus-ring btn btn-primary mt-4 flex min-h-12 w-full items-center justify-center gap-2"
         >
           <Download aria-hidden="true" size={18} />
           Export Data
         </button>
         {exportMessage && (
-          <p role="status" className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+          <p role="status" className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">
             {exportMessage}
           </p>
         )}
         {exportError && (
-          <p role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad">
             {exportError}
           </p>
         )}
       </section>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-sm font-black text-white">Import</p>
-        <p className="mt-1 text-sm font-semibold leading-6 text-zinc-400">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="text-sm font-semibold text-text-1">Import</p>
+        <p className="mt-1 text-sm font-semibold leading-6 text-text-2">
           Choose a backup exported from this app. You will confirm before anything is restored.
         </p>
         <input
@@ -172,31 +172,31 @@ export default function SettingsPage() {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="focus-ring mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          className="focus-ring btn btn-secondary mt-4 flex min-h-12 w-full items-center justify-center gap-2"
         >
           <Upload aria-hidden="true" size={18} />
           Import Data
         </button>
 
         {importError && (
-          <p role="alert" className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad">
             {importError}
           </p>
         )}
 
         {importMessage && (
-          <p role="status" className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100">
+          <p role="status" className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">
             {importMessage}
           </p>
         )}
 
         {pendingImport && (
-          <div className="mt-4 rounded-[8px] border border-amber-300/50 bg-amber-300/10 p-3">
-            <p className="text-sm font-black text-amber-100">Confirm import</p>
-            <p className="mt-1 text-sm font-semibold leading-6 text-amber-100/90">
+          <div className="mt-4 rounded-block bg-warn-tint p-3">
+            <p className="text-sm font-semibold text-warn">Confirm import</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-warn">
               Import `{pendingImport.fileName}` and replace local RPE Tracker data on this device?
             </p>
-            <p className="mt-2 text-xs font-bold text-amber-100/80">
+            <p className="mt-2 text-xs font-semibold text-warn">
               Recognized data groups: {pendingImport.validation.recognizedKeys.length}
               {pendingImport.validation.ignoredKeys.length
                 ? ` | Ignored unknown groups: ${pendingImport.validation.ignoredKeys.length}`
@@ -206,14 +206,14 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={handleConfirmImport}
-                className="focus-ring min-h-11 rounded-[8px] bg-amber-300 px-3 text-sm font-black text-zinc-950"
+                className="focus-ring btn btn-primary min-h-11 px-3 text-sm"
               >
                 Import Backup
               </button>
               <button
                 type="button"
                 onClick={() => setPendingImport(null)}
-                className="focus-ring min-h-11 rounded-[8px] border border-amber-300/60 px-3 text-sm font-black text-amber-100"
+                className="focus-ring btn btn-secondary min-h-11 px-3 text-sm"
               >
                 Cancel
               </button>
@@ -222,12 +222,12 @@ export default function SettingsPage() {
         )}
       </section>
 
-      <section className="rounded-[8px] border border-red-400/40 bg-red-400/10 p-3 min-[430px]:p-4">
+      <section className="rounded-block bg-bad-tint p-3 min-[430px]:p-4">
         <div className="flex items-start gap-3">
-          <Trash2 aria-hidden="true" size={20} className="mt-0.5 shrink-0 text-red-200" />
+          <Trash2 aria-hidden="true" size={20} className="mt-0.5 shrink-0 text-bad" />
           <div>
-            <p className="text-sm font-black text-red-100">Reset Local Data</p>
-            <p className="mt-1 text-sm font-semibold leading-6 text-red-100/90">
+            <p className="text-sm font-semibold text-bad">Reset Local Data</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-bad">
               This deletes local app data from this device/browser. After reload, the default program is seeded again.
             </p>
           </div>
@@ -239,21 +239,21 @@ export default function SettingsPage() {
               setIsResetOpen(true);
               setResetMessage("");
             }}
-            className="focus-ring mt-4 min-h-12 w-full rounded-[8px] border border-red-300/70 px-4 text-sm font-black text-red-100 hover:bg-red-300/10"
+            className="focus-ring btn btn-danger mt-4 min-h-12 w-full"
           >
             Reset Local Data
           </button>
         ) : (
           <div className="mt-4 space-y-3">
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-red-100/80">
+              <span className="label mb-2 text-bad">
                 Type RESET to confirm
               </span>
               <input
                 type="text"
                 value={resetText}
                 onChange={(event) => setResetText(event.target.value)}
-                className="focus-ring min-h-12 w-full rounded-[8px] border border-red-300/60 bg-[#111111] px-3 text-base font-black text-white"
+                className="focus-ring min-h-12 field w-full"
                 placeholder="RESET"
               />
             </label>
@@ -262,10 +262,8 @@ export default function SettingsPage() {
                 type="button"
                 disabled={resetText !== "RESET"}
                 onClick={handleResetLocalData}
-                className={`focus-ring min-h-12 rounded-[8px] px-4 text-sm font-black ${
-                  resetText === "RESET"
-                    ? "bg-red-300 text-zinc-950"
-                    : "cursor-not-allowed bg-red-300/20 text-red-100/50"
+                className={`focus-ring btn btn-danger min-h-12 px-4 text-sm ${
+                  resetText === "RESET" ? "border-bad" : ""
                 }`}
               >
                 Confirm Reset
@@ -277,7 +275,7 @@ export default function SettingsPage() {
                   setResetText("");
                   setResetMessage("");
                 }}
-                className="focus-ring min-h-12 rounded-[8px] border border-red-300/60 px-4 text-sm font-black text-red-100"
+                className="focus-ring min-h-12 btn btn-secondary"
               >
                 Cancel
               </button>
@@ -285,21 +283,22 @@ export default function SettingsPage() {
           </div>
         )}
         {resetMessage && (
-          <p role="alert" className="mt-3 rounded-[8px] bg-red-300/10 px-3 py-2 text-sm font-bold text-red-100">
+          <p role="alert" className="mt-3 rounded-control bg-bad-tint px-3 py-2 text-sm font-medium text-bad">
             {resetMessage}
           </p>
         )}
       </section>
 
-      <details className="rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-2">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center text-sm font-black text-zinc-100">
+      <details className="card py-2">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
           Local data groups included in backups
+          <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron text-text-2" />
         </summary>
         <div className="mt-2 grid gap-1">
           {trackedKeys.map((key) => (
             <code
               key={key}
-              className="break-all rounded-[8px] bg-[#111111] px-2 py-1 text-xs font-bold text-zinc-300"
+              className="card-inset break-all px-2 py-1 font-mono text-xs text-text-2"
             >
               {key}
             </code>

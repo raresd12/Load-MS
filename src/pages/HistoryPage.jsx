@@ -26,9 +26,9 @@ import { isRecoverySession } from "../lib/sessionLog.js";
 import { adjustInputValue } from "../lib/sessionNormalize.js";
 
 const ADHERENCE_BADGE_CLASSES = {
-  complete: "border-lime-300/50 bg-lime-300/10 text-lime-100",
-  partial: "border-amber-300/50 bg-amber-300/10 text-amber-100",
-  minimal: "border-zinc-700 bg-zinc-800 text-zinc-200",
+  complete: "pill-good",
+  partial: "pill-warn",
+  minimal: "",
 };
 
 export default function HistoryPage({
@@ -57,32 +57,33 @@ export default function HistoryPage({
 
   if (!sortedSessions.length) {
     return (
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-5 text-center min-[430px]:p-6">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card p-5 text-center min-[430px]:p-6">
+        <p className="label-accent">
           Workout History
         </p>
-        <h2 className="mt-2 text-xl font-black text-white">No sessions logged yet.</h2>
-        <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+        <h2 className="mt-2 text-[17px] font-semibold text-text-1">No sessions logged yet.</h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
           Saved workouts will appear here with exact sets, reps, kg, and RPE.
         </p>
       </section>
     );
   }
 
+  // Decisions HV-1 / HV-11: numbers are tabular; the page root sets it once.
   return (
-    <div className="space-y-4">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <div className="space-y-4 tabular-nums">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           Workout History
         </p>
         <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-2xl font-black text-white">History</h2>
-            <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+            <h2 className="text-[22px] font-semibold text-text-1">History</h2>
+            <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
               Exact saved sessions. Progress Analytics handles trends.
             </p>
           </div>
-          <span className="rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-black text-zinc-200">
+          <span className="card-inset px-3 py-2 text-sm font-semibold text-text-1">
             {sortedSessions.length} sessions
           </span>
         </div>
@@ -155,29 +156,29 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
   }
 
   return (
-    <article className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+    <article className="card p-3 min-[430px]:p-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+          <p className="label-accent">
             {formatHistoryDateTime(session.date)}
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <h3 className="break-words text-lg font-black text-white">{summary.dayName}</h3>
+            <h3 className="break-words text-[17px] font-semibold text-text-1">{summary.dayName}</h3>
             {adherenceBadge && (
               <span
                 data-testid="adherence-badge"
-                className={`rounded-[8px] border px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] ${ADHERENCE_BADGE_CLASSES[adherenceBadge.tone]}`}
+                className={`pill ${ADHERENCE_BADGE_CLASSES[adherenceBadge.tone]}`}
               >
                 {adherenceBadge.label}
               </span>
             )}
           </div>
-          <p className="mt-1 text-sm font-semibold leading-6 text-zinc-400">
+          <p className="mt-1 text-sm font-semibold leading-6 text-text-2">
             {summary.programName}
             {summary.dayFocus ? ` | ${summary.dayFocus}` : ""}
           </p>
           {summary.notes.length > 0 && (
-            <p className="mt-2 line-clamp-2 text-sm font-semibold leading-6 text-zinc-300">
+            <p className="mt-2 line-clamp-2 text-sm font-semibold leading-6 text-text-2">
               {summary.notes[0]}
             </p>
           )}
@@ -202,7 +203,7 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
                 setActionError("");
                 setIsEditing((current) => !current);
               }}
-              className="focus-ring flex min-h-10 items-center gap-2 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+              className="focus-ring btn btn-secondary flex items-center gap-2 px-3 text-xs"
             >
               <Pencil aria-hidden="true" size={14} />
               {isEditing ? "Close Edit" : "Edit"}
@@ -212,14 +213,14 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
             <button
               type="button"
               onClick={handleDelete}
-              className="focus-ring flex min-h-10 items-center gap-2 rounded-[8px] border border-red-400/40 px-3 text-xs font-black text-red-100 hover:bg-red-400/10"
+              className="focus-ring btn btn-danger flex items-center gap-2 px-3 text-xs"
             >
               <Trash2 aria-hidden="true" size={14} />
               Delete
             </button>
           )}
           {!canEdit && canDelete && (
-            <p className="text-xs font-semibold leading-5 text-zinc-400">
+            <p className="text-xs font-semibold leading-5 text-text-2">
               {isRecoverySession(session)
                 ? "Recovery sessions can only be deleted."
                 : "This session's program or day no longer exists, so it can only be deleted."}
@@ -231,7 +232,7 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
       {actionError && (
         <p
           role="alert"
-          className="mt-2 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+          className="mt-2 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
         >
           {actionError}
         </p>
@@ -254,20 +255,20 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
         />
       )}
 
-      <details className="mt-3 rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+      <details className="card-inset mt-3 px-3 py-2">
+        <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
           Session details
-          <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+          <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron text-text-2" />
         </summary>
 
         {summary.exerciseGroups.length ? (
-          <div className="space-y-3 border-t border-zinc-800 pt-3">
+          <div className="space-y-3 border-t border-line pt-3">
             {summary.exerciseGroups.map((exercise) => (
               <HistoryExerciseDetail key={exercise.key} exercise={exercise} />
             ))}
           </div>
         ) : (
-          <div className="border-t border-zinc-800 pt-3">
+          <div className="border-t border-line pt-3">
             <ProgressEmptyState
               title="No logged set rows found."
               body="This looks like an older or recovery-only session. Notes are still preserved below."
@@ -276,13 +277,13 @@ function HistorySessionCard({ session, exerciseLookup, onDeleteSession, onUpdate
         )}
 
         {summary.notes.length > 0 && (
-          <div className="mt-3 rounded-[8px] border border-zinc-800 bg-zinc-900 px-3 py-3">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+          <div className="card-inset mt-3">
+            <p className="label">
               Notes
             </p>
             <div className="mt-2 space-y-2">
               {summary.notes.map((note) => (
-                <p key={note} className="text-sm font-semibold leading-6 text-zinc-300">
+                <p key={note} className="text-sm font-semibold leading-6 text-text-2">
                   {note}
                 </p>
               ))}
@@ -348,11 +349,11 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
   }
 
   return (
-    <div className="mt-3 space-y-3 rounded-[8px] border border-lime-300/30 bg-[#111111] p-3">
-      <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+    <div className="card-inset mt-3 space-y-3">
+      <p className="label-accent">
         Edit session
       </p>
-      <p className="text-xs font-semibold leading-5 text-zinc-400">
+      <p className="text-xs font-semibold leading-5 text-text-2">
         Date, program and day stay as saved. After saving, the next plan for this day is rebuilt
         from the most recent remaining session.
       </p>
@@ -368,8 +369,8 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
           exercise.loadType === "bodyweight" || exercise.loadType === "optionalExternal";
 
         return (
-          <div key={exercise.id} className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
-            <p className="break-words text-sm font-black text-white">{exercise.name}</p>
+          <div key={exercise.id} className="card-inset">
+            <p className="break-words text-sm font-semibold text-text-1">{exercise.name}</p>
             <div className="mt-2 space-y-2">
               {draftExercise.sets.map((set, setIndex) => {
                 // H5-13: a timed / distance set is edited in its own count
@@ -379,9 +380,9 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
                 return (
                 <div
                   key={setIndex}
-                  className="rounded-[8px] border border-zinc-800 bg-[#111111] p-2"
+                  className="card-inset p-2"
                 >
-                  <p className="mb-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">
+                  <p className="label mb-2">
                     Set {setIndex + 1}
                   </p>
                   <div className="grid gap-2">
@@ -448,7 +449,7 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
         );
       })}
 
-      <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+      <div className="card-inset">
         <StepperInput
           label="Session RPE"
           value={form.sessionRpe}
@@ -465,14 +466,14 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
           placeholder="8"
         />
         <label className="mt-3 block">
-          <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">
+          <span className="label mb-1">
             Session notes
           </span>
           <textarea
             value={form.sessionNotes}
             onChange={(event) => updateField("sessionNotes", event.target.value)}
             rows={3}
-            className="focus-ring w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2 text-sm font-semibold text-white"
+            className="focus-ring field w-full py-2"
           />
         </label>
       </div>
@@ -480,7 +481,7 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
       {errors.length > 0 && (
         <div
           role="alert"
-          className="rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100"
+          className="rounded-block bg-bad-tint px-3 py-2 text-xs font-medium text-bad"
         >
           {errors.slice(0, 6).map((error) => (
             <p key={error}>{error}</p>
@@ -492,14 +493,14 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
         <button
           type="button"
           onClick={save}
-          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+          className="focus-ring min-h-11 btn btn-primary"
         >
           Save Changes
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+          className="focus-ring min-h-11 btn btn-secondary"
         >
           Cancel
         </button>
@@ -510,23 +511,23 @@ function HistorySessionEditor({ session, day, onCancel, onSave }) {
 
 function HistoryExerciseDetail({ exercise }) {
   return (
-    <div className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
+    <div className="rounded-block bg-surface-1 p-3">
       <div className="flex flex-col gap-1 min-[430px]:flex-row min-[430px]:items-end min-[430px]:justify-between">
         <div className="min-w-0">
-          <p className="break-words text-sm font-black text-white">{exercise.name}</p>
-          <p className="mt-1 text-xs font-semibold text-zinc-400">
+          <p className="break-words text-sm font-semibold text-text-1">{exercise.name}</p>
+          <p className="mt-1 text-xs font-semibold text-text-2">
             {exercise.sets.length} sets | Volume {formatVolume(exercise.totalVolume)} | Avg RPE {formatAverage(exercise.averageRpe)}
           </p>
         </div>
         {exercise.programExerciseId && (
-          <span className="w-fit rounded-[8px] bg-zinc-800 px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-zinc-400">
+          <span className="pill w-fit">
             Program linked
           </span>
         )}
       </div>
 
       <div className="mt-3 space-y-1">
-        <div className="grid grid-cols-[56px_1fr_1fr_1fr] gap-2 px-2 text-[10px] font-black uppercase tracking-[0.1em] text-zinc-400">
+        <div className="grid grid-cols-[56px_1fr_1fr_1fr] gap-2 px-2 text-[10px] font-medium text-text-2">
           <span>Set</span>
           <span>Count</span>
           <span>Kg</span>
@@ -535,9 +536,9 @@ function HistoryExerciseDetail({ exercise }) {
         {exercise.sets.map((set, index) => (
           <div
             key={`${set.setNumber ?? index + 1}-${index}`}
-            className="grid min-h-10 grid-cols-[56px_1fr_1fr_1fr] items-center gap-2 rounded-[8px] border border-zinc-800 bg-[#111111] px-2 text-sm font-bold text-zinc-200"
+            className="card-inset grid min-h-10 grid-cols-[56px_1fr_1fr_1fr] items-center gap-2 px-2 text-sm font-semibold text-text-1"
           >
-            <span className="text-zinc-400">S{set.setNumber ?? index + 1}</span>
+            <span className="text-text-2">S{set.setNumber ?? index + 1}</span>
             <span>{formatHistorySetCount(set)}</span>
             <span>{formatHistoryWeight(set.weight)}</span>
             <span>{Number.isFinite(set.rpe) ? set.rpe : "-"}</span>

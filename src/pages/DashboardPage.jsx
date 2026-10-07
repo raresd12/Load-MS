@@ -16,19 +16,19 @@ function DashboardTodayWorkoutCard({ day, plan, isLoggedToday, onStartWorkout, o
 
   if (day.type === "recovery") {
     return (
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card">
+        <p className="label-accent">
           Up next
         </p>
-        <h3 className="mt-1 text-xl font-black text-white">{day.name}</h3>
-        <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
-        <p className="mt-3 text-sm font-semibold text-zinc-300">
+        <h3 className="mt-1 text-[17px] font-semibold text-text-1">{day.name}</h3>
+        <p className="mt-1 text-sm font-semibold text-text-2">{day.focus}</p>
+        <p className="mt-3 text-sm font-semibold text-text-2">
           Easy day. Move, recover, and let the hard work settle in.
         </p>
         <button
           type="button"
           onClick={() => onGoToWorkoutLog(day.id)}
-          className="focus-ring mt-4 min-h-11 w-full rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+          className="focus-ring btn btn-primary mt-4 min-h-11 w-full sm:w-auto"
         >
           Log recovery day
         </button>
@@ -44,37 +44,37 @@ function DashboardTodayWorkoutCard({ day, plan, isLoggedToday, onStartWorkout, o
   );
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
+    <section className="card">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          <p className="label-accent">
             Up next
           </p>
-          <h3 className="mt-1 break-words text-xl font-black text-white">{day.name}</h3>
-          <p className="mt-1 text-sm font-semibold text-zinc-400">{day.focus}</p>
+          <h3 className="mt-1 break-words text-[17px] font-semibold text-text-1">{day.name}</h3>
+          <p className="mt-1 text-sm font-semibold text-text-2">{day.focus}</p>
         </div>
         {isLoggedToday && (
-          <span className="shrink-0 rounded-[8px] border border-lime-300/50 bg-lime-300/10 px-2 py-1 text-[11px] font-black uppercase tracking-[0.1em] text-lime-100">
+          <span className="pill pill-good shrink-0">
             Logged today
           </span>
         )}
       </div>
 
-      <p className="mt-3 text-xs font-bold text-zinc-400">
+      <p className="mt-3 text-xs font-semibold text-text-2">
         {day.exercises.length} exercises | {plannedSetCount} working sets
       </p>
 
-      <ul className="mt-3 space-y-2">
+      <ul className="mt-3 divide-y divide-line border-y border-line">
         {previewExercises.map((exercise) => {
           const planExercise = getPlanExercise(plan, exercise.id);
 
           return (
             <li
               key={exercise.id}
-              className="rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2"
+              className="py-2.5"
             >
-              <p className="text-sm font-black text-white">{exercise.name}</p>
-              <p className="mt-0.5 text-xs font-bold text-zinc-400">
+              <p className="text-sm font-semibold text-text-1">{exercise.name}</p>
+              <p className="mt-0.5 text-xs font-medium tabular-nums text-text-2">
                 {planExercise
                   ? `${formatSetsReps(planExercise)} | ${formatWeight(planExercise.recommendedWeight, exercise)} | RPE ${planExercise.targetRPE}`
                   : `${exercise.sets}x ${exercise.repsLabel} | RPE ${exercise.targetRPE}`}
@@ -84,7 +84,7 @@ function DashboardTodayWorkoutCard({ day, plan, isLoggedToday, onStartWorkout, o
         })}
       </ul>
       {remainingCount > 0 && (
-        <p className="mt-2 text-xs font-bold text-zinc-400">
+        <p className="mt-2 text-xs font-semibold text-text-2">
           + {remainingCount} more in Workouts
         </p>
       )}
@@ -93,14 +93,14 @@ function DashboardTodayWorkoutCard({ day, plan, isLoggedToday, onStartWorkout, o
         <button
           type="button"
           onClick={() => onStartWorkout(day.id)}
-          className="focus-ring min-h-12 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+          className="focus-ring min-h-12 btn btn-primary"
         >
           See full plan
         </button>
         <button
           type="button"
           onClick={() => onGoToWorkoutLog(day.id)}
-          className="focus-ring min-h-12 rounded-[8px] border border-zinc-700 bg-[#171717] px-4 text-sm font-black text-white hover:bg-zinc-800"
+          className="focus-ring min-h-12 btn btn-secondary"
         >
           Start logging
         </button>
@@ -142,28 +142,28 @@ export default function DashboardPage({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card">
+        <p className="label-accent">
           Today
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">
+        <h2 className="mt-1 text-[22px] font-semibold text-text-1">
           {formatDateKey(todayKey)}
         </h2>
-        <p className="mt-1 text-sm font-semibold text-zinc-400">
+        <p className="mt-1 text-sm font-semibold text-text-2">
           {activeProgram?.name ?? workoutProgram.name}
         </p>
 
         <div
-          className={`mt-4 rounded-[8px] border px-3 py-3 ${
+          className={`mt-4 rounded-block border px-3 py-3 ${
             todayReadinessEntry
-              ? readinessStyles[todayReadinessSummary.status] ?? "border-zinc-700 bg-[#171717] text-zinc-200"
-              : "border-zinc-700 bg-[#171717] text-zinc-200"
+              ? readinessStyles[todayReadinessSummary.status] ?? "border-line bg-surface-2 text-text-1"
+              : "border-line bg-surface-2 text-text-1"
           }`}
         >
-          <p className="text-xs font-black uppercase tracking-[0.14em]">
+          <p className="label text-current">
             Readiness: {todayReadinessEntry ? copy.label : "Not saved yet"}
           </p>
-          <p className="mt-1 text-sm font-semibold">
+          <p className="text-sm font-medium text-text-1">
             {todayReadinessEntry
               ? copy.guidance
               : "A 30-second check-in sharpens today's coaching."}
@@ -172,7 +172,7 @@ export default function DashboardPage({
             <button
               type="button"
               onClick={onGoToReadiness}
-              className="focus-ring mt-3 min-h-10 rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+              className="focus-ring btn btn-primary mt-3"
             >
               Do the check-in
             </button>
@@ -190,8 +190,8 @@ export default function DashboardPage({
         onGoToWorkoutLog={onGoToWorkoutLog}
       />
 
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card">
+        <p className="label-accent">
           Last 7 days
         </p>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -205,15 +205,15 @@ export default function DashboardPage({
         </div>
       </section>
 
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-        <p className="text-sm font-black text-white">Latest session</p>
+      <section className="card">
+        <p className="label">Latest session</p>
         {lastSession ? (
           <div className="mt-2 space-y-1">
-            <p className="text-sm font-semibold text-zinc-300">
+            <p className="text-sm font-semibold text-text-2">
               {lastSession.dayName} - {new Date(lastSession.date).toLocaleString()}
             </p>
             {lastSessionMetrics && lastSessionMetrics.setCount > 0 && (
-              <p className="text-xs font-bold text-zinc-400">
+              <p className="text-xs font-semibold text-text-2">
                 {lastSessionMetrics.setCount} sets
                 {lastSessionMetrics.volume > 0
                   ? ` | ${formatVolume(lastSessionMetrics.volume)} total`
@@ -222,7 +222,7 @@ export default function DashboardPage({
             )}
           </div>
         ) : (
-          <p className="mt-2 text-sm font-semibold text-zinc-400">
+          <p className="mt-2 text-sm font-semibold text-text-2">
             No sessions logged yet. Your first one starts the trend lines.
           </p>
         )}

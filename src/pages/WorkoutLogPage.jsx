@@ -27,12 +27,12 @@ function WorkoutLogSummary({
   );
 
   return (
-    <section className="hidden rounded-[8px] border border-zinc-800 bg-zinc-900 p-4 sm:block">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+    <section className="card hidden sm:block">
+      <p className="label-accent">
         Workout Log
       </p>
-      <h2 className="mt-1 text-2xl font-black text-white">{day.name}</h2>
-      <p className="mt-2 text-sm font-semibold text-zinc-400">
+      <h2 className="mt-1 text-[22px] font-semibold text-text-1">{day.name}</h2>
+      <p className="mt-2 text-sm font-semibold text-text-2">
         {activeProgram?.name ?? workoutProgram.name} | {day.focus}
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
@@ -49,18 +49,18 @@ function WorkoutLogSummary({
         />
       </div>
       {savedReadinessEntry && (
-        <p className="mt-3 text-sm font-semibold text-zinc-300">
+        <p className="mt-3 text-sm font-semibold text-text-2">
           {readinessCopy.summary}
         </p>
       )}
-      <p className="mt-3 text-xs font-semibold text-zinc-400">
+      <p className="mt-3 text-xs font-semibold text-text-2">
         Change the day from the Training day selector above. Log only what you actually completed.
       </p>
       {!savedReadinessEntry && (
         <button
           type="button"
           onClick={onGoToReadiness}
-          className="focus-ring mt-3 min-h-10 rounded-[8px] border border-amber-300/60 px-3 text-sm font-black text-amber-100 hover:bg-amber-300/10"
+          className="focus-ring btn btn-secondary mt-3"
         >
           Go to Readiness
         </button>
@@ -253,7 +253,7 @@ export default function WorkoutLogPage({
       <button
         type="button"
         onClick={onSave}
-        className="focus-ring flex min-h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-5 text-base font-black text-zinc-950 shadow-lg shadow-lime-950/30 transition hover:bg-lime-200"
+        className="focus-ring btn btn-primary min-h-14 w-full px-5 text-base"
       >
         <Save aria-hidden="true" size={20} />
         Save workout / Generate next recommendation
@@ -274,12 +274,12 @@ function WorkoutSaveErrorNotice({ saveError }) {
   return (
     <section
       role="alert"
-      className="rounded-[8px] border border-red-400/50 bg-red-400/10 p-4"
+      className="card border border-bad/40"
     >
-      <p className="font-black text-red-100">{saveError.title}</p>
-      <p className="mt-1 text-sm font-semibold leading-6 text-red-100">{saveError.message}</p>
+      <p className="font-semibold text-bad">{saveError.title}</p>
+      <p className="mt-1 text-sm font-medium leading-6 text-text-1">{saveError.message}</p>
       {saveError.detail && saveError.code === "quota" && (
-        <p className="mt-1 break-words text-xs font-semibold text-red-200/80">{saveError.detail}</p>
+        <p className="mt-1 break-words text-xs font-medium text-text-2">{saveError.detail}</p>
       )}
     </section>
   );
@@ -291,15 +291,15 @@ function ValidationSummary({ errors }) {
   }
 
   return (
-    <section className="rounded-[8px] border border-red-400/50 bg-red-400/10 p-4">
-      <p className="font-black text-red-100">Finish the required log fields before saving.</p>
-      <ul className="mt-2 space-y-1 text-sm font-semibold text-red-100">
+    <section className="card border border-bad/40">
+      <p className="font-semibold text-bad">Finish the required log fields before saving.</p>
+      <ul className="mt-2 space-y-1 text-sm font-medium text-text-1">
         {errors.slice(0, 6).map((error) => (
           <li key={error}>{error}</li>
         ))}
       </ul>
       {errors.length > 6 && (
-        <p className="mt-2 text-sm font-semibold text-red-100">
+        <p className="mt-2 text-sm font-semibold text-bad">
           {errors.length - 6} more fields need attention.
         </p>
       )}
@@ -314,27 +314,27 @@ function RecoveryDay({ day, draft, onUpdateRecoveryActivity, onUpdateSessionFiel
         {day.activities.map((activity) => (
           <label
             key={activity}
-            className="flex min-h-12 items-center gap-3 rounded-[8px] border border-zinc-800 bg-[#171717] px-3"
+            className="card-inset flex min-h-12 items-center gap-3 px-3"
           >
             <input
               type="checkbox"
               checked={Boolean(draft.recoveryActivities[activity])}
               onChange={(event) => onUpdateRecoveryActivity(activity, event.target.checked)}
-              className="h-5 w-5 accent-lime-300"
+              className="h-5 w-5 accent-accent"
             />
-            <span className="font-bold text-white">{activity}</span>
+            <span className="font-medium text-text-1">{activity}</span>
           </label>
         ))}
       </div>
       <label className="mt-4 block">
-        <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">
+        <span className="label mb-2">
           Recovery notes
         </span>
           <textarea
             value={draft.recoveryNotes}
             onChange={(event) => onUpdateSessionField("recoveryNotes", event.target.value)}
             rows={3}
-            className="focus-ring min-h-16 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600 sm:min-h-24"
+            className="field min-h-16 w-full resize-y sm:min-h-24"
             placeholder="Light hoops, mobility quality, aches, what helped"
           />
       </label>
@@ -346,8 +346,8 @@ function SessionFeedback({ draft, onUpdateSessionField }) {
   return (
     <SectionShell title="Session RPE">
       <div className="grid gap-3 sm:grid-cols-[220px_1fr]">
-        <label className="rounded-[8px] border border-zinc-800 bg-[#171717] p-3">
-          <span className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">
+        <label className="card-inset">
+          <span className="label mb-2 flex items-center gap-2">
             <Activity aria-hidden="true" size={15} />
             1-10 score
           </span>
@@ -361,18 +361,18 @@ function SessionFeedback({ draft, onUpdateSessionField }) {
             step="0.5"
             value={draft.sessionRpe}
             onChange={(event) => onUpdateSessionField("sessionRpe", event.target.value)}
-            className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-lg font-black text-white"
+            className="field field-lg w-full"
           />
         </label>
-        <label className="rounded-[8px] border border-zinc-800 bg-[#171717] p-3">
-          <span className="mb-2 block text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">
+        <label className="card-inset">
+          <span className="label mb-2">
             Optional session notes
           </span>
           <textarea
             value={draft.sessionNotes}
             onChange={(event) => onUpdateSessionField("sessionNotes", event.target.value)}
             rows={3}
-            className="focus-ring min-h-16 w-full resize-y rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3 text-sm text-white placeholder:text-zinc-600 sm:min-h-24"
+            className="field min-h-16 w-full resize-y sm:min-h-24"
             placeholder="Anything that affected the session"
           />
         </label>

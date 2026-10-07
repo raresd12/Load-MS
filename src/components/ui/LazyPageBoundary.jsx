@@ -41,11 +41,11 @@ export default class LazyPageBoundary extends Component {
     const pageLabel = this.props.pageLabel ?? "This";
 
     return (
-      <div role="alert" className="rounded-[8px] border border-amber-300/50 bg-amber-300/10 p-4">
-        <p className="text-sm font-black text-amber-100">
+      <div role="alert" className="card border border-warn/30">
+        <p className="text-[15px] font-semibold text-warn">
           Could not load the {pageLabel} page
         </p>
-        <p className="mt-1 text-xs font-semibold leading-5 text-amber-100/90">
+        <p className="mt-1 text-sm leading-6 text-text-2">
           The app may be offline or a newer version was installed. Your training data is safe
           and the rest of the app keeps working. Try again, or reload the app if it keeps
           failing.
@@ -54,14 +54,14 @@ export default class LazyPageBoundary extends Component {
           <button
             type="button"
             onClick={this.handleRetry}
-            className="focus-ring min-h-11 rounded-[8px] bg-amber-300 px-4 text-xs font-black text-zinc-950 hover:bg-amber-200"
+            className="btn btn-primary"
           >
             Try again
           </button>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="focus-ring min-h-11 rounded-[8px] border border-amber-300/50 px-4 text-xs font-black text-amber-100 hover:bg-amber-300/10"
+            className="btn btn-secondary"
           >
             Reload App
           </button>

@@ -1414,10 +1414,10 @@ export function buildBestRecentSetInsight(bestRecentSet) {
 
 export function createProgressInsight({ title, status, value, body, tone }) {
   const toneClasses = {
-    good: "border border-lime-300/30 bg-lime-300/10 text-lime-100",
-    steady: "border border-sky-300/30 bg-sky-300/10 text-sky-100",
-    caution: "border border-amber-300/30 bg-amber-300/10 text-amber-100",
-    neutral: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+    good: "tone-good",
+    steady: "tone-steady",
+    caution: "tone-caution",
+    neutral: "tone-neutral",
   };
 
   return {
@@ -1948,7 +1948,7 @@ export function buildExerciseProgressTrend(recentSessions) {
       label: "Not enough data",
       body: "Log at least two useful sessions before reading the trend.",
       status: "not_enough_data",
-      toneClass: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+      toneClass: "tone-neutral",
     };
   }
 
@@ -1961,7 +1961,7 @@ export function buildExerciseProgressTrend(recentSessions) {
       label: "Not comparable",
       body: `${comparability.reason} The trend restarts from this session.`,
       status: "not_comparable",
-      toneClass: "border border-zinc-700 bg-zinc-800 text-zinc-300",
+      toneClass: "tone-neutral",
     };
   }
 
@@ -1976,7 +1976,7 @@ export function buildExerciseProgressTrend(recentSessions) {
       label: "Improving",
       body: `${latestMetric.label} improved versus last time. Keep building without forcing jumps.`,
       status: "improving",
-      toneClass: "border border-lime-300/30 bg-lime-300/10 text-lime-100",
+      toneClass: "tone-good",
     };
   }
 
@@ -1985,7 +1985,7 @@ export function buildExerciseProgressTrend(recentSessions) {
       label: "Regressing",
       body: "Performance dipped while RPE was high. Treat this as a fatigue warning, not a panic signal.",
       status: "regressing",
-      toneClass: "border border-amber-300/30 bg-amber-300/10 text-amber-100",
+      toneClass: "tone-caution",
     };
   }
 
@@ -1996,7 +1996,7 @@ export function buildExerciseProgressTrend(recentSessions) {
         ? "Performance dipped, but RPE was not clearly high. Watch the next session before reacting."
         : "Recent sessions look similar. Keep chasing clean reps or better control.",
     status: "stable",
-    toneClass: "border border-sky-300/30 bg-sky-300/10 text-sky-100",
+    toneClass: "tone-steady",
   };
 }
 

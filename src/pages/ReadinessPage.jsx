@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Activity, Save } from "lucide-react";
-import { getReadinessCopy, readinessStyles, wellnessIcons, wellnessScaleLabels } from "../components/readiness/readinessCopy.js";
+import { getReadinessCopy, readinessSaveMessageClass, readinessStyles, wellnessIcons, wellnessScaleLabels } from "../components/readiness/readinessCopy.js";
 import SectionShell from "../components/ui/SectionShell.jsx";
 import { formatDateKey } from "../lib/date.js";
 import { wellnessMetrics } from "../lib/progression.js";
@@ -30,16 +30,16 @@ export default function ReadinessPage({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card">
+        <p className="label-accent">
           Morning check-in
         </p>
-        <h2 className="mt-1 text-xl font-black text-white">
+        <h2 className="mt-1 text-[17px] font-semibold text-text-1">
           Check-in for: {formatDateKey(todayDateKey)}
         </h2>
         <p
           data-testid="readiness-save-state"
-          className="mt-2 text-sm font-semibold text-zinc-300"
+          className={`mt-2 text-sm font-semibold ${readinessSaveMessageClass(saveMessage)}`}
         >
           {saveMessage ||
             (savedEntry
@@ -50,18 +50,18 @@ export default function ReadinessPage({
 
       {savedEntry && !isEditing ? (
         <section
-          className={`rounded-[8px] border p-4 ${
+          className={`rounded-control border p-4 ${
             readinessStyles[savedReadiness.status] ?? readinessStyles.yellow
           }`}
         >
-          <p className="text-xs font-black uppercase tracking-[0.14em] opacity-80">
+          <p className="label text-current">
             Readiness loaded for today
           </p>
-          <h2 className="mt-2 text-xl font-black">{copy.label}</h2>
-          <p className="mt-1 text-sm font-semibold opacity-90">
+          <h2 className="mt-2 text-[17px] font-semibold">{copy.label}</h2>
+          <p className="mt-1 text-sm font-semibold">
             Score: {savedReadiness.averageScore.toFixed(1)} / 5
           </p>
-          <p className="mt-2 text-sm font-semibold opacity-90">{copy.guidance}</p>
+          <p className="mt-2 text-sm font-semibold">{copy.guidance}</p>
           <ReadinessValuesSummary wellness={savedEntry.wellness} />
           <button
             type="button"
@@ -69,7 +69,7 @@ export default function ReadinessPage({
               onBeginEdit?.();
               setIsEditing(true);
             }}
-            className="focus-ring mt-4 min-h-11 rounded-[8px] border border-current px-4 text-sm font-black"
+            className="focus-ring mt-4 min-h-11 rounded-control border border-current px-4 text-sm font-semibold"
           >
             Edit Readiness
           </button>
@@ -85,7 +85,7 @@ export default function ReadinessPage({
           <button
             type="button"
             onClick={handleSave}
-            className="focus-ring flex min-h-14 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-5 text-base font-black text-zinc-950 shadow-lg shadow-lime-950/30 transition hover:bg-lime-200"
+            className="focus-ring btn btn-primary flex min-h-14 w-full items-center justify-center gap-2 px-5 text-base"
           >
             <Save aria-hidden="true" size={20} />
             Save today's readiness
@@ -102,11 +102,11 @@ function ReadinessValuesSummary({ wellness }) {
   return (
     <div className="mt-4 grid grid-cols-2 gap-2 min-[430px]:grid-cols-5">
       {wellnessMetrics.map((metric) => (
-        <div key={metric.id} className="rounded-[8px] bg-black/15 px-2 py-2">
-          <p className="text-[10px] font-black uppercase tracking-[0.12em] opacity-70">
+        <div key={metric.id} className="rounded-block bg-surface-1 px-2 py-2">
+          <p className="label text-current">
             {metric.label}
           </p>
-          <p className="mt-1 text-sm font-black">{normalizedWellness[metric.id]}</p>
+          <p className="mt-1 text-sm font-semibold">{normalizedWellness[metric.id]}</p>
         </div>
       ))}
     </div>
@@ -120,12 +120,12 @@ function WellnessCheckIn({ wellness, readiness, onUpdateWellness }) {
     <SectionShell eyebrow="Before training" title="Daily Wellness Check-In">
       <div
         data-testid="training-readiness"
-        className={`mb-4 rounded-[8px] border px-3 py-3 ${
+        className={`mb-4 rounded-control border px-3 py-3 ${
           readinessStyles[readiness.status] ?? readinessStyles.yellow
         }`}
       >
-        <p className="text-sm font-black">{copy.title}</p>
-        <p className="mt-1 text-xs font-semibold opacity-90">
+        <p className="text-sm font-semibold">{copy.title}</p>
+        <p className="mt-1 text-xs font-semibold">
           {copy.body} Average {readiness.averageScore.toFixed(1)} / 5
           {readiness.lowMetrics.length ? ` | Low: ${readiness.lowMetrics.join(", ")}` : ""}
         </p>
@@ -138,13 +138,13 @@ function WellnessCheckIn({ wellness, readiness, onUpdateWellness }) {
           return (
             <div
               key={metric.id}
-              className="grid gap-2 rounded-[8px] border border-zinc-800 bg-[#171717] p-3 sm:grid-cols-[150px_1fr]"
+              className="card-inset grid gap-2 sm:grid-cols-[150px_1fr]"
             >
               <div className="flex items-center gap-2">
-                <Icon aria-hidden="true" size={17} className="text-lime-300" />
+                <Icon aria-hidden="true" size={17} className="text-accent-soft" />
                 <div>
-                  <p className="text-sm font-black text-white">{metric.label}</p>
-                  <p className="text-xs font-semibold text-zinc-400">
+                  <p className="text-sm font-semibold text-text-1">{metric.label}</p>
+                  <p className="text-xs font-semibold text-text-2">
                     {wellnessScaleLabels[value]}
                   </p>
                 </div>
@@ -159,10 +159,10 @@ function WellnessCheckIn({ wellness, readiness, onUpdateWellness }) {
                       type="button"
                       onClick={() => onUpdateWellness(metric.id, score)}
                       aria-label={`${metric.label} ${score}: ${wellnessScaleLabels[score]}`}
-                      className={`focus-ring min-h-11 rounded-[8px] border text-sm font-black transition ${
+                      className={`focus-ring min-h-11 rounded-control border text-sm font-semibold transition ${
                         isSelected
-                          ? "border-lime-300 bg-lime-300 text-zinc-950"
-                          : "border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-zinc-500"
+                          ? "border-accent bg-accent text-accent-fg"
+                          : "border-line bg-surface-1 text-text-2 hover:bg-surface-3 hover:text-text-1"
                       }`}
                     >
                       {score}

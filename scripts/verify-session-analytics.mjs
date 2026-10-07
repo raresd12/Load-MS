@@ -422,7 +422,7 @@ const analytics = buildProgressAnalytics({
   assert.equal(bestSet.status, "Best");
   assert.equal(bestSet.value, "100 kg x 5 reps @ RPE 8");
   assert.equal(bestSet.body, "Bench Press");
-  assert.ok(consistency.toneClass.includes("lime"), "tone class is part of the card model");
+  assert.equal(consistency.toneClass, "tone-good", "tone class is part of the card model (HV-5 tone-* component class)");
 
   // Readiness / performance (F7: ranked within one metric).
   const rp = analytics.readinessPerformance;
