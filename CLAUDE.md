@@ -6,8 +6,9 @@ decisions taken after the handoff; they win over the handoff where they differ.
 
 ## Stack and commands
 
-- JavaScript + JSX, React 19, Vite 8, Tailwind 4, vite-plugin-pwa. No TypeScript, no router, no backend.
-- All data lives in browser localStorage under `rpe-tracker.*` keys (see `src/lib/storage.js`).
+- JavaScript + JSX, React 19, Vite 8, Tailwind 4, vite-plugin-pwa. No TypeScript, no router.
+- All data lives in browser localStorage under `rpe-tracker.*` keys (see `src/lib/storage.js`); it stays the source of truth on the device.
+- Optional accounts and private sync (H6, decisions H6-1 to H6-13): a dependency-free Node 22 API in `server/` (`node:http`, `node:sqlite`), deployed by hand from `deploy/` to the owner's Hetzner server behind Caddy. `src/` never imports `server/`; guest mode works with no account and no network. Never touch the senlive service or the prognoza Caddy block on that server.
 - `npm run dev` (127.0.0.1:5173), `npm run build`, `npm test` (runs every `scripts/verify-*.mjs`).
 - Verification scripts are plain Node with `node:assert/strict`, deterministic, in-memory. Add one per fixed behaviour.
 
