@@ -59,24 +59,24 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           Exercise Library
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">Library</h2>
-        <p className="mt-2 text-sm font-semibold leading-6 text-zinc-400">
+        <h2 className="mt-1 text-[22px] font-semibold text-text-1">Library</h2>
+        <p className="mt-2 text-sm font-semibold leading-6 text-text-2">
           Technique reference only. Program sets, reps, kg, RPE and rest stay in ProgramExercise records.
         </p>
 
         <label className="mt-4 block">
-          <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-zinc-400">
+          <span className="label mb-2">
             Search exercises
           </span>
           <input
             type="search"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            className="focus-ring min-h-12 w-full rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-base font-bold text-white placeholder:text-zinc-600"
+            className="focus-ring min-h-12 field w-full"
             placeholder="Search by name, muscle, equipment, cue"
           />
         </label>
@@ -116,7 +116,7 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
             <button
               type="button"
               onClick={clearFilters}
-              className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-3 text-sm font-black text-zinc-200 hover:bg-zinc-800"
+              className="focus-ring min-h-11 btn btn-secondary px-3"
             >
               Clear
             </button>
@@ -125,7 +125,7 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
       </section>
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+        <p className="label-accent">
           {filteredExercises.length} exercises
         </p>
       </div>
@@ -139,33 +139,33 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
             return (
               <article
                 key={exercise.id}
-                className={`rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4 ${
+                className={`card p-3 min-[430px]:p-4 ${
                   isOpen ? "md:col-span-2" : ""
                 }`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <h3 className="text-lg font-black text-white">{exercise.name}</h3>
+                    <h3 className="text-[17px] font-semibold text-text-1">{exercise.name}</h3>
                     {isAiTechniqueDraftEntry(exercise) && <AiTechniqueBadge className="mt-1" />}
-                    <p className="mt-1 text-sm font-semibold text-zinc-400">
+                    <p className="mt-1 text-sm font-semibold text-text-2">
                       {formatLibraryList(exercise.mainMuscles, "No main muscle")}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+                    <span className="pill">
                       {exercise.category || "category"}
                     </span>
-                    <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+                    <span className="pill">
                       {exercise.equipment || "equipment"}
                     </span>
-                    <span className="rounded-[8px] bg-zinc-800 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+                    <span className="pill">
                       {exercise.difficulty || "difficulty"}
                     </span>
                   </div>
                 </div>
 
                 {formatTechnicalValue(exercise.mainCue) && (
-                  <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-semibold text-lime-100">
+                  <p className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">
                     Main cue: {exercise.mainCue}
                   </p>
                 )}
@@ -173,7 +173,7 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
                 <button
                   type="button"
                   onClick={() => setOpenExerciseId(isOpen ? null : exercise.id)}
-                  className="focus-ring mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+                  className="focus-ring btn btn-ghost mt-3 flex min-h-11 w-full items-center justify-center gap-2 px-3"
                 >
                   <Info aria-hidden="true" size={16} />
                   {isOpen ? "Close Details" : "View Details"}
@@ -182,18 +182,18 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
                 {isOpen && isAiTechniqueDraftEntry(exercise) && (
                   <div
                     data-testid="ai-technique-review"
-                    className="mt-3 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-2"
+                    className="mt-3 rounded-block bg-warn-tint px-3 py-2"
                   >
-                    <p className="text-sm font-semibold leading-5 text-amber-100">{TECHNIQUE_REVIEW_HINT}</p>
+                    <p className="text-sm font-semibold leading-5 text-warn">{TECHNIQUE_REVIEW_HINT}</p>
                     <button
                       type="button"
                       onClick={() => handleMarkReviewed(exercise.id)}
-                      className="focus-ring mt-2 min-h-11 rounded-[8px] border border-amber-300/60 px-3 text-sm font-black text-amber-100 hover:bg-amber-300/10"
+                      className="focus-ring btn btn-secondary mt-2 min-h-11"
                     >
                       Mark notes as reviewed
                     </button>
                     {reviewError?.exerciseId === exercise.id && (
-                      <p role="alert" className="mt-2 break-words text-sm font-bold text-red-200">
+                      <p role="alert" className="mt-2 break-words text-sm font-medium text-bad">
                         {reviewError.message}
                       </p>
                     )}
@@ -213,9 +213,9 @@ export default function LibraryPage({ exercises, setupCues, onLibraryChange }) {
           })}
         </section>
       ) : (
-        <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4">
-          <p className="font-black text-white">No exercises match those filters.</p>
-          <p className="mt-1 text-sm font-semibold text-zinc-400">
+        <section className="card">
+          <p className="font-semibold text-text-1">No exercises match those filters.</p>
+          <p className="mt-1 text-sm font-semibold text-text-2">
             Clear filters or search a broader term.
           </p>
         </section>
@@ -231,7 +231,7 @@ function LibraryFilterSelect({ label, value, options, onChange }) {
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="focus-ring min-h-11 min-w-[150px] rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-sm font-black text-white"
+        className="focus-ring min-h-11 field min-w-[150px]"
       >
         <option value="">{label}: All</option>
         {options.map((option) => (

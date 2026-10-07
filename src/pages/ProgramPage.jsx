@@ -240,39 +240,39 @@ export default function ProgramPage({
 
   return (
     <div className="space-y-5">
-      <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+      <section className="card p-3 min-[430px]:p-4">
+        <p className="label-accent">
           Program administration
         </p>
-        <h2 className="mt-1 text-2xl font-black text-white">Local programs</h2>
-        <div className="mt-4 rounded-[8px] border border-lime-300/30 bg-lime-300/10 px-3 py-3">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-200/80">
+        <h2 className="mt-1 text-[22px] font-semibold text-text-1">Local programs</h2>
+        <div className="mt-4 rounded-block bg-accent-tint px-3 py-3">
+          <p className="label-accent">
             Active Program
           </p>
-          <p className="mt-1 text-lg font-black text-white">
+          <p className="mt-1 text-lg font-semibold text-text-1">
             {activeProgram?.name ?? "No active program"}
           </p>
           {activeProgram?.nickname && (
-            <p className="mt-1 text-sm font-bold text-lime-100">
+            <p className="mt-1 text-sm font-semibold text-accent-soft">
               Nickname: {activeProgram.nickname}
             </p>
           )}
         </div>
-        <p className="mt-3 text-sm leading-6 text-zinc-400">
+        <p className="mt-3 text-sm leading-6 text-text-2">
           Manage local guest-mode programs. Build a program from scratch or edit a custom program day by
           day in the Program Studio; defaults stay protected (duplicate them first).
         </p>
         {studioMessage && (
           <div
             role="status"
-            className="mt-3 flex items-start justify-between gap-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2"
+            className="mt-3 flex items-start justify-between gap-3 rounded-block bg-accent-tint px-3 py-2"
           >
-            <p className="min-w-0 break-words text-sm font-bold text-lime-100">{studioMessage}</p>
+            <p className="min-w-0 break-words text-sm font-semibold text-accent-soft">{studioMessage}</p>
             <button
               type="button"
               onClick={onDismissStudioMessage}
               aria-label="Dismiss message"
-              className="focus-ring shrink-0 rounded-[8px] p-1 text-lime-200 hover:text-white"
+              className="focus-ring btn btn-ghost shrink-0 p-1"
             >
               <X aria-hidden="true" size={16} />
             </button>
@@ -281,27 +281,27 @@ export default function ProgramPage({
         {studioError && (
           <p
             role="alert"
-            className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+            className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
           >
             {studioError}
           </p>
         )}
         {storedDrafts.length > 0 && (
-          <div className="mt-4 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-3">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+          <div className="mt-4 rounded-block bg-warn-tint px-3 py-3">
+            <p className="label text-warn">
               Resume unsaved draft
             </p>
             <ul className="mt-2 space-y-2">
               {storedDrafts.map((entry) => (
                 <li
                   key={entry.draftId}
-                  className="flex flex-col gap-2 rounded-[8px] border border-zinc-800 bg-[#111111] p-3 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex flex-col gap-2 card-inset sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
-                    <p className="break-words text-sm font-black text-white">
+                    <p className="break-words text-sm font-semibold text-text-1">
                       {entry.programName || "Untitled program"}
                     </p>
-                    <p className="mt-1 text-xs font-semibold text-zinc-400">
+                    <p className="mt-1 text-xs font-semibold text-text-2">
                       {entry.sourceProgramId ? "Edit of a saved program" : "New program draft"} | {entry.dayCount}{" "}
                       {entry.dayCount === 1 ? "day" : "days"} | {entry.exerciseCount}{" "}
                       {entry.exerciseCount === 1 ? "exercise" : "exercises"} | kept {formatProgramDate(entry.updatedAt)}
@@ -311,14 +311,14 @@ export default function ProgramPage({
                     <button
                       type="button"
                       onClick={() => resumeStoredDraft(entry.draftId)}
-                      className="focus-ring min-h-10 rounded-[8px] bg-amber-300 px-3 text-xs font-black text-zinc-950"
+                      className="focus-ring btn btn-secondary px-3 text-xs text-accent-soft"
                     >
                       Resume
                     </button>
                     <button
                       type="button"
                       onClick={() => discardStoredDraft(entry.draftId)}
-                      className="focus-ring min-h-10 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+                      className="focus-ring btn btn-secondary px-3 text-xs"
                     >
                       Discard
                     </button>
@@ -332,7 +332,7 @@ export default function ProgramPage({
           <button
             type="button"
             onClick={openNewProgram}
-            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 sm:w-auto"
+            className="focus-ring btn btn-primary flex min-h-11 w-full items-center justify-center gap-2 sm:w-auto"
           >
             <Plus aria-hidden="true" size={16} />
             New Program
@@ -347,7 +347,7 @@ export default function ProgramPage({
           <button
             type="button"
             onClick={() => importInputRef.current?.click()}
-            className="focus-ring flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800 sm:w-auto"
+            className="focus-ring btn btn-secondary flex min-h-11 w-full items-center justify-center gap-2 sm:w-auto"
           >
             <Upload aria-hidden="true" size={16} />
             Import Program File
@@ -355,14 +355,14 @@ export default function ProgramPage({
         </div>
         <div>
           {pendingImport && (
-            <div className="mt-3 rounded-[8px] border border-lime-300/30 bg-lime-300/5 px-3 py-3">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-200/80">
+            <div className="mt-3 rounded-block bg-accent-tint px-3 py-3">
+              <p className="label-accent">
                 Program file checked - nothing imported yet
               </p>
-              <p className="mt-1 break-words text-sm font-black text-white">
+              <p className="mt-1 break-words text-sm font-semibold text-text-1">
                 {pendingImport.programName || "Untitled program"}
               </p>
-              <p className="mt-1 text-xs font-semibold text-zinc-400">
+              <p className="mt-1 text-xs font-semibold text-text-2">
                 {pendingImport.fileName} | {pendingImport.dayCount} {pendingImport.dayCount === 1 ? "day" : "days"} |{" "}
                 {pendingImport.exerciseCount} {pendingImport.exerciseCount === 1 ? "exercise" : "exercises"}
               </p>
@@ -370,21 +370,21 @@ export default function ProgramPage({
                 <button
                   type="button"
                   onClick={reviewPendingInStudio}
-                  className="focus-ring min-h-11 flex-1 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200"
+                  className="focus-ring min-h-11 btn btn-primary flex-1"
                 >
                   Review in Studio
                 </button>
                 <button
                   type="button"
                   onClick={importPendingAsIs}
-                  className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-100 hover:bg-zinc-800"
+                  className="focus-ring min-h-11 btn btn-secondary"
                 >
                   Import as is
                 </button>
                 <button
                   type="button"
                   onClick={() => setPendingImport(null)}
-                  className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-300 hover:bg-zinc-800"
+                  className="focus-ring min-h-11 btn btn-secondary"
                 >
                   Cancel
                 </button>
@@ -394,7 +394,7 @@ export default function ProgramPage({
           {importMessage && (
             <p
               role="status"
-              className="mt-3 rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100"
+              className="mt-3 rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft"
             >
               {importMessage}
             </p>
@@ -402,7 +402,7 @@ export default function ProgramPage({
           {importError && (
             <p
               role="alert"
-              className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+              className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
             >
               {importError}
             </p>
@@ -431,27 +431,27 @@ export default function ProgramPage({
         </div>
 
         {archivedPrograms.length > 0 && (
-          <details className="mt-4 rounded-[8px] border border-zinc-800 bg-[#171717] px-3 py-2">
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-black text-zinc-100">
+          <details className="card-inset mt-4 px-3 py-2">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-text-1">
               <span className="flex items-center gap-2">
-                <Archive aria-hidden="true" size={16} className="text-zinc-400" />
+                <Archive aria-hidden="true" size={16} className="text-text-2" />
                 Archived programs ({archivedPrograms.length})
               </span>
-              <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+              <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron text-text-2" />
             </summary>
-            <div className="space-y-2 border-t border-zinc-800 pt-3">
-              <p className="text-xs font-semibold leading-5 text-zinc-400">
+            <div className="space-y-2 border-t border-line pt-3">
+              <p className="text-xs font-semibold leading-5 text-text-2">
                 Archived programs keep their days, targets and history. They are hidden from the
                 program list and cannot be set active until restored.
               </p>
               {archivedPrograms.map((program) => (
                 <div
                   key={program.id}
-                  className="flex flex-col gap-2 rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 sm:flex-row sm:items-center sm:justify-between"
+                  className="card-inset flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0">
-                    <p className="break-words text-sm font-black text-white">{program.name}</p>
-                    <p className="mt-1 text-xs font-semibold text-zinc-400">
+                    <p className="break-words text-sm font-semibold text-text-1">{program.name}</p>
+                    <p className="mt-1 text-xs font-semibold text-text-2">
                       {program.nickname ? `${program.nickname} | ` : ""}
                       Updated {formatProgramDate(program.updatedAt)}
                     </p>
@@ -459,7 +459,7 @@ export default function ProgramPage({
                   <button
                     type="button"
                     onClick={() => handleRestoreProgram(program.id)}
-                    className="focus-ring min-h-10 shrink-0 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-100 hover:bg-zinc-800"
+                    className="focus-ring btn btn-secondary shrink-0 px-3 text-xs"
                   >
                     Restore
                   </button>
@@ -468,7 +468,7 @@ export default function ProgramPage({
               {archiveError && (
                 <p
                   role="alert"
-                  className="rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+                  className="rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
                 >
                   {archiveError}
                 </p>

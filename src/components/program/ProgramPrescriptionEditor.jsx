@@ -28,7 +28,7 @@ export default function ProgramPrescriptionEditor({
 
   if (!days.length) {
     return (
-      <p className="mt-3 rounded-[8px] bg-[#111111] px-3 py-3 text-sm font-semibold text-zinc-400">
+      <p className="card-inset mt-3 px-3 py-3 text-sm font-semibold text-text-2">
         No training days found for this program yet.
       </p>
     );
@@ -36,7 +36,7 @@ export default function ProgramPrescriptionEditor({
 
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-sm leading-6 text-zinc-400">
+      <p className="text-sm leading-6 text-text-2">
         Edit planned targets only. This does not change exercise library info or completed workout
         history.
       </p>
@@ -46,17 +46,17 @@ export default function ProgramPrescriptionEditor({
           : [{ id: "main", name: "Main Work" }];
 
         return (
-          <details key={day.id} className="rounded-[8px] border border-zinc-800 bg-[#111111]">
+          <details key={day.id} className="card-inset">
             <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
               <span className="min-w-0">
-                <span className="block text-sm font-black text-white">{day.name}</span>
-                <span className="block text-xs font-semibold text-zinc-400">
+                <span className="block text-sm font-semibold text-text-1">{day.name}</span>
+                <span className="block text-xs font-semibold text-text-2">
                   {day.focus} | {day.exercises.length} exercises
                 </span>
               </span>
-              <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+              <ChevronDown aria-hidden="true" size={16} className="disclosure-chevron text-text-2" />
             </summary>
-            <div className="space-y-3 border-t border-zinc-800 p-3">
+            <div className="space-y-3 border-t border-line p-3">
               {sections.map((section) => {
                 const exercises = day.exercises.filter((exercise) =>
                   exercise.sectionId ? exercise.sectionId === section.id : section.id === "main",
@@ -68,7 +68,7 @@ export default function ProgramPrescriptionEditor({
 
                 return (
                   <div key={section.id} className="space-y-2">
-                    <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-300">
+                    <p className="label-accent">
                       {section.name}
                     </p>
                     {exercises.map((exercise) => (
@@ -164,20 +164,20 @@ function ProgramExerciseTargetEditor({
     <details
       open={isOpen}
       onToggle={(event) => setIsOpen(event.currentTarget.open)}
-      className="rounded-[8px] border border-zinc-800 bg-zinc-900"
+      className="card"
     >
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2">
         <span className="min-w-0">
-          <span className="block break-words text-sm font-black text-white">{exercise.name}</span>
-          <span className="mt-1 block text-xs font-semibold leading-5 text-zinc-400">
+          <span className="block break-words text-sm font-semibold text-text-1">{exercise.name}</span>
+          <span className="mt-1 block text-xs font-semibold leading-5 text-text-2">
             {prescriptionText}
           </span>
         </span>
-        <span className="shrink-0 rounded-[8px] border border-zinc-700 px-2 py-1 text-[11px] font-black uppercase tracking-[0.08em] text-zinc-300">
+        <span className="pill shrink-0">
           Edit
         </span>
       </summary>
-      <div className="space-y-3 border-t border-zinc-800 p-3">
+      <div className="space-y-3 border-t border-line p-3">
         <div className="grid gap-3 min-[430px]:grid-cols-2 lg:grid-cols-4">
           <ProgramEditorField
             label="Sets"
@@ -230,23 +230,23 @@ function ProgramExerciseTargetEditor({
           onChange={(value) => updateField("notes", value)}
         />
         {errors.length > 0 && (
-          <div className="rounded-[8px] border border-red-400/30 bg-red-500/10 px-3 py-2">
+          <div className="rounded-block bg-bad-tint px-3 py-2">
             {errors.map((error) => (
-              <p key={error} className="text-sm font-semibold text-red-100">
+              <p key={error} className="text-sm font-semibold text-bad">
                 {error}
               </p>
             ))}
           </div>
         )}
         {saveMessage && (
-          <p className="rounded-[8px] bg-lime-300/10 px-3 py-2 text-sm font-black text-lime-100">
+          <p className="rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft">
             {saveMessage}
           </p>
         )}
         <button
           type="button"
           onClick={saveTarget}
-          className="focus-ring min-h-11 w-full rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 sm:w-auto"
+          className="focus-ring min-h-11 btn btn-primary w-full px-3 sm:w-auto"
         >
           Save Exercise Target
         </button>

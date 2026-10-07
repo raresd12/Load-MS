@@ -120,7 +120,7 @@ function PageLoadingFallback() {
     <div
       role="status"
       aria-live="polite"
-      className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-4 text-sm font-bold text-zinc-400"
+      className="card text-sm font-semibold text-text-2"
     >
       Loading...
     </div>
@@ -173,13 +173,13 @@ function StorageWarningBanner({ warnings, onDismiss, onDiscard, onOpenSettings }
       {warnings.map((warning) => (
         <div
           key={warning.id}
-          className="rounded-[8px] border border-amber-300/50 bg-amber-300/10 p-3"
+          className="card border border-warn/40 p-3"
         >
           <div className="flex items-start gap-2">
-            <TriangleAlert aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-amber-200" />
+            <TriangleAlert aria-hidden="true" size={18} className="mt-0.5 shrink-0 text-warn" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-black text-amber-100">{warning.title}</p>
-              <p className="mt-1 break-words text-xs font-semibold leading-5 text-amber-100/90">
+              <p className="text-[15px] font-semibold text-warn">{warning.title}</p>
+              <p className="mt-1 break-words text-xs font-medium leading-5 text-text-2">
                 {warning.message}
               </p>
             </div>
@@ -188,7 +188,7 @@ function StorageWarningBanner({ warnings, onDismiss, onDiscard, onOpenSettings }
             <button
               type="button"
               onClick={onOpenSettings}
-              className="focus-ring min-h-9 rounded-[8px] bg-amber-300 px-3 text-xs font-black text-zinc-950 hover:bg-amber-200"
+              className="focus-ring btn btn-primary btn-sm min-h-11"
             >
               Open Settings
             </button>
@@ -196,7 +196,7 @@ function StorageWarningBanner({ warnings, onDismiss, onDiscard, onOpenSettings }
               <button
                 type="button"
                 onClick={() => onDiscard(warning)}
-                className="focus-ring min-h-9 rounded-[8px] border border-amber-300/50 px-3 text-xs font-black text-amber-100 hover:bg-amber-300/10"
+                className="focus-ring btn btn-secondary btn-sm min-h-11"
               >
                 Discard unreadable data
               </button>
@@ -204,7 +204,7 @@ function StorageWarningBanner({ warnings, onDismiss, onDiscard, onOpenSettings }
             <button
               type="button"
               onClick={() => onDismiss(warning)}
-              className="focus-ring min-h-9 rounded-[8px] border border-amber-300/50 px-3 text-xs font-black text-amber-100 hover:bg-amber-300/10"
+              className="focus-ring btn btn-secondary btn-sm min-h-11"
             >
               Dismiss
             </button>
@@ -1156,14 +1156,14 @@ export default function App() {
       <header className="safe-top mx-auto flex w-full max-w-6xl flex-col gap-4 px-3 pb-4 [--safe-top-pad:1rem] min-[390px]:px-4 sm:gap-5 sm:px-6 sm:pb-5 sm:[--safe-top-pad:1.25rem] lg:px-8">
         <div className="flex min-w-0 items-start justify-between gap-3 sm:gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-lime-300 min-[430px]:text-sm min-[430px]:tracking-[0.18em]">
+            <p className="label-accent mb-0 min-[430px]:text-sm">
               Athletic Bodybuilding Coach
             </p>
-            <h1 className="mt-2 text-2xl font-black text-white min-[430px]:text-3xl sm:text-4xl">
+            <h1 className="mt-1 text-[22px] font-semibold leading-tight text-text-1 min-[430px]:text-[26px] sm:text-[30px]">
               Train, log, progress
             </h1>
           </div>
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] border border-zinc-700 bg-zinc-900 text-lime-300 sm:h-11 sm:w-11">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-block bg-accent-tint text-accent-soft sm:h-11 sm:w-11">
             <Dumbbell aria-hidden="true" size={23} />
           </div>
         </div>
@@ -1185,6 +1185,11 @@ export default function App() {
           onOpenSettings={() => setActiveTab("settings")}
         />
 
+        {/* Decision HV-3: each tab change re-mounts this wrapper, so the page fades in.
+            HV-11: the fade is opacity only with fill mode backwards (in .page-enter),
+            so the wrapper never has a transform and the fixed rest timer and the
+            full-screen source view inside a page stay pinned to the viewport. */}
+        <div key={activeTab} className="page-enter">
         {activeTab === "dashboard" && (
           <DashboardPage
             selectedDay={selectedDay}
@@ -1360,12 +1365,13 @@ export default function App() {
         {activeTab === "more" && (
           <MorePage tabs={moreTabs} onSelectTab={setActiveTab} onPreloadTab={preloadTab} />
         )}
+        </div>
       </main>
 
       <nav
         aria-label="Main navigation"
         data-fixed-bottom-bar="nav"
-        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800 bg-[#121212]/95 px-2 pt-2 backdrop-blur [--safe-bottom-pad:0.5rem] sm:px-3 sm:pt-3 sm:[--safe-bottom-pad:0.75rem]"
+        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line bg-bg-bar px-2 pt-2 [--safe-bottom-pad:0.5rem] sm:px-3 sm:pt-3 sm:[--safe-bottom-pad:0.75rem]"
       >
         <div className="mx-auto grid max-w-md grid-cols-5 gap-1.5 max-[359px]:gap-1 sm:hidden">
           {mobilePrimaryTabs.map((tab) => {
@@ -1383,11 +1389,7 @@ export default function App() {
                 onMouseEnter={() => preloadTab(tab.id)}
                 onFocus={() => preloadTab(tab.id)}
                 onTouchStart={() => preloadTab(tab.id)}
-                className={`focus-ring flex min-h-14 min-w-0 flex-col items-center justify-center rounded-[8px] px-1 text-[10px] font-bold transition max-[359px]:px-0 max-[359px]:tracking-tight min-[390px]:text-[11px] ${
-                  isActive
-                    ? "bg-lime-300 text-zinc-950"
-                    : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-                }`}
+                className="focus-ring nav-item flex min-h-14 min-w-0 flex-col items-center justify-center px-1 text-[10px] font-semibold max-[359px]:px-0 max-[359px]:tracking-tight min-[390px]:text-[11px]"
               >
                 <Icon aria-hidden="true" size={18} />
                 <span className="mt-1 max-w-full truncate">{tab.label}</span>
@@ -1410,11 +1412,7 @@ export default function App() {
                 onMouseEnter={() => preloadTab(tab.id)}
                 onFocus={() => preloadTab(tab.id)}
                 onTouchStart={() => preloadTab(tab.id)}
-                className={`focus-ring flex min-h-12 min-w-0 flex-col items-center justify-center rounded-[8px] px-1 text-[10px] font-bold transition lg:px-2 lg:text-xs ${
-                  isActive
-                    ? "bg-lime-300 text-zinc-950"
-                    : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
-                }`}
+                className="focus-ring nav-item flex min-h-12 min-w-0 flex-col items-center justify-center px-1 text-[10px] font-semibold lg:px-2 lg:text-xs"
               >
                 <Icon aria-hidden="true" size={18} />
                 <span className="mt-1 max-w-full truncate">{tab.label}</span>

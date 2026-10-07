@@ -3,18 +3,18 @@ import { getReadinessCopy, readinessStyles } from "../readiness/readinessCopy.js
 export default function TodayReadinessSummary({ savedEntry, readiness, onGoToReadiness }) {
   if (!savedEntry) {
     return (
-      <section className="rounded-[8px] border border-amber-300/40 bg-amber-300/10 p-4">
-        <p className="text-sm font-black text-amber-100">
+      <section className="card border border-warn/40">
+        <p className="text-[15px] font-semibold text-warn">
           No readiness check-in saved for today.
         </p>
-        <p className="mt-1 text-sm font-semibold text-amber-100/90">
+        <p className="mt-1 text-sm font-medium text-text-2">
           Complete it before training for better same-day guidance and smarter progression
           recommendations.
         </p>
         <button
           type="button"
           onClick={onGoToReadiness}
-          className="focus-ring mt-3 min-h-10 rounded-[8px] bg-amber-300 px-3 text-sm font-black text-zinc-950"
+          className="focus-ring btn btn-primary mt-3"
         >
           Go to Readiness
         </button>
@@ -27,22 +27,22 @@ export default function TodayReadinessSummary({ savedEntry, readiness, onGoToRea
   return (
     <section
       data-testid="today-readiness-summary"
-      className={`rounded-[8px] border p-4 ${
+      className={`rounded-card border p-4 ${
         readinessStyles[readiness.status] ?? readinessStyles.yellow
       }`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm font-black">Today's Readiness: {copy.label}</p>
-          <p className="mt-1 text-sm font-semibold opacity-90">
+          <p className="text-[15px] font-semibold">Today's Readiness: {copy.label}</p>
+          <p className="mt-1 text-sm font-medium tabular-nums text-text-1">
             Average wellness: {readiness.averageScore.toFixed(1)} / 5
           </p>
-          <p className="mt-1 text-sm font-semibold opacity-90">{copy.summary}</p>
+          <p className="mt-1 text-sm font-medium text-text-1">{copy.summary}</p>
         </div>
         <button
           type="button"
           onClick={onGoToReadiness}
-          className="focus-ring min-h-10 rounded-[8px] border border-current px-3 text-sm font-black"
+          className="focus-ring btn btn-secondary"
         >
           Edit Today's Readiness
         </button>

@@ -75,7 +75,7 @@ function UncertaintyList({ lines }) {
   return (
     <ul className="mt-1 ml-3 list-disc space-y-0.5">
       {lines.map((line, index) => (
-        <li key={`${index}-${line}`} className="break-words text-xs font-bold text-amber-100">
+        <li key={`${index}-${line}`} className="break-words text-xs font-semibold text-warn">
           {line}
         </li>
       ))}
@@ -561,7 +561,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
   }
 
   return (
-    <section className="rounded-[8px] border border-zinc-800 bg-zinc-900 p-3 min-[430px]:p-4">
+    <section className="card p-3 min-[430px]:p-4">
       <button
         type="button"
         onClick={() => setIsOpen((open) => !open)}
@@ -569,23 +569,23 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
         className="focus-ring flex w-full items-center justify-between gap-3 text-left"
       >
         <span>
-          <span className="block text-xs font-bold uppercase tracking-[0.16em] text-lime-300">
+          <span className="label-accent">
             AI Program Import Assistant
           </span>
-          <span className="mt-1 flex items-center gap-2 text-xl font-black text-white min-[430px]:text-2xl">
-            <Sparkles aria-hidden="true" size={20} className="shrink-0 text-lime-300" />
+          <span className="mt-1 flex items-center gap-2 text-xl font-semibold text-text-1 min-[430px]:text-2xl">
+            <Sparkles aria-hidden="true" size={20} className="shrink-0 text-accent-soft" />
             Create Program Draft from Source
           </span>
         </span>
         {isOpen ? (
-          <ChevronUp aria-hidden="true" size={20} className="shrink-0 text-zinc-400" />
+          <ChevronUp aria-hidden="true" size={20} className="shrink-0 text-text-2" />
         ) : (
-          <ChevronDown aria-hidden="true" size={20} className="shrink-0 text-zinc-400" />
+          <ChevronDown aria-hidden="true" size={20} className="shrink-0 text-text-2" />
         )}
       </button>
 
       {!isOpen && (
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
+        <p className="mt-2 text-sm leading-6 text-text-2">
           Paste or upload an existing plan (text, photos, PDF, Word, Excel) and turn it into an editable
           draft.
         </p>
@@ -593,56 +593,56 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
 
       {isOpen && (
         <div className="mt-3">
-          <p className="text-sm leading-6 text-zinc-400">
+          <p className="text-sm leading-6 text-text-2">
             Converts an existing workout plan into a program draft you review before importing. It
             does not create programs from scratch and it is not the coach - training
             recommendations still come only from the app&apos;s progression engine.
           </p>
 
-          <div className="mt-4 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-3">
+          <div className="card-inset mt-4 px-3 py-3">
             <button
               type="button"
               onClick={() => setIsKeySectionOpen((open) => !open)}
               aria-expanded={showKeyForm}
               className="focus-ring flex w-full items-center justify-between gap-2 text-left"
             >
-              <span className="flex items-center gap-2 text-sm font-black text-white">
-                <KeyRound aria-hidden="true" size={16} className="text-lime-300" />
+              <span className="flex items-center gap-2 text-sm font-semibold text-text-1">
+                <KeyRound aria-hidden="true" size={16} className="text-accent-soft" />
                 Gemini API key
-                <span className="text-xs font-bold text-zinc-400">
+                <span className="text-xs font-semibold text-text-2">
                   {hasSavedKey ? `saved (${savedKeyMask})` : "required"}
                 </span>
               </span>
               {showKeyForm ? (
-                <ChevronUp aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+                <ChevronUp aria-hidden="true" size={16} className="shrink-0 text-text-2" />
               ) : (
-                <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-zinc-400" />
+                <ChevronDown aria-hidden="true" size={16} className="shrink-0 text-text-2" />
               )}
             </button>
             {showKeyForm && (
               <div className="mt-2">
                 {hasSavedKey ? (
                   <div className="flex flex-wrap items-center gap-3">
-                    <p className="text-sm font-bold text-lime-100">
+                    <p className="text-sm font-semibold text-accent-soft">
                       Saved on this device ({savedKeyMask})
                     </p>
                     <button
                       type="button"
                       onClick={handleRemoveKey}
-                      className="focus-ring min-h-9 rounded-[8px] border border-zinc-700 px-3 text-xs font-black text-zinc-300 hover:bg-zinc-800"
+                      className="focus-ring btn btn-secondary px-3 text-xs"
                     >
                       Remove key
                     </button>
                   </div>
                 ) : (
                   <>
-                    <p className="text-sm leading-6 text-zinc-400">
+                    <p className="text-sm leading-6 text-text-2">
                       Developer mode: bring your own key. Create a free key at{" "}
                       <a
                         href="https://aistudio.google.com/apikey"
                         target="_blank"
                         rel="noreferrer"
-                        className="focus-ring font-bold text-lime-300 underline"
+                        className="focus-ring btn btn-ghost underline"
                       >
                         aistudio.google.com/apikey
                       </a>{" "}
@@ -664,13 +664,13 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                           autoComplete="off"
                           aria-label="Gemini API key"
                           placeholder="AIza..."
-                          className="focus-ring min-h-11 w-full rounded-[8px] border border-zinc-700 bg-zinc-900 px-3 pr-11 text-sm font-bold text-white placeholder:text-zinc-600"
+                          className="focus-ring min-h-11 field w-full pr-11"
                         />
                         <button
                           type="button"
                           onClick={() => setIsKeyVisible((visible) => !visible)}
                           aria-label={isKeyVisible ? "Hide API key" : "Show API key"}
-                          className="focus-ring absolute right-1 top-1/2 -translate-y-1/2 rounded-[8px] p-2 text-zinc-400 hover:text-white"
+                          className="focus-ring absolute right-1 top-1/2 -translate-y-1/2 rounded-control p-2 text-text-2 hover:text-text-1"
                         >
                           {isKeyVisible ? (
                             <EyeOff aria-hidden="true" size={16} />
@@ -681,7 +681,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                       </div>
                       <button
                         type="submit"
-                        className="focus-ring min-h-11 rounded-[8px] border border-lime-300/60 px-4 text-sm font-black text-lime-200 hover:bg-lime-300/10"
+                        className="focus-ring min-h-11 btn btn-ghost"
                       >
                         Save key
                       </button>
@@ -689,7 +689,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   </>
                 )}
                 {keyMessage && (
-                  <p role="status" className="mt-2 text-xs font-bold leading-5 text-zinc-400">
+                  <p role="status" className="mt-2 text-xs font-semibold leading-5 text-text-2">
                     {keyMessage}
                   </p>
                 )}
@@ -714,7 +714,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
             disabled={isExtracting}
           />
 
-          <p className="mt-2 text-xs leading-5 text-zinc-400">
+          <p className="mt-2 text-xs leading-5 text-text-2">
             Do not upload sensitive medical or personal documents. The assistant extracts only what is in
             the source - it does not invent warm-ups, weights or extra exercises.
           </p>
@@ -724,7 +724,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
             onClick={handleExtract}
             disabled={Boolean(extractBlocker)}
             data-testid="extract-button"
-            className="focus-ring mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-60"
+            className="focus-ring btn btn-primary mt-3 flex min-h-12 w-full items-center justify-center gap-2"
           >
             {isExtracting ? (
               <>
@@ -739,7 +739,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
             )}
           </button>
           {extractBlocker && !isExtracting ? (
-            <p className="mt-1 text-xs font-bold text-zinc-400" data-testid="extract-blocker">
+            <p className="mt-1 text-xs font-semibold text-text-2" data-testid="extract-blocker">
               {extractBlocker}
             </p>
           ) : null}
@@ -748,16 +748,16 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
             <div
               role="alert"
               data-error-kind={errorInfo.kind}
-              className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2"
+              className="mt-3 rounded-block bg-bad-tint px-3 py-2"
             >
               {errorInfo.title ? (
-                <p className="text-[11px] font-black uppercase tracking-[0.12em] text-red-200">
+                <p className="label text-bad">
                   {errorInfo.title}
                 </p>
               ) : null}
-              <p className="break-words text-sm font-bold text-red-100">{extractionError}</p>
+              <p className="break-words text-sm font-medium text-bad">{extractionError}</p>
               {errorInfo.guidance ? (
-                <p className="mt-1 break-words text-xs font-bold leading-5 text-red-100/90">
+                <p className="mt-1 break-words text-xs font-semibold leading-5 text-bad">
                   Next step: {errorInfo.guidance}
                 </p>
               ) : null}
@@ -766,7 +766,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
           {importMessage && (
             <p
               role="status"
-              className="mt-3 break-words rounded-[8px] border border-lime-300/40 bg-lime-300/10 px-3 py-2 text-sm font-bold text-lime-100"
+              className="mt-3 break-words rounded-block bg-accent-tint px-3 py-2 text-sm font-semibold text-accent-soft"
             >
               {importMessage}
             </p>
@@ -777,7 +777,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
               <div
                 role="tablist"
                 aria-label="Review"
-                className="grid grid-cols-2 gap-1 rounded-[8px] border border-zinc-700 bg-[#111111] p-1 lg:hidden"
+                className="card-inset grid grid-cols-2 gap-1 p-1 lg:hidden"
               >
                 {[
                   { id: "source", label: "Source" },
@@ -790,8 +790,8 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                     aria-selected={reviewTab === tab.id}
                     data-review-tab={tab.id}
                     onClick={() => setReviewTab(tab.id)}
-                    className={`focus-ring min-h-11 rounded-[6px] px-2 text-xs font-black ${
-                      reviewTab === tab.id ? "bg-lime-300 text-zinc-950" : "text-zinc-400 hover:text-white"
+                    className={`focus-ring min-h-11 rounded-control px-2 text-xs font-semibold ${
+                      reviewTab === tab.id ? "bg-accent text-accent-fg" : "text-text-2 hover:text-text-1"
                     }`}
                   >
                     {tab.label}
@@ -811,20 +811,20 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
 
                 <div
                   data-testid="extraction-preview"
-                  className={`min-w-0 rounded-[8px] border border-lime-300/30 bg-lime-300/5 p-3 lg:block ${
+                  className={`min-w-0 rounded-block bg-accent-tint p-3 lg:block ${
                     reviewTab === "extraction" ? "" : "hidden"
                   }`}
                 >
-                  <p className="text-xs font-black uppercase tracking-[0.14em] text-lime-200/80">
+                  <p className="label-accent">
                     Draft preview - nothing saved yet
                   </p>
 
                   {uncertainty.length > 0 && (
                     <div
                       data-testid="check-before-saving"
-                      className="mt-2 rounded-[8px] border border-amber-400/50 bg-amber-400/10 px-3 py-2"
+                      className="mt-2 rounded-block bg-warn-tint px-3 py-2"
                     >
-                      <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-amber-200">
+                      <p className="label flex items-center gap-1.5 text-warn">
                         <TriangleAlert aria-hidden="true" size={13} className="shrink-0" />
                         Check these before saving ({uncertainty.length})
                       </p>
@@ -832,21 +832,21 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                     </div>
                   )}
 
-                  <p className="mt-2 break-words text-lg font-black text-white">
+                  <p className="mt-2 break-words text-lg font-semibold text-text-1">
                     {draft.preview.programName}
                   </p>
                   {draft.preview.goal && (
-                    <p className="mt-1 break-words text-sm font-bold text-lime-100">
+                    <p className="mt-1 break-words text-sm font-semibold text-accent-soft">
                       {draft.preview.goal}
                     </p>
                   )}
                   {draft.preview.description && (
-                    <p className="mt-1 break-words text-sm leading-6 text-zinc-400">
+                    <p className="mt-1 break-words text-sm leading-6 text-text-2">
                       {draft.preview.description}
                     </p>
                   )}
                   {draft.preview.structureNotes && !String(draft.preview.description ?? "").includes(draft.preview.structureNotes) && (
-                    <p className="mt-1 break-words text-xs font-bold leading-5 text-zinc-400">
+                    <p className="mt-1 break-words text-xs font-semibold leading-5 text-text-2">
                       Source structure (info only): {draft.preview.structureNotes}
                     </p>
                   )}
@@ -855,32 +855,32 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                     {draft.preview.days.map((day) => (
                       <li
                         key={day.id}
-                        className="rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2"
+                        className="card-inset py-2"
                       >
-                        <p className="break-words text-sm font-black text-white">{day.name}</p>
+                        <p className="break-words text-sm font-semibold text-text-1">{day.name}</p>
                         {day.block && (
-                          <p className="break-words text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">
+                          <p className="label break-words">
                             {day.block} · info only
                           </p>
                         )}
                         {day.focus && (
-                          <p className="break-words text-xs font-bold text-zinc-400">{day.focus}</p>
+                          <p className="break-words text-xs font-semibold text-text-2">{day.focus}</p>
                         )}
 
                         {day.warmup && (
-                          <div className="mt-2 rounded-[6px] border border-cyan-400/30 bg-cyan-400/5 px-2 py-1.5">
-                            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-cyan-200/90">
+                          <div className="mt-2 rounded-block border border-line-accent bg-accent-tint px-2 py-1.5">
+                            <p className="label-accent">
                               {day.warmup.title} · info only
                             </p>
                             <ul className="mt-1 space-y-0.5">
                               {day.warmup.items.map((item) => (
-                                <li key={item.id} className="break-words text-xs font-bold text-zinc-300">
+                                <li key={item.id} className="break-words text-xs font-semibold text-text-2">
                                   {item.name}
                                   {item.prescription ? (
-                                    <span className="text-zinc-400"> - {item.prescription}</span>
+                                    <span className="text-text-2"> - {item.prescription}</span>
                                   ) : null}
                                   {item.notes ? (
-                                    <span className="font-normal text-zinc-400"> ({item.notes})</span>
+                                    <span className="font-normal text-text-2"> ({item.notes})</span>
                                   ) : null}
                                 </li>
                               ))}
@@ -889,7 +889,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                         )}
 
                         {day.exercises.length === 0 && (
-                          <p className="mt-2 text-xs font-bold text-zinc-400">
+                          <p className="mt-2 text-xs font-semibold text-text-2">
                             No working exercises on this day (kept as a rest / recovery day).
                           </p>
                         )}
@@ -903,48 +903,48 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                               <li key={`${day.id}-${exerciseIndex}`} className="text-xs">
                                 {exercise.section &&
                                   (exerciseIndex === 0 || day.exercises[exerciseIndex - 1].section !== exercise.section) && (
-                                    <p className="mb-1 text-[10px] font-black uppercase tracking-[0.12em] text-lime-300">
+                                    <p className="label-accent mb-1">
                                       {exercise.section}
                                     </p>
                                   )}
                                 <p className="flex flex-wrap items-center gap-1.5">
                                   {exercise.groupLabel ? (
-                                    <span className="rounded-[4px] border border-zinc-700 px-1.5 py-0.5 text-[10px] font-black text-zinc-300">
+                                    <span className="pill">
                                       {exercise.groupLabel}
                                     </span>
                                   ) : null}
-                                  <span className="break-words font-black text-zinc-100">
+                                  <span className="break-words font-semibold text-text-1">
                                     {exercise.name}
                                   </span>
                                   {exercise.matchedLibrary ? (
-                                    <span className="rounded-[4px] border border-lime-300/40 bg-lime-300/10 px-1.5 py-0.5 text-[10px] font-black text-lime-200">
+                                    <span className="pill pill-accent">
                                       Library
                                     </span>
                                   ) : (
-                                    <span className="rounded-[4px] border border-amber-400/40 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-black text-amber-200">
+                                    <span className="pill pill-warn">
                                       New
                                     </span>
                                   )}
                                   {newExercise?.hasNotes ? (
-                                    <span className="rounded-[4px] border border-lime-300/40 bg-lime-300/10 px-1.5 py-0.5 text-[10px] font-black text-lime-200">
+                                    <span className="pill pill-accent">
                                       Technique notes added
                                     </span>
                                   ) : null}
                                 </p>
-                                <p className="font-bold text-zinc-400">
+                                <p className="font-semibold text-text-2">
                                   {exercise.targetSets} × {exercise.repsLabel} · RPE {exercise.targetRPE} ·
                                   rest {exercise.restLabel ?? `${exercise.restTime}s`}
                                 </p>
                                 {exercise.sourceWeight && (
-                                  <p className="break-words font-bold text-zinc-400">
+                                  <p className="break-words font-semibold text-text-2">
                                     Source load: {exercise.sourceWeight} (info only, not a target)
                                   </p>
                                 )}
                                 {exercise.notes && (
-                                  <p className="break-words font-bold text-zinc-400">{exercise.notes}</p>
+                                  <p className="break-words font-semibold text-text-2">{exercise.notes}</p>
                                 )}
                                 {exercise.missingFields.length > 0 && (
-                                  <p className="font-bold text-amber-200/90">
+                                  <p className="font-semibold text-warn">
                                     Not in source (safe defaults used): {exercise.missingFields.join(", ")}
                                   </p>
                                 )}
@@ -955,7 +955,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                                     disabled={technique.busy || isExtracting}
                                     data-technique-action={newExercise.id}
                                     onClick={() => requestTechniqueDrafts([newExercise])}
-                                    className="focus-ring mt-1 inline-flex min-h-10 items-center gap-1.5 rounded-[8px] border border-lime-300/50 px-2.5 text-xs font-black text-lime-200 hover:bg-lime-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="focus-ring btn btn-ghost mt-1 inline-flex items-center gap-1.5 px-2.5 text-xs"
                                   >
                                     <Sparkles aria-hidden="true" size={13} />
                                     Draft technique notes with AI
@@ -970,8 +970,8 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   </ul>
 
                   {newExercises.length > 0 && (
-                    <div className="mt-3 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 py-2">
-                      <p className="text-xs font-bold leading-5 text-zinc-300">
+                    <div className="card-inset mt-3 px-3 py-2">
+                      <p className="text-xs font-semibold leading-5 text-text-2">
                         {newExercises.length} new {newExercises.length === 1 ? "exercise has" : "exercises have"} no
                         Library entry yet{notedExerciseCount ? ` (${notedExerciseCount} with accepted technique notes)` : ""}.
                         Optional: ask for technique-note drafts. Only the exercise names, equipment and
@@ -982,7 +982,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                         disabled={technique.busy || isExtracting}
                         data-technique-action="all"
                         onClick={() => requestTechniqueDrafts(newExercises)}
-                        className="focus-ring mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-200 hover:bg-lime-300/10 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                        className="focus-ring btn btn-ghost mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 sm:w-auto"
                       >
                         <Sparkles aria-hidden="true" size={15} />
                         Draft notes for all new exercises ({newExercises.length})
@@ -1006,18 +1006,18 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                   </div>
 
                   {draft.preview.uncertainty?.length > 0 && (
-                    <div className="mt-3 rounded-[8px] border border-amber-400/40 bg-amber-400/10 px-3 py-2">
-                      <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-200">
+                    <div className="mt-3 rounded-block bg-warn-tint px-3 py-2">
+                      <p className="label text-warn">
                         Uncertainty disclosed by the assistant ({draft.preview.uncertainty.length})
                       </p>
-                      <p className="mt-1 text-xs font-bold text-amber-100">
+                      <p className="mt-1 text-xs font-semibold text-warn">
                         Listed at the top of this preview under &quot;Check these before saving&quot;. The list
                         travels with the draft into the Studio.
                       </p>
                     </div>
                   )}
 
-                  <p className="mt-3 text-xs font-bold leading-5 text-zinc-400">
+                  <p className="mt-3 text-xs font-semibold leading-5 text-text-2">
                     {(() => {
                       const counts = countPreviewProvenance(draft.preview);
                       return `${counts.source} ${counts.source === 1 ? "value" : "values"} read from the source, ${counts.default} filled with app defaults.`;
@@ -1027,7 +1027,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                       : ""}
                   </p>
 
-                  <p className="mt-2 text-xs font-bold leading-5 text-zinc-400">
+                  <p className="mt-2 text-xs font-semibold leading-5 text-text-2">
                     {draft.summary.reusedExerciseCount}{" "}
                     {draft.summary.reusedExerciseCount === 1 ? "exercise matches" : "exercises match"}{" "}
                     your library
@@ -1050,7 +1050,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                       type="button"
                       onClick={handleEditInStudio}
                       disabled={isExtracting}
-                      className="focus-ring flex min-h-11 flex-1 items-center justify-center rounded-[8px] bg-lime-300 px-4 text-sm font-black text-zinc-950 hover:bg-lime-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="focus-ring btn btn-primary flex min-h-11 flex-1 items-center justify-center"
                     >
                       Edit draft in Studio
                     </button>
@@ -1058,7 +1058,7 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                       type="button"
                       onClick={handleImport}
                       disabled={isExtracting}
-                      className="focus-ring flex min-h-11 flex-1 items-center justify-center rounded-[8px] border border-lime-300/60 px-4 text-sm font-black text-lime-200 hover:bg-lime-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="focus-ring btn btn-ghost flex min-h-11 flex-1 items-center justify-center"
                     >
                       Add to my programs
                     </button>
@@ -1066,13 +1066,13 @@ export default function AiProgramImportAssistant({ onSaveProgramDraft, onReviewD
                       type="button"
                       onClick={handleDiscardDraft}
                       disabled={isExtracting}
-                      className="focus-ring min-h-11 rounded-[8px] border border-zinc-700 px-4 text-sm font-black text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="focus-ring min-h-11 btn btn-secondary"
                     >
                       Discard draft
                     </button>
                   </div>
                   {isExtracting ? (
-                    <p className="mt-2 text-xs font-bold leading-5 text-zinc-400" data-testid="draft-actions-waiting">
+                    <p className="mt-2 text-xs font-semibold leading-5 text-text-2" data-testid="draft-actions-waiting">
                       A new extraction is running. This draft can be opened, saved or discarded once it has
                       finished.
                     </p>

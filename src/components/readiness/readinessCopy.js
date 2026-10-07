@@ -5,6 +5,7 @@ import {
   Smile,
   Zap,
 } from "lucide-react";
+import { READINESS_SAVED_MESSAGE } from "../../lib/readinessSave.js";
 
 export const wellnessIcons = {
   soreness: Flame,
@@ -22,10 +23,23 @@ export const wellnessScaleLabels = {
   5: "Excellent",
 };
 
+/**
+ * Colour of the Readiness page save line (decisions HV-1, HV-11): the
+ * success confirmation of a durable save is good, any other message from the
+ * save (a refused or failed write) is bad, and the idle status line is text-2.
+ */
+export function readinessSaveMessageClass(message) {
+  if (!message) {
+    return "text-text-2";
+  }
+
+  return message === READINESS_SAVED_MESSAGE ? "text-good" : "text-bad";
+}
+
 export const readinessStyles = {
-  red: "border-red-300/40 bg-red-300/10 text-red-100",
-  yellow: "border-amber-300/40 bg-amber-300/10 text-amber-100",
-  green: "border-lime-300/40 bg-lime-300/10 text-lime-100",
+  red: "border-bad/40 bg-bad-tint text-bad",
+  yellow: "border-warn/40 bg-warn-tint text-warn",
+  green: "border-good/40 bg-good-tint text-good",
 };
 
 export const readinessCopy = {

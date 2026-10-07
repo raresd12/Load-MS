@@ -13,6 +13,34 @@ import {
   validateSetEntryValues,
 } from "../../lib/setEntryView.js";
 
+/**
+ * Scrolls the page so `actionBottom` ends above the fixed bottom bars (bottom
+ * nav, rest timer) and the keyboard, without pushing the anchor element
+ * (`fieldTop` / `fieldBottom`) out of view (decisions H4-10, HV-12).
+ */
+function scrollIntoClearBand({ fieldTop, fieldBottom, actionBottom }) {
+  if (typeof window.scrollBy !== "function") {
+    return;
+  }
+
+  const viewport = window.visualViewport;
+  const delta = getActionScrollDelta({
+    viewportTop: viewport?.offsetTop ?? 0,
+    viewportHeight: viewport?.height ?? window.innerHeight,
+    obstructionTops: [...document.querySelectorAll("[data-fixed-bottom-bar]")]
+      .map((bar) => bar.getBoundingClientRect())
+      .filter((rect) => rect.height > 0)
+      .map((rect) => rect.top),
+    fieldTop,
+    fieldBottom,
+    actionBottom,
+  });
+
+  if (delta !== 0) {
+    window.scrollBy({ top: delta, left: 0 });
+  }
+}
+
 // Decision H5-13: the Save Set form edits ONE count in the exercise's
 // measurement (reps / seconds / meters) plus kg and RPE; the helpers in
 // src/lib/setEntryView.js decide labels, steps and the draft patch.
@@ -31,8 +59,10 @@ export default function UnifiedSetEntry({
   );
   const [errors, setErrors] = useState([]);
   const [saveMessage, setSaveMessage] = useState("");
+  const [saveCount, setSaveCount] = useState(0);
   const justSavedRef = useRef(false);
   const saveButtonRef = useRef(null);
+  const saveMessageRef = useRef(null);
 
   useEffect(() => {
     setValues(
@@ -70,7 +100,36 @@ export default function UnifiedSetEntry({
     onSave(selectedSetIndex, toDraftSetPatch(values, profile));
     setErrors([]);
     setSaveMessage(`Set ${selectedSetIndex + 1} saved.`);
+    setSaveCount((count) => count + 1);
   }
+
+  // Decision HV-12: the "Set N saved." line sits below Save Set (HV-11), and
+  // the save itself mounts the rest timer bar, so after a save the page
+  // scrolls just enough for the confirmation to end above the fixed bars
+  // (same geometry as H4-10). Save Set is the anchor that must stay in view.
+  useEffect(() => {
+    if (!saveCount) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      const message = saveMessageRef.current;
+      const action = saveButtonRef.current;
+
+      if (!message?.isConnected || !action?.isConnected) {
+        return;
+      }
+
+      const anchorRect = action.getBoundingClientRect();
+      scrollIntoClearBand({
+        fieldTop: anchorRect.top,
+        fieldBottom: anchorRect.bottom,
+        actionBottom: message.getBoundingClientRect().bottom,
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [saveCount]);
 
   function handleInputKeyDown(event) {
     if (event.key === "Enter") {
@@ -93,22 +152,11 @@ export default function UnifiedSetEntry({
       }
 
       const fieldRect = field.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const delta = getActionScrollDelta({
-        viewportTop: viewport?.offsetTop ?? 0,
-        viewportHeight: viewport?.height ?? window.innerHeight,
-        obstructionTops: [...document.querySelectorAll("[data-fixed-bottom-bar]")]
-          .map((bar) => bar.getBoundingClientRect())
-          .filter((rect) => rect.height > 0)
-          .map((rect) => rect.top),
+      scrollIntoClearBand({
         fieldTop: fieldRect.top,
         fieldBottom: fieldRect.bottom,
         actionBottom: action.getBoundingClientRect().bottom,
       });
-
-      if (delta !== 0) {
-        window.scrollBy({ top: delta, left: 0 });
-      }
     }, 300);
   }
 
@@ -116,9 +164,9 @@ export default function UnifiedSetEntry({
   const weightLabel = labels.weightHint ? `${labels.weightLabel} (${labels.weightHint})` : labels.weightLabel;
 
   return (
-    <div className="max-w-[360px] rounded-[8px] border border-zinc-800 bg-zinc-900 p-3">
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <span className="block text-xs font-black uppercase tracking-[0.12em] text-zinc-400">
+    <div className="max-w-[420px] rounded-block bg-surface-1 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <span className="label mb-0">
           Set Entry
         </span>
         <div className="relative">
@@ -127,9 +175,9 @@ export default function UnifiedSetEntry({
             onClick={() => setIsSelectorOpen((current) => !current)}
             aria-expanded={isSelectorOpen}
             aria-label={`Selected Set: Set ${selectedSetIndex + 1}`}
-            className="focus-ring flex min-h-11 items-center gap-2 rounded-[8px] border border-zinc-700 bg-[#111111] px-3 text-xs font-black text-white sm:min-h-9"
+            className="focus-ring btn btn-secondary btn-sm min-h-11 sm:min-h-9"
           >
-            <span className="hidden text-zinc-400 sm:inline">Selected Set:</span>
+            <span className="hidden text-text-2 sm:inline">Selected Set:</span>
             <span>Set {selectedSetIndex + 1}</span>
             <ChevronDown
               aria-hidden="true"
@@ -138,7 +186,7 @@ export default function UnifiedSetEntry({
             />
           </button>
           {isSelectorOpen && (
-            <div className="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-[8px] border border-zinc-700 bg-[#111111] p-1 shadow-xl shadow-black/40">
+            <div className="card-inset absolute right-0 z-20 mt-2 w-40 overflow-hidden border border-line bg-surface-3 p-1">
               {sets.map((set, index) => {
                 const isSelected = selectedSetIndex === index;
                 const hasValue = hasSetEntryValue(set);
@@ -151,17 +199,17 @@ export default function UnifiedSetEntry({
                       setSelectedSetIndex(index);
                       setIsSelectorOpen(false);
                     }}
-                    className={`focus-ring flex min-h-9 w-full items-center justify-between rounded-[6px] px-3 text-left text-xs font-black ${
+                    className={`focus-ring flex min-h-11 w-full items-center justify-between rounded-control px-3 text-left text-sm font-medium ${
                       isSelected
-                        ? "bg-lime-300 text-zinc-950"
+                        ? "bg-accent text-accent-fg"
                         : hasValue
-                          ? "text-lime-100 hover:bg-lime-300/10"
-                          : "text-zinc-400 hover:bg-zinc-900"
+                          ? "text-accent-soft hover:bg-accent-tint"
+                          : "text-text-2 hover:bg-surface-3"
                     }`}
                   >
                     Set {index + 1}
                     {hasValue && !isSelected && (
-                      <span className="text-[10px] uppercase tracking-[0.12em]">saved</span>
+                      <span className="text-[11px] font-medium">saved</span>
                     )}
                   </button>
                 );
@@ -170,7 +218,16 @@ export default function UnifiedSetEntry({
           )}
         </div>
       </div>
-      <div className="grid gap-2">
+      {/* Decision HV-11: notes sit above the values and the saved line below
+          Save Set, so nothing but the values separates the focused field from
+          Save Set (H4-10); on a short viewport (short:) the values, gaps and
+          button tighten so Save Set clears the rest timer at 375 x 420. */}
+      {labels.notes.length > 0 && (
+        <p className="mb-3 text-xs font-medium leading-4 text-text-2">
+          {labels.notes.join(" ")}
+        </p>
+      )}
+      <div className="grid gap-3 short:gap-2">
         <StepperInput
           label={valueLabel}
           value={values.value}
@@ -201,7 +258,7 @@ export default function UnifiedSetEntry({
             placeholder={labels.weightPlaceholder}
           />
         ) : (
-          <p className="rounded-[8px] border border-zinc-800 bg-[#111111] px-3 py-2 text-xs font-black text-zinc-200">
+          <p className="card-inset flex min-h-14 items-center text-[15px] font-semibold text-text-1 short:min-h-11">
             Load: BW
           </p>
         )}
@@ -222,31 +279,26 @@ export default function UnifiedSetEntry({
           placeholder="8"
         />
       </div>
-      {labels.notes.length > 0 && (
-        <p className="mt-2 text-[11px] font-semibold leading-4 text-zinc-400">
-          {labels.notes.join(" ")}
-        </p>
-      )}
       {errors.length > 0 && (
-        <div className="mt-3 rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-xs font-bold text-red-100">
+        <div className="mt-3 rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad">
           {errors.map((error) => (
             <p key={error}>{error}</p>
           ))}
         </div>
       )}
-      {saveMessage && (
-        <p className="mt-3 rounded-[8px] bg-lime-300/10 px-3 py-2 text-xs font-black text-lime-100">
-          {saveMessage}
-        </p>
-      )}
       <button
         ref={saveButtonRef}
         type="button"
         onClick={saveSelectedSet}
-        className="focus-ring mt-3 min-h-11 w-full rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+        className="focus-ring btn btn-primary mt-3 min-h-[52px] w-full text-base short:mt-2 short:min-h-11"
       >
         Save Set
       </button>
+      {saveMessage && (
+        <p ref={saveMessageRef} className="set-saved mt-3 rounded-block bg-surface-2 px-3 py-2 text-sm font-medium text-accent-soft">
+          {saveMessage}
+        </p>
+      )}
     </div>
   );
 }

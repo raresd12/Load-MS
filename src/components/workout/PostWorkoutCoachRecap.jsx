@@ -7,19 +7,19 @@ export default function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts
   }
 
   return (
-    <section className="rounded-[8px] border border-lime-300/50 bg-lime-300/10 p-3 min-[430px]:p-4">
+    <section className="card-active p-3 min-[430px]:p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-lime-200">
+          <p className="label-accent">
             Workout saved
           </p>
-          <h2 className="mt-1 break-words text-xl font-black text-white">{recap.dayName}</h2>
-          <p className="mt-1 text-sm font-semibold text-lime-100/80">{recap.programName}</p>
+          <h2 className="mt-1 break-words text-[17px] font-semibold text-text-1">{recap.dayName}</h2>
+          <p className="mt-1 text-sm font-medium text-text-2">{recap.programName}</p>
         </div>
         <button
           type="button"
           onClick={onDismiss}
-          className="focus-ring min-h-10 shrink-0 rounded-[8px] border border-lime-300/50 px-3 text-xs font-black uppercase tracking-[0.08em] text-lime-100 hover:bg-lime-300/10"
+          className="focus-ring btn btn-ghost btn-sm min-h-11 shrink-0"
         >
           Close
         </button>
@@ -40,11 +40,11 @@ export default function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <RecapNote label="Top set" text={recap.bestSetText} />
-        <RecapNote label="Improved" text={recap.improvedText} />
+        <RecapNote label="Improved" text={recap.improvedText} tone="text-accent-soft" />
         <RecapNote label="Watch" text={recap.watchText} />
         <RecapNote label="Next" text={recap.nextText} />
         {/* H5-10 / H5-12: records, adherence, coach status and comparison lines. */}
-        {recap.recordsText && <RecapNote label="Records" text={recap.recordsText} />}
+        {recap.recordsText && <RecapNote label="Records" text={recap.recordsText} tone="text-accent-soft" />}
         {recap.adherenceText && <RecapNote label="Adherence" text={recap.adherenceText} />}
         {recap.coachStatusText && <RecapNote label="Coach status" text={recap.coachStatusText} />}
         {recap.comparisonText && <RecapNote label="Comparison" text={recap.comparisonText} />}
@@ -54,14 +54,14 @@ export default function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts
         <button
           type="button"
           onClick={onGoToWorkouts}
-          className="focus-ring min-h-11 rounded-[8px] bg-lime-300 px-3 text-sm font-black text-zinc-950 hover:bg-lime-200"
+          className="focus-ring btn btn-primary min-h-11"
         >
           Go to Workouts
         </button>
         <button
           type="button"
           onClick={onGoToHistory}
-          className="focus-ring min-h-11 rounded-[8px] border border-lime-300/60 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/10"
+          className="focus-ring btn btn-secondary min-h-11"
         >
           View History
         </button>
@@ -70,11 +70,14 @@ export default function PostWorkoutCoachRecap({ recap, onDismiss, onGoToWorkouts
   );
 }
 
-function RecapNote({ label, text }) {
+// HV-9: recap rows are card-inset blocks; improvements and records read in
+// accent-soft; the watch line stays text-1 (the recap model does not say
+// whether it holds a warning, and warn is kept for real warnings).
+function RecapNote({ label, text, tone = "text-text-1" }) {
   return (
-    <div className="rounded-[8px] border border-lime-300/20 bg-[#111111]/80 px-3 py-2">
-      <p className="text-[11px] font-black uppercase tracking-[0.14em] text-lime-300">{label}</p>
-      <p className="mt-1 text-sm font-semibold leading-5 text-zinc-100">{text}</p>
+    <div className="card-inset">
+      <p className="label">{label}</p>
+      <p className={`text-sm font-medium leading-5 ${tone}`}>{text}</p>
     </div>
   );
 }

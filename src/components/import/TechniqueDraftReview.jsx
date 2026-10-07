@@ -3,11 +3,11 @@ import { validateTechniqueDraft } from "../../lib/aiTechnique.js";
 import { getTechniqueRows, TECHNIQUE_DRAFT_BADGE } from "../../lib/importAssistant.js";
 
 const reviewButtonClassName =
-  "focus-ring inline-flex min-h-11 items-center justify-center gap-1.5 rounded-[8px] px-3 text-sm font-black disabled:cursor-not-allowed disabled:opacity-50";
+  "focus-ring inline-flex min-h-11 items-center justify-center gap-1.5 rounded-control px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50";
 
 export function TechniqueDraftBadge() {
   return (
-    <span className="rounded-[4px] border border-amber-400/50 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-black text-amber-200">
+    <span className="pill pill-warn">
       {TECHNIQUE_DRAFT_BADGE}
     </span>
   );
@@ -25,14 +25,14 @@ export function TechniqueRows({ entry }) {
     <dl className="space-y-2">
       {rows.map((row) => (
         <div key={row.field}>
-          <dt className="text-[11px] font-black uppercase tracking-[0.12em] text-zinc-400">{row.label}</dt>
+          <dt className="label">{row.label}</dt>
           <dd className="mt-0.5">
             {row.field === "mainCue" ? (
-              <p className="break-words text-sm font-black text-lime-100">{row.bullets[0]}</p>
+              <p className="break-words text-sm font-semibold text-accent-soft">{row.bullets[0]}</p>
             ) : (
               <ul className="ml-3 list-disc space-y-0.5">
                 {row.bullets.map((bullet, index) => (
-                  <li key={`${index}-${bullet}`} className="break-words text-sm font-semibold text-zinc-200">
+                  <li key={`${index}-${bullet}`} className="break-words text-sm font-semibold text-text-1">
                     {bullet}
                   </li>
                 ))}
@@ -75,21 +75,21 @@ export default function TechniqueDraftReview({
     <section
       aria-label="Technique note drafts"
       data-testid="technique-draft-review"
-      className="rounded-[8px] border border-amber-400/40 bg-amber-400/5 p-3"
+      className="rounded-block bg-warn-tint p-3"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+        <p className="label text-warn">
           Technique note drafts{model ? ` (${model})` : ""}
         </p>
         <TechniqueDraftBadge />
       </div>
-      <p className="mt-1 text-xs font-semibold leading-5 text-zinc-300">
+      <p className="mt-1 text-xs font-semibold leading-5 text-text-2">
         Written by AI from the exercise name only. Accept adds the notes to the new exercise of this draft;
         they are saved with the program. Library exercises are never changed.
       </p>
 
       {busy && (
-        <p role="status" className="mt-2 flex items-center gap-2 text-sm font-bold text-zinc-200">
+        <p role="status" className="mt-2 flex items-center gap-2 text-sm font-semibold text-text-1">
           <Loader2 aria-hidden="true" size={16} className="animate-spin" />
           {progress || "Drafting technique notes..."}
         </p>
@@ -97,7 +97,7 @@ export default function TechniqueDraftReview({
       {error && (
         <p
           role="alert"
-          className="mt-2 break-words rounded-[8px] border border-red-400/50 bg-red-400/10 px-3 py-2 text-sm font-bold text-red-100"
+          className="mt-2 break-words rounded-block bg-bad-tint px-3 py-2 text-sm font-medium text-bad"
         >
           {error}
         </p>
@@ -117,16 +117,16 @@ export default function TechniqueDraftReview({
               <li
                 key={item.id}
                 data-technique-item={item.id}
-                className="rounded-[8px] border border-zinc-700 bg-[#111111] p-3"
+                className="card-inset"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="break-words text-sm font-black text-white">{item.name}</p>
+                  <p className="break-words text-sm font-semibold text-text-1">{item.name}</p>
                   {item.status === "accepted" ? (
-                    <span className="rounded-[4px] border border-lime-300/40 bg-lime-300/10 px-1.5 py-0.5 text-[10px] font-black text-lime-200">
+                    <span className="pill pill-accent">
                       Accepted into this draft
                     </span>
                   ) : item.status === "rejected" || !validation.valid ? (
-                    <span className="rounded-[4px] border border-red-400/50 bg-red-400/10 px-1.5 py-0.5 text-[10px] font-black text-red-100">
+                    <span className="pill pill-bad">
                       Refused
                     </span>
                   ) : (
@@ -141,13 +141,13 @@ export default function TechniqueDraftReview({
                 ) : null}
 
                 {errors.length > 0 && item.status !== "accepted" ? (
-                  <div role="alert" className="mt-2 rounded-[8px] border border-red-400/40 bg-red-500/10 px-3 py-2">
-                    <p className="text-[11px] font-black uppercase tracking-[0.12em] text-red-200">
+                  <div role="alert" className="mt-2 rounded-block bg-bad-tint px-3 py-2">
+                    <p className="label text-bad">
                       This draft cannot be accepted
                     </p>
                     <ul className="mt-1 ml-3 list-disc space-y-0.5">
                       {errors.map((message, index) => (
-                        <li key={`${index}-${message}`} className="break-words text-xs font-bold text-red-100">
+                        <li key={`${index}-${message}`} className="break-words text-xs font-medium text-bad">
                           {message}
                         </li>
                       ))}
@@ -155,7 +155,7 @@ export default function TechniqueDraftReview({
                   </div>
                 ) : null}
                 {acceptErrors[item.id] ? (
-                  <p role="alert" className="mt-2 break-words text-xs font-bold text-red-200">
+                  <p role="alert" className="mt-2 break-words text-xs font-medium text-bad">
                     {acceptErrors[item.id]}
                   </p>
                 ) : null}
@@ -167,7 +167,7 @@ export default function TechniqueDraftReview({
                         type="button"
                         disabled={!canAccept || busy}
                         onClick={() => onAccept(item, { replace: replaces })}
-                        className={`${reviewButtonClassName} bg-lime-300 text-zinc-950 hover:bg-lime-200`}
+                        className={`${reviewButtonClassName} bg-accent text-accent-fg hover:bg-accent-soft`}
                       >
                         <Check aria-hidden="true" size={16} />
                         {replaces ? "Accept and replace current notes" : "Accept notes"}
@@ -176,7 +176,7 @@ export default function TechniqueDraftReview({
                     <button
                       type="button"
                       onClick={() => onDiscard(item.id)}
-                      className={`${reviewButtonClassName} border border-zinc-700 text-zinc-200 hover:bg-zinc-800`}
+                      className={`${reviewButtonClassName} border border-line text-text-1 hover:bg-surface-3`}
                     >
                       <Trash2 aria-hidden="true" size={15} />
                       Discard
@@ -186,7 +186,7 @@ export default function TechniqueDraftReview({
                   <button
                     type="button"
                     onClick={() => onDiscard(item.id)}
-                    className={`${reviewButtonClassName} mt-3 border border-zinc-700 text-zinc-200 hover:bg-zinc-800`}
+                    className={`${reviewButtonClassName} mt-3 border border-line text-text-1 hover:bg-surface-3`}
                   >
                     Hide
                   </button>
@@ -199,12 +199,12 @@ export default function TechniqueDraftReview({
 
       {uncertainty.length > 0 && (
         <div className="mt-3">
-          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-200">
+          <p className="label text-warn">
             What the AI was unsure about
           </p>
           <ul className="mt-1 ml-3 list-disc space-y-0.5">
             {uncertainty.map((line, index) => (
-              <li key={`${index}-${line}`} className="break-words text-xs font-bold text-amber-100">
+              <li key={`${index}-${line}`} className="break-words text-xs font-semibold text-warn">
                 {line}
               </li>
             ))}

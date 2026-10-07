@@ -12,7 +12,7 @@ export function AiTechniqueBadge({ className = "" }) {
   return (
     <span
       data-testid="ai-technique-badge"
-      className={`${className} inline-block rounded-[4px] border border-amber-400/50 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-black text-amber-200`}
+      className={`${className} pill pill-warn`}
     >
       {TECHNIQUE_DRAFT_BADGE}
     </span>
@@ -24,7 +24,7 @@ export function CheckVideoLink({ exercise, className = "", emptyLabel = "Check V
 
   if (!videoUrl) {
     return (
-      <span className={`${className} text-sm font-black text-zinc-400`}>
+      <span className={`${className} text-sm font-semibold text-text-2`}>
         {emptyLabel}
       </span>
     );
@@ -35,7 +35,7 @@ export function CheckVideoLink({ exercise, className = "", emptyLabel = "Check V
       href={videoUrl}
       target="_blank"
       rel="noreferrer"
-      className={`${className} focus-ring inline-flex min-h-9 items-center rounded-[8px] text-sm font-black text-sky-300 underline underline-offset-4 hover:text-sky-200`}
+      className={`${className} focus-ring inline-flex min-h-11 items-center rounded-control text-sm font-semibold text-accent-soft underline underline-offset-4 hover:text-accent`}
     >
       Check Video
     </a>
@@ -58,24 +58,24 @@ export default function ExerciseInfoPanel({ exercise, setupCue, className = "", 
   const hasVideoUrl = Boolean(getExerciseVideoUrl(exercise));
 
   return (
-    <div className={`${className} rounded-[8px] border border-zinc-800 bg-[#141414] p-2`}>
+    <div className={`${className} card-inset p-2`}>
       {isAiTechniqueDraftEntry(exercise) && <AiTechniqueBadge className="mb-2" />}
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(160px,220px)]">
         <ExerciseDetailField
           label="Main Cue"
           value={exercise.mainCue}
-          className="border border-lime-300/20 bg-lime-300/10"
+          className="border border-line-accent bg-accent-tint"
           maxItems={2}
         />
-        <div className="rounded-[8px] border border-sky-300/20 bg-sky-300/10 px-3 py-2">
-          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-sky-200/80">
+        <div className="rounded-block bg-accent-tint px-3 py-2">
+          <p className="label-accent">
             Check Video
           </p>
           <div className="mt-1">
             {hasVideoUrl ? (
               <CheckVideoLink exercise={exercise} />
             ) : (
-              <p className="text-sm font-black text-zinc-400">Video not added yet.</p>
+              <p className="text-sm font-semibold text-text-2">Video not added yet.</p>
             )}
           </div>
         </div>
@@ -87,18 +87,18 @@ export default function ExerciseInfoPanel({ exercise, setupCue, className = "", 
         ))}
       </div>
 
-      <details className="mt-2 rounded-[8px] border border-zinc-800 bg-zinc-900/70">
-        <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-zinc-300">
+      <details className="mt-2 rounded-control border border-line bg-surface-1">
+        <summary className="focus-ring flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold text-text-2">
           More coaching notes
-          <ChevronDown aria-hidden="true" size={14} className="text-zinc-400" />
+          <ChevronDown aria-hidden="true" size={14} className="disclosure-chevron text-text-2" />
         </summary>
-        <div className="grid gap-2 border-t border-zinc-800 p-2 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-2 border-t border-line p-2 md:grid-cols-2 xl:grid-cols-4">
           {secondaryInfoFields.map(([label, value]) => (
             <ExerciseDetailField
               key={label}
               label={label}
               value={value}
-              className="bg-[#111111]"
+              className="bg-surface-2"
               compact
             />
           ))}
@@ -119,20 +119,20 @@ function ExerciseDetailsCloseButton({ onClose }) {
     <button
       type="button"
       onClick={onClose}
-      className="focus-ring mt-2 flex min-h-11 w-full items-center justify-center rounded-[8px] border border-lime-300/60 bg-lime-300/10 px-3 text-sm font-black text-lime-100 hover:bg-lime-300/15"
+      className="focus-ring btn btn-secondary mt-2 w-full text-sm"
     >
       Close Details
     </button>
   );
 }
 
-function ExerciseDetailField({ label, value, className = "bg-zinc-900", compact = false, maxItems = 4 }) {
+function ExerciseDetailField({ label, value, className = "bg-surface-1", compact = false, maxItems = 4 }) {
   const bullets = getTechniqueBullets(value);
   const text = bullets ? bullets.join(", ") : formatTechnicalValue(value);
 
   return (
-    <div className={`rounded-[8px] px-3 ${compact ? "py-2" : "py-2.5"} ${className}`}>
-      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-400">
+    <div className={`rounded-control px-3 ${compact ? "py-2" : "py-2.5"} ${className}`}>
+      <p className="label">
         {label}
       </p>
       <TechnicalContent value={value} fallback={text || "Not added yet."} maxItems={maxItems} />
@@ -153,10 +153,10 @@ function TechnicalContent({ value, fallback, maxItems = 4 }) {
 
     return (
       <>
-        <ul className="mt-1 space-y-0.5 text-[13px] font-semibold leading-5 text-zinc-200">
+        <ul className="mt-1 space-y-0.5 text-[13px] font-semibold leading-5 text-text-1">
           {visibleItems.map((item, index) => (
             <li key={`${index}-${item}`} className="flex gap-2">
-              <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-lime-300" />
+              <span aria-hidden="true" className="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-accent" />
               <span className="min-w-0 break-words">{item}</span>
             </li>
           ))}
@@ -165,7 +165,7 @@ function TechnicalContent({ value, fallback, maxItems = 4 }) {
           <button
             type="button"
             onClick={() => setIsExpanded((current) => !current)}
-            className="focus-ring mt-1 min-h-8 rounded-[8px] px-2 text-xs font-black text-lime-200 hover:bg-lime-300/10"
+            className="focus-ring btn btn-ghost mt-1 px-2 text-xs"
           >
             {isExpanded ? "Show less" : `Show ${items.length - maxItems} more`}
           </button>
@@ -175,7 +175,7 @@ function TechnicalContent({ value, fallback, maxItems = 4 }) {
   }
 
   return (
-    <p className="mt-1 whitespace-pre-line break-words text-[13px] font-semibold leading-5 text-zinc-200">
+    <p className="mt-1 whitespace-pre-line break-words text-[13px] font-semibold leading-5 text-text-1">
       {fallback}
     </p>
   );
