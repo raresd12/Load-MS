@@ -57,7 +57,8 @@ const {
 try {
   assert.deepEqual(
     { ...STORAGE_WRITE_REASONS },
-    { write: "write", restore: "restore", reset: "reset" },
+    // Decision H6-7 adds "sync" (scripts/verify-sync-storage-h6.mjs).
+    { write: "write", restore: "restore", reset: "reset", sync: "sync" },
   );
   assert.ok(Object.isFrozen(STORAGE_WRITE_REASONS));
 

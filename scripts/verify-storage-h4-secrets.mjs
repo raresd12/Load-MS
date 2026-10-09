@@ -76,7 +76,8 @@ try {
   // Registry.
   assert.equal(KEY, "rpe-tracker.gemini-api-key.v1");
   assert.equal(GEMINI_API_KEY_STORAGE_KEY, KEY, "aiProgram keeps the same key name");
-  assert.deepEqual(getSecretStorageKeys(), [KEY]);
+  // Decision H6-3 adds the sync token (scripts/verify-sync-storage-h6.mjs).
+  assert.deepEqual(getSecretStorageKeys(), [KEY, SECRET_STORAGE_KEYS.syncToken]);
   assert.ok(Object.isFrozen(SECRET_STORAGE_KEYS));
   assert.ok(isSecretStorageKey(KEY));
   assert.ok(!isSecretStorageKey(STORAGE_KEYS.sessions));

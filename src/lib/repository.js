@@ -139,6 +139,16 @@ export const COLLECTIONS = Object.freeze([
   userList("programDrafts", "draftId"),
   // Hold / manual overrides per program exercise (decision H5-6).
   userList("programOverrides"),
+  // Losing local versions kept by the private sync (decision H6-8): newest
+  // first, backed up with the device's data, never synced.
+  defineCollection("syncConflicts", {
+    kind: COLLECTION_KINDS.list,
+    idField: "id",
+    scope: COLLECTION_SCOPES.meta,
+    backedUp: true,
+    syncable: false,
+    fallback: [],
+  }),
 ]);
 
 const collectionsByName = new Map(COLLECTIONS.map((collection) => [collection.name, collection]));
