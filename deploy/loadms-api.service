@@ -1,0 +1,33 @@
+# Load MS sync API (decision H6-1). Installed as
+# /etc/systemd/system/loadms-api.service; see deploy/README.md.
+[Unit]
+Description=Load MS sync API
+After=network.target
+
+[Service]
+Type=simple
+User=loadms
+Group=loadms
+WorkingDirectory=/opt/loadms/app
+EnvironmentFile=/etc/loadms/api.env
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning server/index.mjs
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+MemoryMax=160M
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/loadms/data /opt/backups/loadms
+
+[Install]
+WantedBy=multi-user.target

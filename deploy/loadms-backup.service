@@ -1,0 +1,22 @@
+# Daily VACUUM INTO copy of the Load MS database, keeping 14 (decision H6-1).
+# Started by loadms-backup.timer; see deploy/README.md.
+[Unit]
+Description=Load MS database backup
+After=loadms-api.service
+
+[Service]
+Type=oneshot
+User=loadms
+Group=loadms
+WorkingDirectory=/opt/loadms/app
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning server/backup.mjs /opt/loadms/data/loadms.db /opt/backups/loadms 14
+MemoryMax=200M
+UMask=0027
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/opt/loadms/data /opt/backups/loadms

@@ -20,6 +20,12 @@ import ReadinessPage from "./pages/ReadinessPage.jsx";
 import WorkoutLogPage from "./pages/WorkoutLogPage.jsx";
 import WorkoutsPage from "./pages/WorkoutsPage.jsx";
 import { getProgramDay, workoutProgram } from "./config/workoutProgram.js";
+import {
+  planSyncRefresh,
+  storageEventKeys,
+  SYNC_REFRESH_SOURCES,
+  workoutDraftsAfterRefresh,
+} from "./lib/accountView.js";
 import { buildDeloadCardModel } from "./lib/coachControlsView.js";
 import {
   DATE_KEY_RESYNC_INTERVAL_MS,
@@ -72,17 +78,23 @@ import {
   validateDraft,
 } from "./lib/sessionNormalize.js";
 import {
+  SECRET_STORAGE_KEYS,
   STORAGE_KEYS,
+  STORAGE_WRITE_REASONS,
   buildSaveErrorMessage,
   buildStorageWarnings,
   clearStorageIssue,
   discardCorruptStorageValue,
   getStorageIssues,
+  isLocalStorageEvent,
+  readSecret,
+  readStorageResult,
   subscribeStorageIssues,
+  subscribeStorageWrites,
   useLocalStorageState,
   writeStorage,
 } from "./lib/storage.js";
-import { getPlanSlotSignature, resolveWorkoutDraftKey } from "./lib/workoutDraft.js";
+import { draftHasLoggedData, getPlanSlotSignature, resolveWorkoutDraftKey } from "./lib/workoutDraft.js";
 import { buildPostWorkoutCoachRecap } from "./lib/workoutRecap.js";
 import { buildWorkoutSaveBundle } from "./lib/workoutSave.js";
 
@@ -424,9 +436,17 @@ export default function App() {
       getProgramDay(selectedDayId),
     [activeProgramDays, selectedDayId],
   );
+  // Decision H6-26: while the open day has logged sets, a plan pulled by the
+  // sync waits; the day keeps the plan it was started with until the workout
+  // is saved or cleared.
+  const [syncHeldPlan, setSyncHeldPlan] = useState(null);
   const basePlan = useMemo(
-    () => getPlanForDay(selectedDay, nextPlans[selectedDayId]),
-    [selectedDay, nextPlans, selectedDayId],
+    () =>
+      getPlanForDay(
+        selectedDay,
+        syncHeldPlan && syncHeldPlan.dayId === selectedDayId ? syncHeldPlan.entry : nextPlans[selectedDayId],
+      ),
+    [selectedDay, nextPlans, selectedDayId, syncHeldPlan],
   );
   // Decision 19.4-2: the plan Workout Log logs against is resolved through the
   // shared prescription resolver (progression > plan > target > baseline), the
@@ -497,10 +517,147 @@ export default function App() {
     [selectedDay, sessions, activePlan],
   );
 
+  // Decision H6-26: a draft pulled by the sync for the open day replaces an
+  // open draft only when that one has no logged sets.
+  const [syncDraftRevision, setSyncDraftRevision] = useState(0);
+
   useEffect(() => {
     setDraft(createDraftFromStorage(selectedDay, activePlan, sessions, workoutDrafts, draftKey));
     setValidationErrors([]);
-  }, [selectedDayId, activePlan.generatedAt, activePlanSlotSignature, draftKey]);
+  }, [selectedDayId, activePlan.generatedAt, activePlanSlotSignature, draftKey, syncDraftRevision]);
+
+  // Private sync (Phase H6, decisions H6-11, H6-24, H6-26). The sync code is
+  // loaded only when this device holds a sync token at launch (Settings loads
+  // it on demand), so a guest makes no request. What a sync pulls is written
+  // to storage with reason "sync"; the state mirrored here is re-read from
+  // storage without a page reload, and an open workout keeps its draft.
+  useEffect(() => {
+    if (!readSecret(SECRET_STORAGE_KEYS.syncToken)) {
+      return undefined;
+    }
+
+    let active = true;
+
+    import("./components/account/syncController.js")
+      .then(({ getSyncController }) => {
+        if (active) {
+          getSyncController().scheduler.run("launch");
+        }
+      })
+      .catch(() => {
+        // Offline with an uncached chunk: the next launch tries again.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const hasUnsavedDraft = draftHasLoggedData(draft);
+  const deferredProgramRefreshRef = useRef(false);
+  const applySyncedKeysRef = useRef(null);
+
+  applySyncedKeysRef.current = (keys, source = SYNC_REFRESH_SOURCES.sync) => {
+    const plan = planSyncRefresh({ keys, hasUnsavedDraft, source });
+    const fresh = (key, fallback) => {
+      const result = readStorageResult(key, fallback);
+      return result.ok ? result.value : undefined;
+    };
+    const apply = (key, fallback, setter, transform = (value) => value) => {
+      const value = fresh(key, fallback);
+
+      if (value !== undefined) {
+        setter(transform(value));
+      }
+    };
+
+    if (plan.sessions) {
+      apply(STORAGE_KEYS.sessions, [], setSessions);
+    }
+
+    if (plan.readinessByDate) {
+      apply(STORAGE_KEYS.readinessByDate, {}, setReadinessByDate);
+    }
+
+    if (plan.setupCues) {
+      apply(STORAGE_KEYS.setupCues, {}, setSetupCues);
+    }
+
+    if (plan.nextPlans) {
+      if (plan.holdPlan) {
+        setSyncHeldPlan((current) =>
+          current && current.dayId === selectedDayId
+            ? current
+            : { dayId: selectedDayId, entry: nextPlans[selectedDayId] },
+        );
+      }
+
+      apply(STORAGE_KEYS.nextPlans, {}, setNextPlans);
+    }
+
+    if (plan.workoutDrafts) {
+      apply(STORAGE_KEYS.workoutDrafts, {}, setWorkoutDrafts, (stored) =>
+        workoutDraftsAfterRefresh(stored, workoutDrafts, draftKey, plan),
+      );
+
+      if (!plan.keepDraftEntry) {
+        setSyncDraftRevision((revision) => revision + 1);
+      }
+    }
+
+    if (plan.programData) {
+      refreshProgramData();
+    }
+
+    if (plan.deferProgramData) {
+      deferredProgramRefreshRef.current = true;
+    }
+  };
+
+  useEffect(
+    () =>
+      subscribeStorageWrites((event) => {
+        if (event.reason === STORAGE_WRITE_REASONS.sync) {
+          applySyncedKeysRef.current?.(event.keys);
+        }
+      }),
+    [],
+  );
+
+  // Another tab or window of the app wrote storage (a save, or a sync it
+  // ran): re-read the mirrored state the same way, so this tab never saves an
+  // older copy over it and the sync never sends that as deletes (H6-35).
+  useEffect(() => {
+    const handleStorage = (event) => {
+      if (!isLocalStorageEvent(event)) {
+        return;
+      }
+
+      const keys = storageEventKeys(event);
+
+      if (keys.length) {
+        // Another tab's write is taken as it is, never written back over
+        // (decision H6-46).
+        applySyncedKeysRef.current?.(keys, SYNC_REFRESH_SOURCES.tab);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  // The held plan and the deferred program refresh are released once the
+  // open day has no logged sets (saved, cleared) or another day is opened.
+  useEffect(() => {
+    if (syncHeldPlan && (!hasUnsavedDraft || syncHeldPlan.dayId !== selectedDayId)) {
+      setSyncHeldPlan(null);
+    }
+
+    if (!hasUnsavedDraft && deferredProgramRefreshRef.current) {
+      deferredProgramRefreshRef.current = false;
+      refreshProgramData();
+    }
+  }, [hasUnsavedDraft, syncHeldPlan, selectedDayId]);
 
   useEffect(() => {
     setAppUiState((currentState) => {

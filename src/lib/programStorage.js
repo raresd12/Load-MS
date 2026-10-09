@@ -803,6 +803,25 @@ function buildSeedEntries(state, changedFields) {
   }));
 }
 
+/**
+ * The records a fresh install seeds, as { collectionName: list }, built with
+ * one fixed time (decision H6-38). Pure: reads and writes no storage. The
+ * sync uses it to tell an untouched default record from an edited one; the
+ * seed's only device-specific fields are the top-level createdAt / updatedAt.
+ */
+export function buildDefaultSeedCollections(createdAt = "1970-01-01T00:00:00.000Z") {
+  const state = Object.fromEntries(Object.keys(SEED_STATE_FIELDS).map((field) => [field, []]));
+  const changedFields = new Set();
+  const seed = buildDefaultProgramSeed(createdAt);
+  const basketballSeed = buildAthleticAestheticBasketballProgramSeed(createdAt);
+
+  applyProgramSeed(state, changedFields, seed);
+  applyProgramSeed(state, changedFields, basketballSeed);
+  applySeedLibraryContent(state, changedFields, [...seed.libraryExercises, ...basketballSeed.libraryExercises]);
+
+  return state;
+}
+
 function resolveActiveProgramIdInMemory(programs) {
   const storedRead = readStorageResult(STORAGE_KEYS.activeProgramId, null);
   const activeProgram = programs.find(

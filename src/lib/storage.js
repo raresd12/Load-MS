@@ -22,6 +22,9 @@ export const STORAGE_KEYS = {
   programDrafts: "rpe-tracker.program-drafts.v1",
   // Hold / manual overrides per program exercise (decision H5-6).
   programOverrides: "rpe-tracker.program-overrides.v1",
+  // Losing local versions kept by the private sync (decision H6-8): device
+  // bookkeeping, backed up, never synced.
+  syncConflicts: "rpe-tracker.sync-conflicts.v1",
 };
 
 export const BACKUP_SCHEMA_VERSION = 1;
@@ -177,7 +180,17 @@ export const STORAGE_WRITE_REASONS = Object.freeze({
   restore: "restore",
   // resetLocalAppData removed the tracked keys.
   reset: "reset",
+  // The private sync wrote what it pulled from the account (decision H6-7);
+  // the sync trigger ignores these events.
+  sync: "sync",
 });
+
+const knownWriteReasons = new Set(Object.values(STORAGE_WRITE_REASONS));
+
+// writeStorageBatch's `options.reason`: a known reason, else "write".
+function getBatchWriteReason(options) {
+  return knownWriteReasons.has(options?.reason) ? options.reason : STORAGE_WRITE_REASONS.write;
+}
 
 const storageWriteSubscribers = new Set();
 
@@ -215,6 +228,19 @@ function notifyStorageWriteSubscribers(keys, reason = STORAGE_WRITE_REASONS.writ
       warnStorageError("A storage write subscriber threw.", error);
     }
   });
+}
+
+/**
+ * True when a window "storage" event (another tab's write) concerns this
+ * app's localStorage; false for sessionStorage or when storage is unavailable
+ * (decision H6-35).
+ */
+export function isLocalStorageEvent(event) {
+  try {
+    return Boolean(event) && (!event.storageArea || event.storageArea === window.localStorage);
+  } catch {
+    return false;
+  }
 }
 
 export function isQuotaError(error) {
@@ -495,7 +521,32 @@ export function discardCorruptStorageValue(key) {
   }
 
   clearReadCorruptIssue(key);
+  markSyncRefetch(key);
   return { ok: true, discarded: true, corruptCopyKey };
+}
+
+/**
+ * Decision H6-36: on a linked device, a discarded key is fetched back from
+ * the account by the next sync instead of being read as "every record of it
+ * was deleted". Best effort: the engine also refetches a collection that is
+ * absent while the sync meta knows live records of it.
+ */
+function markSyncRefetch(key) {
+  try {
+    const meta = readDeviceValue(DEVICE_STORAGE_KEYS.syncMeta, null);
+
+    if (!meta || typeof meta !== "object" || Array.isArray(meta) || meta.linked !== true) {
+      return;
+    }
+
+    const refetchKeys = Array.isArray(meta.refetchKeys) ? meta.refetchKeys : [];
+
+    if (!refetchKeys.includes(key)) {
+      writeDeviceValue(DEVICE_STORAGE_KEYS.syncMeta, { ...meta, refetchKeys: [...refetchKeys, key] });
+    }
+  } catch {
+    // The absent-collection rule still covers it.
+  }
 }
 
 export function readStorage(key, fallbackValue) {
@@ -653,6 +704,9 @@ function restoreRawStorageValues(snapshot) {
  * Decision new-U: a key of the batch that currently holds unreadable JSON
  * makes the whole batch fail with code "corrupt" before anything is written,
  * unless `options.overwriteCorrupt` is true or lists that key.
+ *
+ * Decision H6-7: `options.reason` names the write in the notification event;
+ * only the sync passes STORAGE_WRITE_REASONS.sync. Anything else is "write".
  */
 export function writeStorageBatch(entries, options = {}) {
   if (typeof window === "undefined") {
@@ -764,7 +818,7 @@ export function writeStorageBatch(entries, options = {}) {
 
   uniqueKeys.forEach((key) => clearWriteIssues(key));
   corruptKeys.forEach((key) => clearReadCorruptIssue(key));
-  notifyStorageWriteSubscribers(uniqueKeys);
+  notifyStorageWriteSubscribers(uniqueKeys, getBatchWriteReason(options));
 
   return { ok: true, writtenKeys };
 }
@@ -952,6 +1006,10 @@ export function restoreLocalBackup(backup) {
   }
 
   const previousSnapshot = snapshotTrackedStorageValues(trackedKeys);
+  // Decision H6-10: a restored device is unlinked before its data changes, so
+  // even an interrupted restore makes the next sync show the link preview
+  // instead of pushing the restored records as edits. The token stays.
+  const previousSyncMeta = unlinkSyncMeta();
 
   try {
     trackedKeys.forEach((key) => {
@@ -963,6 +1021,7 @@ export function restoreLocalBackup(backup) {
     });
   } catch (error) {
     const rolledBack = rollbackTrackedStorageValues(previousSnapshot);
+    restoreRawDeviceValue(DEVICE_STORAGE_KEYS.syncMeta, previousSyncMeta);
     const message = getStorageErrorMessage(
       error,
       rolledBack
@@ -1004,6 +1063,10 @@ function getCorruptCopyKeys(key) {
  * (decision new-G keeps those copies until the user resets the app; a reset
  * is the one explicit "wipe everything" action, so they go too), and clears
  * the in-memory issues of the removed keys.
+ *
+ * Decision H6-10: a reset also signs the device out of sync (the sync token
+ * and the sync meta go first), so it is never pushed as deletes. The Gemini
+ * key is still left for the Settings reset to clear (H4-6).
  */
 export function resetLocalAppData() {
   if (typeof window === "undefined") {
@@ -1014,6 +1077,11 @@ export function resetLocalAppData() {
   const previousSnapshot = snapshotTrackedStorageValues(trackedKeys);
 
   try {
+    // Sync first: a reset that stops half way must not leave a linked device
+    // whose missing records look like deletes.
+    window.localStorage.removeItem(SECRET_STORAGE_KEYS.syncToken);
+    window.localStorage.removeItem(DEVICE_STORAGE_KEYS.syncMeta);
+
     trackedKeys.forEach((key) => {
       window.localStorage.removeItem(key);
       getCorruptCopyKeys(key).forEach((copyKey) => {
@@ -1053,10 +1121,13 @@ export function resetLocalAppData() {
 // resetLocalAppData leave it untouched (the Settings reset removes the Gemini
 // key through clearGeminiApiKey afterwards, as before H4). Values are stored
 // as raw text, not JSON, so a key saved before H4 stays readable.
+// Decision H6-3: the sync token follows the same rules, except that
+// resetLocalAppData removes it (H6-10); restoreLocalBackup keeps it.
 // ---------------------------------------------------------------------------
 
 export const SECRET_STORAGE_KEYS = Object.freeze({
   geminiApiKey: "rpe-tracker.gemini-api-key.v1",
+  syncToken: "rpe-tracker.sync-token.v1",
 });
 
 export function getSecretStorageKeys() {
@@ -1127,6 +1198,168 @@ export function writeSecret(key, value) {
 
 export function clearSecret(key) {
   return writeSecret(key, "");
+}
+
+// ---------------------------------------------------------------------------
+// Device values (Phase H6, decision H6-7): JSON bookkeeping that belongs to
+// this device only, such as the sync meta. Like a secret it is never tracked,
+// never in a backup or share, never a repository collection, never named by a
+// write notification, and a backup that carries one is ignored for it (a
+// restore only marks the sync meta unlinked, H6-10); resetLocalAppData
+// removes the sync meta. Unreadable JSON reads as the fallback: lost sync meta
+// means an unlinked device, never a mass delete.
+// ---------------------------------------------------------------------------
+
+export const DEVICE_STORAGE_KEYS = Object.freeze({
+  syncMeta: "rpe-tracker.sync-meta.v1",
+  // The cross-tab sync lease `{ owner, expiresAt }` where navigator.locks is
+  // missing (decision H6-18).
+  syncLease: "rpe-tracker.sync-lease.v1",
+});
+
+export function getDeviceStorageKeys() {
+  return Object.values(DEVICE_STORAGE_KEYS);
+}
+
+export function isDeviceStorageKey(key) {
+  return getDeviceStorageKeys().includes(key);
+}
+
+function rejectDeviceKey(key) {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Local storage is not available.",
+      code: STORAGE_ERROR_CODES.unavailable,
+    };
+  }
+
+  return isDeviceStorageKey(key)
+    ? null
+    : { ok: false, error: `${key} is not a device storage key.`, code: STORAGE_ERROR_CODES.write };
+}
+
+/** The parsed value, or `fallbackValue` when absent, unreadable or not a device key. */
+export function readDeviceValue(key, fallbackValue = null) {
+  if (rejectDeviceKey(key)) {
+    return fallbackValue;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(key);
+
+    return stored === null || stored === "" ? fallbackValue : JSON.parse(stored);
+  } catch (error) {
+    warnStorageError(`Could not read ${key} from local storage.`, error);
+    return fallbackValue;
+  }
+}
+
+/**
+ * Stores `value` as JSON. Returns { ok: true } or { ok: false, error, code }
+ * with writeStorage's codes; records no storage issue and emits no write
+ * notification. Only registered device keys are accepted.
+ */
+export function writeDeviceValue(key, value) {
+  const rejected = rejectDeviceKey(key);
+
+  if (rejected) {
+    return rejected;
+  }
+
+  const serialized = serializeStorageValue(value);
+
+  if (!serialized.ok) {
+    return { ok: false, error: serialized.error, code: serialized.code };
+  }
+
+  try {
+    window.localStorage.setItem(key, serialized.serialized);
+    return { ok: true };
+  } catch (error) {
+    const code = getStorageErrorCode(error);
+    const message = getStorageErrorMessage(error, `Could not save ${key} to local storage.`);
+    warnStorageError(message, error);
+    return { ok: false, error: message, code };
+  }
+}
+
+/** Removes a device value. Returns { ok: true } or { ok: false, error, code }. */
+export function clearDeviceValue(key) {
+  const rejected = rejectDeviceKey(key);
+
+  if (rejected) {
+    return rejected;
+  }
+
+  try {
+    window.localStorage.removeItem(key);
+    return { ok: true };
+  } catch (error) {
+    const message = getStorageErrorMessage(error, `Could not remove ${key} from local storage.`);
+    warnStorageError(message, error);
+    return { ok: false, error: message, code: getStorageErrorCode(error) };
+  }
+}
+
+/**
+ * Restore helper (decision H6-10): sets `linked: false` on the stored sync
+ * meta and returns its previous raw text (null when there was none), so a
+ * failed restore can put it back. Unreadable meta, or meta that cannot be
+ * rewritten, is removed: that also means an unlinked device.
+ */
+function unlinkSyncMeta() {
+  const key = DEVICE_STORAGE_KEYS.syncMeta;
+  let raw = null;
+
+  try {
+    raw = window.localStorage.getItem(key);
+  } catch (error) {
+    warnStorageError(`Could not read ${key} before restore.`, error);
+    return null;
+  }
+
+  if (raw === null) {
+    return null;
+  }
+
+  let meta = null;
+
+  try {
+    meta = JSON.parse(raw);
+  } catch {
+    meta = null;
+  }
+
+  try {
+    if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+      window.localStorage.setItem(key, JSON.stringify({ ...meta, linked: false }));
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch (error) {
+    warnStorageError(`Could not mark ${key} unlinked; removing it.`, error);
+
+    try {
+      window.localStorage.removeItem(key);
+    } catch (removeError) {
+      warnStorageError(`Could not remove ${key}.`, removeError);
+    }
+  }
+
+  return raw;
+}
+
+function restoreRawDeviceValue(key, raw) {
+  try {
+    if (raw === null) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, raw);
+    }
+  } catch (error) {
+    warnStorageError(`Could not put ${key} back after a failed restore.`, error);
+  }
 }
 
 function createInitialStorageStatus(readResult) {
