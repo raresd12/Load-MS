@@ -1,0 +1,16 @@
+
+# ---- Load MS sync API (decision H6-1) ---------------------------------------
+# Appended to the end of /etc/caddy/Caddyfile. Both names are served because
+# some Romanian ISPs block sslip.io; the client uses the nip.io name.
+# max_size 5MiB sits above the API's own 4 MiB push cap (4 x 1024 x 1024
+# bytes), so a body just over the cap gets the API's 413 - with the CORS
+# headers the app needs to read it - and not Caddy's bare one (decision H6-29).
+# Caddy's limit only stops bodies far past anything the API takes.
+loadms.178-104-51-43.nip.io, loadms.178-104-51-43.sslip.io {
+	encode gzip
+	request_body {
+		max_size 5MiB
+	}
+	header -Server
+	reverse_proxy 127.0.0.1:3100
+}
