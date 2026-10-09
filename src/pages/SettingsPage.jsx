@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { ChevronDown, Download, Trash2, Upload } from "lucide-react";
+import AccountSyncCard from "../components/account/AccountSyncCard.jsx";
 import { getLocalDateKey } from "../lib/date.js";
 import {
   createLocalBackup,
   getTrackedStorageKeys,
+  readSecret,
   resetLocalAppData,
   restoreLocalBackup,
   SECRET_STORAGE_KEYS,
@@ -21,8 +23,12 @@ export default function SettingsPage() {
   const [isResetOpen, setIsResetOpen] = useState(false);
   const [resetText, setResetText] = useState("");
   const [resetMessage, setResetMessage] = useState("");
+  // Phase H6: the guest-mode note shows only while no account is signed in.
+  const [accountSignedIn, setAccountSignedIn] = useState(() => Boolean(readSecret(SECRET_STORAGE_KEYS.syncToken)));
   const trackedKeys = getTrackedStorageKeys();
 
+  // -> true once the backup file was handed to the browser (the account card's
+  // link preview offers it before Merge, decision H6-9).
   function handleExportData() {
     setExportMessage("");
     setExportError("");
@@ -43,8 +49,10 @@ export default function SettingsPage() {
       link.remove();
       window.URL.revokeObjectURL(url);
       setExportMessage(`Exported ${Object.keys(backup.data).length} data groups.`);
+      return true;
     } catch {
       setExportError("Could not export local data. Try again after refreshing the app.");
+      return false;
     }
   }
 
@@ -124,13 +132,17 @@ export default function SettingsPage() {
           App Settings
         </p>
         <h2 className="mt-1 text-[22px] font-semibold text-text-1">Settings</h2>
-        <div className="mt-4 rounded-block bg-accent-tint px-3 py-3">
-          <p className="text-sm font-semibold text-accent-soft">Guest Mode</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-accent-soft">
-            Your data is saved only on this device/browser.
-          </p>
-        </div>
+        {!accountSignedIn && (
+          <div className="mt-4 rounded-block bg-accent-tint px-3 py-3">
+            <p className="text-sm font-semibold text-accent-soft">Guest Mode</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-accent-soft">
+              Your data is saved only on this device/browser.
+            </p>
+          </div>
+        )}
       </section>
+
+      <AccountSyncCard onExportData={handleExportData} onSignedInChange={setAccountSignedIn} />
 
       <section className="card p-3 min-[430px]:p-4">
         <p className="text-sm font-semibold text-text-1">Backup</p>

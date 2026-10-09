@@ -15,10 +15,34 @@ import { fileURLToPath } from "node:url";
 // - src/App.jsx and every page export the same names;
 // - no .jsx file loses an onClick / onChange / onSubmit handler.
 // Skipped with a message only when git or the base ref is unavailable.
+// Phase H6 (accounts and sync) changes src/lib on purpose: its library files
+// and the two storage fixtures it extends are listed below (decision H6-42),
+// and every other src/lib file is still held to HV-8.
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const ALLOWED_LIB_CHANGES = new Set(["src/lib/sessionAnalytics.js"]);
+const H6_LIB_CHANGES = new Set([
+  "src/lib/programStorage.js",
+  "src/lib/repository.js",
+  "src/lib/storage.js",
+]);
+const H6_NEW_LIB_FILES = new Set([
+  "src/lib/accountView.js",
+  "src/lib/syncApi.js",
+  "src/lib/syncEngine.js",
+  "src/lib/syncRecords.js",
+  "src/lib/syncSeeds.js",
+]);
+const H6_FIXTURE_CHANGES = new Set([
+  "scripts/verify-storage-h4-restore-events.mjs",
+  "scripts/verify-storage-h4-secrets.mjs",
+  "scripts/verify-ui-hv-logic-untouched.mjs",
+  "scripts/verify-ui-hv-review-fixes.mjs",
+]);
+const isAllowedLibChange = ({ file, status }) =>
+  (status === "M" && (ALLOWED_LIB_CHANGES.has(file) || H6_LIB_CHANGES.has(file))) ||
+  ((status === "A" || status === "?") && H6_NEW_LIB_FILES.has(file));
 const ALLOWED_FIXTURE_CHANGES = new Set([
   "scripts/verify-ui-h3-wiring.mjs",
   "scripts/verify-ui-h3-library-strip.mjs",
@@ -64,6 +88,9 @@ function handlerCount(code) {
 }
 
 // Self-tests.
+assert.equal(isAllowedLibChange({ file: "src/lib/syncEngine.js", status: "?" }), true);
+assert.equal(isAllowedLibChange({ file: "src/lib/progression.js", status: "M" }), false, "the engine stays under HV-8");
+assert.equal(isAllowedLibChange({ file: "src/lib/storage.js", status: "D" }), false);
 assert.deepEqual(exportNames("export default function App() {}\nexport const A = 1;\nexport { b as c, d };\nexport async function e() {}"), [
   "A",
   "c",
@@ -111,13 +138,13 @@ const changes = diff.stdout
   });
 const untrackedLib = git(["ls-files", "--others", "--exclude-standard", "--", "src/lib"]).stdout.split(/\r?\n/).filter(Boolean);
 const libViolations = [
-  ...changes.filter(({ file, status }) => file.startsWith("src/lib/") && !(status === "M" && ALLOWED_LIB_CHANGES.has(file))),
-  ...untrackedLib.map((file) => ({ status: "?", file })),
+  ...changes.filter(({ file, status }) => file.startsWith("src/lib/") && !isAllowedLibChange({ file, status })),
+  ...untrackedLib.map((file) => ({ status: "?", file })).filter((change) => !isAllowedLibChange(change)),
 ].map(({ status, file }) => `${status} ${file}`);
 assert.deepEqual(libViolations, [], `src/lib changed versus ${base} (presentation-only phase): ${libViolations.join(", ")}`);
 
 const fixtureViolations = changes
-  .filter(({ file, status }) => file.startsWith("scripts/") && status !== "A" && !ALLOWED_FIXTURE_CHANGES.has(file))
+  .filter(({ file, status }) => file.startsWith("scripts/") && status !== "A" && !ALLOWED_FIXTURE_CHANGES.has(file) && !H6_FIXTURE_CHANGES.has(file))
   .map(({ status, file }) => `${status} ${file}`);
 assert.deepEqual(fixtureViolations, [], `existing fixtures changed versus ${base} outside the HV-8 list: ${fixtureViolations.join(", ")}`);
 

@@ -25,7 +25,8 @@ import { fileURLToPath } from "node:url";
 import { composite, contrastRatio, parseColor, readBlock, readRules, readThemeTokens, stripCssComments } from "./lib/contrast.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const read = (relative) => readFileSync(path.join(root, relative), "utf8");
+// Line endings normalised: the working tree may check files out with CRLF.
+const read = (relative) => readFileSync(path.join(root, relative), "utf8").replace(/\r\n/g, "\n");
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
